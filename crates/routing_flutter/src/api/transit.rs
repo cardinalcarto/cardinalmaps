@@ -281,6 +281,20 @@ impl OfflineTransit {
         self.answer(Query::Ride, &request, feeds, cancel)
     }
 
+    /// Every route's departures between two stops around a moment, as a plan's ride lists
+    /// them, from JSON request bytes (the server's `/transit/departures` body), applying
+    /// `feeds` first as [`Self::plan`] does.
+    ///
+    /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+    pub fn departures(
+        &self,
+        request: Vec<u8>,
+        feeds: Vec<TransitFeed>,
+        cancel: &TransitCancel,
+    ) -> TransitResponse {
+        self.answer(Query::Departures, &request, feeds, cancel)
+    }
+
     /// The latest real-time state of a vehicle, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse {
         response(self.planner.vehicle_json(&feed, &id, unix_now()))
@@ -360,6 +374,19 @@ impl OfflineTransit {
         self.answer_at(Query::Ride, request, feeds, now, interrupt)
     }
 
+    /// [`Self::departures`] at a chosen moment, with a chosen interrupt, for tests.
+    /// Not part of the Dart API.
+    #[frb(ignore)]
+    pub fn departures_at(
+        &self,
+        request: &[u8],
+        feeds: Vec<TransitFeed>,
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> TransitResponse {
+        self.answer_at(Query::Departures, request, feeds, now, interrupt)
+    }
+
     /// Applies `feeds`, then answers a query at `now`.
     fn answer_at(
         &self,
@@ -395,6 +422,7 @@ impl OfflineTransit {
             Query::Nearby => self.planner.nearby_json(request, now, interrupt),
             Query::Route => self.planner.route_json(request, now, interrupt),
             Query::Ride => self.planner.ride_json(request, now, interrupt),
+            Query::Departures => self.planner.departures_json(request, now, interrupt),
         };
         TransitResponse {
             ignored_feeds,
@@ -413,6 +441,8 @@ enum Query {
     Route,
     /// `POST /transit/ride`.
     Ride,
+    /// `POST /transit/departures`.
+    Departures,
 }
 
 /// A JSON error body, as the server's would be.
@@ -736,6 +766,93 @@ mod tests {
         assert_eq!(
             transit
                 .ride_at(ride.as_bytes(), Vec::new(), now, &|| true)
+                .status,
+            499
+        );
+    }
+
+    /// The device lists the departures between two stops with the server's bytes, and they are
+    /// the plan's leg's own list with everything stated.
+    #[test]
+    fn the_departures_between_two_stops_answer_with_the_servers_bytes() {
+        let (_dir, on_device) = timetable();
+        let (_server_dir, on_server) = timetable();
+        let transit = OfflineTransit::open_timetable(on_device, vec![tiles()])
+            .ok()
+            .unwrap();
+        let server = valinor_transit_plan::StreetPlanner::open_with_built_transfers(
+            valinor_gtfs::TimetableSet::single(on_server).unwrap(),
+            &[tiles()],
+            valinor_transit_plan::StreetConfig::default(),
+        )
+        .unwrap();
+        let now = 1_781_506_440;
+        let plan = br#"{"origin":{"lat":42.5078,"lon":1.5205},"destination":{"lat":42.51,"lon":1.535},"max_walk_seconds":600,"departure":1781506500}"#;
+        let answer = transit.plan_at(plan, Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let leg = body["journeys"][0]["legs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|leg| leg["type"] == "transit")
+            .expect("a ride")
+            .clone();
+        let planned = leg["departures"].as_array().unwrap();
+        // One more after than a plan's six: the departure at `around` counts among them.
+        let lookup = format!(
+            r#"{{"feed":"bus","board_stop_id":{},"alight_stop_id":{},"around":{},"departures_after":7,"ready":{}}}"#,
+            leg["stops"][0]["stop_id"],
+            leg["stops"].as_array().unwrap().last().unwrap()["stop_id"],
+            leg["departure"],
+            leg["departure"],
+        );
+        let answer = transit.departures_at(lookup.as_bytes(), Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 200);
+        assert_eq!(
+            answer.body,
+            server
+                .departures_json(lookup.as_bytes(), now, &|| false)
+                .body,
+            "the same bytes as the server's /transit/departures"
+        );
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        let listed = body["departures"].as_array().unwrap();
+        let trips = |departures: &[serde_json::Value]| -> Vec<(String, i64)> {
+            departures
+                .iter()
+                .map(|d| {
+                    (
+                        d["trip_id"].as_str().unwrap().to_owned(),
+                        d["departure"].as_i64().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        assert!(!listed.is_empty());
+        assert_eq!(trips(listed), trips(planned));
+        for departure in listed {
+            assert_eq!(departure["start_date"], leg["trip"]["start_date"]);
+            assert_eq!(departure["route"], leg["route"]);
+            assert!(departure.get("suggested").is_none());
+            assert_eq!(
+                departure.get("missed").is_some(),
+                departure["departure"].as_i64() < leg["departure"].as_i64()
+            );
+        }
+        // Errors are the server's bytes too.
+        let unknown = lookup.replace(r#""feed":"bus""#, r#""feed":"tram""#);
+        let answer = transit.departures_at(unknown.as_bytes(), Vec::new(), now, &|| false);
+        assert_eq!(answer.status, 404);
+        assert_eq!(
+            answer.body,
+            server
+                .departures_json(unknown.as_bytes(), now, &|| false)
+                .body
+        );
+        assert_eq!(
+            transit
+                .departures_at(lookup.as_bytes(), Vec::new(), now, &|| true)
                 .status,
             499
         );

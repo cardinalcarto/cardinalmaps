@@ -9,10 +9,21 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `answer_at`, `answer`, `device_config`, `error_response`, `feed_kind`, `response`, `unix_now`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Query`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `nearby_at`, `plan_at`, `ride_at`, `route_at`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `departures_at`, `nearby_at`, `plan_at`, `ride_at`, `route_at`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {
+  /// Every route's departures between two stops around a moment, as a plan's ride lists
+  /// them, from JSON request bytes (the server's `/transit/departures` body), applying
+  /// `feeds` first as [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> departures({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
+
   /// The routes a rider can catch near a place, in each direction, and when, from JSON
   /// request bytes (the server's `/transit/nearby` body), applying `feeds` first as
   /// [`Self::plan`] does.

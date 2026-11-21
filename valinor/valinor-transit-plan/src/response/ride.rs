@@ -15,7 +15,7 @@
 //! its `trip_id`, as a ride's departure is described, without a time bound; only the one
 //! chosen is described in full.
 
-use valinor_transit::{Ride, ServiceDate};
+use valinor_transit::{Ride, ServiceDate, StopId};
 
 use crate::error::{Missing, NotRunning};
 use crate::plan::DepartureRange;
@@ -36,6 +36,24 @@ pub(crate) enum RideLookupError {
     NotRunning(NotRunning),
 }
 
+/// Why the two stops a lookup names couldn't be found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StopPairError {
+    /// The request's feed isn't loaded.
+    UnknownFeed(String),
+    /// A stop it names isn't in the feed.
+    UnknownStop,
+}
+
+impl From<StopPairError> for RideLookupError {
+    fn from(error: StopPairError) -> Self {
+        match error {
+            StopPairError::UnknownFeed(feed) => Self::UnknownFeed(feed),
+            StopPairError::UnknownStop => Self::NotFound(Missing::Stop),
+        }
+    }
+}
+
 /// Describes the departure a request names on `date`, its `start_date`.
 pub(crate) fn build_ride(
     snapshot: &TransitSnapshot,
@@ -53,24 +71,36 @@ pub(crate) fn build_ride(
 }
 
 impl RideDescriber<'_> {
+    /// The boarding and alighting stops a lookup names by their `stop_id`s in `feed`:
+    /// the feed's own, or ones real-time data added to it.
+    pub(super) fn stop_pair(
+        &self,
+        feed: &str,
+        board_stop_id: &str,
+        alight_stop_id: &str,
+    ) -> Result<(StopId, StopId), StopPairError> {
+        let part = self
+            .set()
+            .part_of_feed(feed)
+            .ok_or_else(|| StopPairError::UnknownFeed(feed.to_owned()))?;
+        let stop = |stop_id: &str| {
+            self.feed_stop(part, feed, stop_id)
+                .ok_or(StopPairError::UnknownStop)
+        };
+        Ok((stop(board_stop_id)?, stop(alight_stop_id)?))
+    }
+
     /// The leg of the departure a request names, found among those between its two stops.
     fn departure_ride(
         &self,
         request: &RideRequest,
         date: ServiceDate,
     ) -> Result<TransitLeg, RideLookupError> {
-        let part = self
-            .set()
-            .part_of_feed(&request.feed)
-            .ok_or_else(|| RideLookupError::UnknownFeed(request.feed.clone()))?;
-        let stop = |stop_id: &str| {
-            self.feed_stop(part, &request.feed, stop_id)
-                .ok_or(RideLookupError::NotFound(Missing::Stop))
-        };
-        let (board_stop, alight_stop) = (
-            stop(&request.board_stop_id)?,
-            stop(&request.alight_stop_id)?,
-        );
+        let (board_stop, alight_stop) = self.stop_pair(
+            &request.feed,
+            &request.board_stop_id,
+            &request.alight_stop_id,
+        )?;
         let filter = self.mode.route_filter();
         let pairs = pairs_for(&self.snapshot.snapshot, filter, (board_stop, alight_stop));
         // A departure's `trip_id` is the trip it boards, as a ride's list names it.

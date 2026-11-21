@@ -97,6 +97,9 @@ class _SheetScrollPosition extends ScrollPositionWithSingleContext {
         goIdle();
         return;
       }
+      if (SheetLog.enabled && velocity != 0) {
+        debugPrint(SheetLog.dragEnd(reported: velocity, released: 0));
+      }
       sheet.release(0, holder: this);
     }
     super.goBallistic(velocity);

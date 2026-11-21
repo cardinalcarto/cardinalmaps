@@ -63,6 +63,77 @@ fn routes_ferrostar_requests_as_mainline_does() {
     assert_eq!(json(&response), captured["body"]);
 }
 
+/// Ferrostar's body with `valinor_leg_details` and an elevation interval, on the fixture's
+/// tiles (which mainline built with elevation), by car, by bicycle, and on foot:
+/// each leg gains `valinor_details` and the response is otherwise the one without the two
+/// options. The runs add up to the leg, and the elevation is sampled every 30 m along it.
+#[test]
+fn legs_carry_details_when_asked_and_nothing_else_changes() {
+    let router = router();
+    for costing in ["auto", "bicycle", "pedestrian"] {
+        let mut body: Value = serde_json::from_str(FERROSTAR).unwrap();
+        body["costing"] = json!(costing);
+        let plain = router.route(body.to_string().as_bytes());
+        assert_eq!(plain.status, StatusCode::OK, "{costing}");
+        let plain = json(&plain);
+
+        body["valinor_leg_details"] = json!(true);
+        body["elevation_interval"] = json!(30);
+        let detailed = router.route(body.to_string().as_bytes());
+        assert_eq!(detailed.status, StatusCode::OK, "{costing}");
+        let mut detailed = json(&detailed);
+
+        let leg = &mut detailed["routes"][0]["legs"][0];
+        let details = leg.as_object_mut().unwrap().remove("valinor_details");
+        let details = details.unwrap_or_else(|| panic!("{costing}: no details"));
+        let (duration, distance) = (
+            leg["duration"].as_f64().unwrap(),
+            leg["distance"].as_f64().unwrap(),
+        );
+        assert_eq!(detailed, plain, "{costing}");
+        let leg = &plain["routes"][0]["legs"][0];
+
+        let runs = details["runs"].as_array().unwrap();
+        let sum = |key: &str| -> f64 { runs.iter().map(|run| run[key].as_f64().unwrap()).sum() };
+        assert!((sum("duration") - duration).abs() < 0.0015, "{costing}");
+        assert!((sum("distance") - distance).abs() < 1.0, "{costing}");
+        let mode = match costing {
+            "auto" => "drive",
+            other => other,
+        };
+        for run in runs {
+            assert_eq!(run["travel_mode"], mode, "{costing}");
+            assert_eq!(run.get("cycle_lane").is_some(), costing == "bicycle");
+            assert_eq!(run.get("bicycle_network").is_some(), costing == "bicycle");
+        }
+        // Fewer runs than intersections: edges of one kind are joined.
+        let intersections: usize = leg["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|step| step["intersections"].as_array().unwrap().len())
+            .sum();
+        assert!(!runs.is_empty() && runs.len() < intersections, "{costing}");
+
+        assert_eq!(details["elevation_interval"], json!(30.0), "{costing}");
+        let heights = details["elevation"].as_array().unwrap();
+        // A sample every 30 m from the start, and the leg's end.
+        // Edges' sampling intervals are rounded, so the count can be one off.
+        let expected = (distance / 30.0).floor() + 2.0;
+        #[expect(clippy::cast_precision_loss, reason = "a small count")]
+        let count = heights.len() as f64;
+        assert!(
+            (count - expected).abs() <= 1.0,
+            "{costing}: {count} of {expected}"
+        );
+        // Andorra is between 800 and 3,000 m up.
+        for height in heights {
+            let height = height.as_f64().unwrap();
+            assert!((800.0..3000.0).contains(&height), "{costing}: {height}");
+        }
+    }
+}
+
 #[test]
 fn errors_are_bodies_in_the_request_format() {
     let router = router();

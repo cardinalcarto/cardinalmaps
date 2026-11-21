@@ -6,6 +6,7 @@
 //! | `POST /transit/nearby` | The routes a rider can catch near a place: [`valinor_transit_plan::NearbyRequestBody`] in, a `NearbyResponse` out. |
 //! | `POST /transit/route` | One route and direction from one stop: [`valinor_transit_plan::RouteRequestBody`] in, a `RouteDetailResponse` out. |
 //! | `POST /transit/ride` | One of a plan ride's departures as a leg: [`valinor_transit_plan::RideRequestBody`] in, a `RideResponse` out. |
+//! | `POST /transit/departures` | Every route's departures between two stops around a moment: [`valinor_transit_plan::DeparturesRequestBody`] in, a `DeparturesResponse` out. |
 //! | `GET /transit/vehicle/{feed}/{id}` | A vehicle's latest real-time state. |
 //! | `PUT /transit/feeds/{feed}/{kind}` | Operator ingest of GTFS-RT bytes, authenticated by a shared secret. |
 //!
@@ -63,6 +64,7 @@ pub fn routes(state: &Arc<AppState>) -> axum::Router<Arc<AppState>> {
         .route("/transit/nearby", post(nearby))
         .route("/transit/route", post(route))
         .route("/transit/ride", post(ride))
+        .route("/transit/departures", post(departures))
         .route("/transit/vehicle/{feed}/{id}", get(vehicle))
         .route("/transit/feeds/{feed}/{kind}", put(ingest))
 }
@@ -183,6 +185,18 @@ async fn ride(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
     };
     run_blocking(&state, move |interrupt| {
         transit.planner.ride_json(&body, unix_now(), interrupt)
+    })
+    .await
+}
+
+async fn departures(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let Some(transit) = state.transit().cloned() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    run_blocking(&state, move |interrupt| {
+        transit
+            .planner
+            .departures_json(&body, unix_now(), interrupt)
     })
     .await
 }

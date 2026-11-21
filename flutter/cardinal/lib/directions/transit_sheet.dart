@@ -1,5 +1,5 @@
-/// What the directions sheet's transit views share: the chips for getting to stops, how
-/// live the plan is, and the small pieces both the overview and a journey's details use.
+/// What the directions sheet's transit views share: the small pieces both the list of
+/// journeys and a journey's details use.
 ///
 /// The look follows Murena Maps, with less padding.
 library;
@@ -8,37 +8,6 @@ import 'package:material_ui/material_ui.dart';
 
 import 'format.dart';
 import 'transit_plan.dart';
-
-/// Chips for how to get to, from, and between stops.
-class TransitAccessRow extends StatelessWidget {
-  const TransitAccessRow({
-    super.key,
-    required this.access,
-    required this.onChanged,
-  });
-
-  final TransitAccess access;
-  final ValueChanged<TransitAccess> onChanged;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-    child: Wrap(
-      spacing: 8,
-      children: [
-        for (final option in TransitAccess.values)
-          ChoiceChip(
-            avatar: Icon(accessIcon(option), size: 18),
-            label: Text(option.label),
-            selected: option == access,
-            showCheckmark: false,
-            visualDensity: VisualDensity.compact,
-            onSelected: (_) => onChanged(option),
-          ),
-      ],
-    ),
-  );
-}
 
 IconData accessIcon(TransitAccess access) => switch (access) {
   TransitAccess.walking => Icons.directions_walk,
@@ -52,7 +21,7 @@ IconData streetIcon(String mode) => switch (mode) {
   _ => Icons.directions_walk,
 };
 
-/// What a street leg is called: the same words as the chips for getting to stops.
+/// What a street leg is called: the same words as the menu of ways to get to stops.
 String streetVerb(String mode) => switch (mode) {
   'cycling' => TransitAccess.cycling.label,
   'wheelchair' => TransitAccess.wheelchair.label,
@@ -68,51 +37,6 @@ IconData vehicleIcon(VehicleKind kind) => switch (kind) {
   VehicleKind.cableway => Icons.airline_seat_recline_normal,
   VehicleKind.other => Icons.directions_transit,
 };
-
-/// Whether the plan's times are live, and from how many feeds.
-class RealtimeLine extends StatelessWidget {
-  const RealtimeLine({super.key, required this.plan});
-
-  final TransitPlan plan;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final live = plan.feedsApplied > 0;
-    final text = switch (plan) {
-      TransitPlan(feedsReported: 0) => 'Scheduled times: no live data',
-      TransitPlan(feedsApplied: 0) =>
-        'Scheduled times: live data is out of date',
-      TransitPlan(feedsReported: 1) => 'Live times from 1 real-time feed',
-      _ when plan.feedsApplied == plan.feedsReported =>
-        'Live times from ${plan.feedsReported} real-time feeds',
-      _ =>
-        'Live times from ${plan.feedsApplied} of ${plan.feedsReported} '
-            'real-time feeds',
-    };
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
-      child: Row(
-        children: [
-          Icon(
-            live ? Icons.sensors : Icons.schedule,
-            size: 16,
-            color: live ? liveColor(theme) : theme.colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              text,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 /// What to say when a plan has no journeys.
 String noJourneysMessage(TransitPlan plan, TransitAccess access) {
@@ -138,6 +62,23 @@ Color liveColor(ThemeData theme) => theme.brightness == Brightness.dark
     ? const Color(0xff7fd99a)
     : const Color(0xff1b7a3a);
 
+/// The colors of something to take note of that isn't an error, such as a stop that
+/// has moved or a service alert: a notice's fill, the text and icons on it, and an
+/// icon on the surface.
+({Color container, Color onContainer, Color icon}) warningColors(
+  ThemeData theme,
+) => theme.brightness == Brightness.dark
+    ? const (
+        container: Color(0xff4a3600),
+        onContainer: Color(0xffffdf9e),
+        icon: Color(0xfff0bd5a),
+      )
+    : const (
+        container: Color(0xfffdf0d8),
+        onContainer: Color(0xff4a2e00),
+        icon: Color(0xff8a5300),
+      );
+
 /// A clock time as the rider's settings show it, at a stop's UTC offset if it's known.
 String clock(BuildContext context, DateTime time, {int? utcOffset}) {
   final local = utcOffset == null
@@ -161,22 +102,22 @@ int? journeyUtcOffset(Journey journey) =>
   final muted = theme.colorScheme.onSurfaceVariant;
   if (!ride.realtime) return (text: 'Scheduled', color: muted, live: false);
   if (ride.tripState == 'added' || ride.tripState == 'replaced') {
-    return (text: 'Live: changed trip', color: liveColor(theme), live: true);
+    return (text: 'Live · changed trip', color: liveColor(theme), live: true);
   }
   final delay = ride.boarding.departureDelay ?? ride.delaySeconds ?? 0;
   final minutes = (delay.abs() / 60).round();
   if (minutes == 0) {
-    return (text: 'Live: on time', color: liveColor(theme), live: true);
+    return (text: 'Live · on time', color: liveColor(theme), live: true);
   }
   if (delay > 0) {
     return (
-      text: 'Live: $minutes min late',
+      text: 'Live · $minutes min late',
       color: theme.colorScheme.error,
       live: true,
     );
   }
   return (
-    text: 'Live: $minutes min early',
+    text: 'Live · $minutes min early',
     color: liveColor(theme),
     live: true,
   );
@@ -202,32 +143,32 @@ class StopMovedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final warning = warningColors(theme);
     final name = notice.stopName ?? 'This stop';
     final header = notice.header;
     final description = notice.description;
     return Container(
       margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
       decoration: BoxDecoration(
-        color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        color: warning.container,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.wrong_location, size: 20, color: scheme.onErrorContainer),
+          Icon(Icons.wrong_location, size: 18, color: warning.onContainer),
           const SizedBox(width: 8),
           Expanded(
             child: DefaultTextStyle.merge(
-              style: TextStyle(color: scheme.onErrorContainer),
+              style: TextStyle(color: warning.onContainer),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     '$name has moved',
                     style: theme.textTheme.labelLarge?.copyWith(
-                      color: scheme.onErrorContainer,
+                      color: warning.onContainer,
                     ),
                   ),
                   if (header != null)

@@ -8,10 +8,10 @@ import 'navigation.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `failed`, `new`, `request_through`, `step_signs`, `step_signs`, `valhalla_language`, `valhalla`
-// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OsrmSignsLeg`, `OsrmSignsRoute`, `OsrmSignsStep`, `OsrmSigns`, `StepSigns`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
-// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`
+// These functions are ignored because they are not marked as `pub`: `elevation`, `elevation`, `failed`, `maneuver_type`, `modifier`, `new`, `new`, `profile`, `request_through`, `road_name`, `route_details`, `runs`, `step_signs`, `valhalla_language`, `valhalla`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `OsrmAdmin`, `OsrmAnnotation`, `OsrmAnswer`, `OsrmIntersection`, `OsrmLegDetails`, `OsrmLeg`, `OsrmManeuver`, `OsrmRoute`, `OsrmRun`, `OsrmStep`, `RouteDetails`, `StepDetails`, `StepSigns`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `from`, `from`, `from`, `from`, `from`
+// These functions are ignored (category: IgnoreBecauseOwnerTyShouldIgnore): `default`, `default`, `default`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<DirectionsAdapter>>
 abstract class DirectionsAdapter implements RustOpaqueInterface {
@@ -22,7 +22,12 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
   /// went wrong.
   ///
   /// Ferrostar's parser reads the routes; the answer is read again only for what it
-  /// leaves out, each step's speed-limit sign and unit.
+  /// leaves out: each step's speed-limit sign and unit, its road and its maneuver, and
+  /// what the intersections' classes and the legs' annotations and details say of each
+  /// route, which is whether it has tolls, a ferry or a motorway, its speed profile,
+  /// and its elevation. The routes
+  /// are named here too, together, so that no two are called the same if their roads
+  /// can tell them apart.
   Future<List<DirectionsRoute>> parse({required List<int> body});
 
   /// The request for routes from `from` to `to`.
@@ -37,6 +42,12 @@ abstract class DirectionsAdapter implements RustOpaqueInterface {
   /// distances in `units`. With `wheelchair`, the routes are ones a wheelchair can take:
   /// Valhalla's `pedestrian` costing of type `wheelchair`, which is the only costing it
   /// goes with.
+  ///
+  /// Every request asks Valinor for its legs' details (`valinor_leg_details`), which
+  /// the routes' runs are made from, and a ride or a walk for its elevation too, every
+  /// 30 m ([`ELEVATION_INTERVAL`]): a drive's row draws its speeds, not its hills. A
+  /// router that has no such details ignores the one and answers the other with
+  /// nothing, and the routes are read as they were before there were any.
   static DirectionsAdapter valhalla({
     required String endpointUrl,
     required String costing,
@@ -68,6 +79,44 @@ abstract class NavigableRoute implements RustOpaqueInterface {
   /// `#[frb(sync)]`: the route is never changed, so nothing waits on it, and Dart asks for
   /// its steps once per route.
   List<NavStep> steps();
+}
+
+/// How high a route is along the way.
+class DirectionsElevation {
+  /// How far apart the heights are along the route, in meters.
+  final double interval;
+
+  /// Meters above sea level: at the route's start, then every `interval` along it, and
+  /// last at its end, which is less than an interval past the one before. At least two.
+  final Float32List heights;
+
+  /// How far it climbs in all, in meters, not counting rises and dips of under 3 m,
+  /// which are as likely the terrain model's ripple as the road's.
+  final double climb;
+
+  /// How far it descends in all, in meters, counted the same way.
+  final double descent;
+
+  const DirectionsElevation({
+    required this.interval,
+    required this.heights,
+    required this.climb,
+    required this.descent,
+  });
+
+  @override
+  int get hashCode =>
+      interval.hashCode ^ heights.hashCode ^ climb.hashCode ^ descent.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DirectionsElevation &&
+          runtimeType == other.runtimeType &&
+          interval == other.interval &&
+          heights == other.heights &&
+          climb == other.climb &&
+          descent == other.descent;
 }
 
 /// Why there are no routes.
@@ -161,6 +210,51 @@ class DirectionsRoute {
   final double duration;
   final List<DirectionsStep> steps;
 
+  /// The roads to call it by, in the order they're travelled, such as "I-5 North" then
+  /// "Mercer Street": the roads that make up most of it, with more where it would
+  /// otherwise be called the same as another of the routes it came with. Empty if none
+  /// of its roads has a name, or the answer didn't say.
+  final List<String> roadNames;
+
+  /// Whether any of it is tolled.
+  final bool hasToll;
+
+  /// Whether any of it is a ferry crossing.
+  final bool hasFerry;
+
+  /// Whether any of it is on a motorway.
+  final bool hasMotorway;
+
+  /// Its speed profile: the runs it's made of, from its start to its end.
+  ///
+  /// From Valinor, which says what each of a route's roads is, every run has a `kind`
+  /// (but a ferry crossing), is tolled only where the road is, and the runs' durations
+  /// and distances add up to the route's, to the millisecond and within a meter.
+  ///
+  /// From a router that doesn't say (an older Valinor, or Valhalla), the runs are made
+  /// from the route's line instead: none has a `kind`, a run is tolled wherever the
+  /// maneuver it's part of is tolled at all, and they add up to the route's to within a
+  /// fraction of a percent, since they're measured along the line and the route's own
+  /// totals from its roads' lengths in whole meters. Empty if that answer has no
+  /// annotation to make them from.
+  final List<DirectionsRun> runs;
+
+  /// How high it is along the way, and how far it climbs. None if the answer didn't
+  /// say, which it does only from Valinor, for a ride or a walk, where the map it
+  /// routes on has elevation.
+  final DirectionsElevation? elevation;
+
+  /// The share of its distance, 0 to 1, on trails if it's a ride, or on paths if it's a
+  /// walk. Nothing if its runs have no kinds.
+  final double trailShare;
+
+  /// The share of its distance, 0 to 1, in bike lanes. Nothing if its runs have no
+  /// kinds.
+  final double bikeLaneShare;
+
+  /// Whether any of it is stairs. False if its runs have no kinds.
+  final bool hasStairs;
+
   /// The whole route, to navigate.
   final NavigableRoute navigable;
 
@@ -169,6 +263,15 @@ class DirectionsRoute {
     required this.distance,
     required this.duration,
     required this.steps,
+    required this.roadNames,
+    required this.hasToll,
+    required this.hasFerry,
+    required this.hasMotorway,
+    required this.runs,
+    this.elevation,
+    this.trailShare = 0.0,
+    this.bikeLaneShare = 0.0,
+    this.hasStairs = false,
     required this.navigable,
   });
 
@@ -178,6 +281,15 @@ class DirectionsRoute {
       distance.hashCode ^
       duration.hashCode ^
       steps.hashCode ^
+      roadNames.hashCode ^
+      hasToll.hashCode ^
+      hasFerry.hashCode ^
+      hasMotorway.hashCode ^
+      runs.hashCode ^
+      elevation.hashCode ^
+      trailShare.hashCode ^
+      bikeLaneShare.hashCode ^
+      hasStairs.hashCode ^
       navigable.hashCode;
 
   @override
@@ -189,7 +301,110 @@ class DirectionsRoute {
           distance == other.distance &&
           duration == other.duration &&
           steps == other.steps &&
+          roadNames == other.roadNames &&
+          hasToll == other.hasToll &&
+          hasFerry == other.hasFerry &&
+          hasMotorway == other.hasMotorway &&
+          runs == other.runs &&
+          elevation == other.elevation &&
+          trailShare == other.trailShare &&
+          bikeLaneShare == other.bikeLaneShare &&
+          hasStairs == other.hasStairs &&
           navigable == other.navigable;
+}
+
+/// A stretch of a route that's all one kind of road at about one speed. A route's runs
+/// follow one another from its start to its end, and make its speed profile.
+class DirectionsRun {
+  /// How long it takes, in seconds, with the turns along it.
+  final double duration;
+
+  /// How far it goes, in meters.
+  final double distance;
+
+  /// How fast the router expects it to go, in meters per second: its distance over its
+  /// duration. Zero for a run that takes no time.
+  final double speed;
+
+  /// Whether it's on a motorway.
+  final bool motorway;
+
+  /// Whether it's tolled.
+  final bool toll;
+
+  /// Whether it's a ferry crossing.
+  final bool ferry;
+
+  /// What kind of way it's on. None for a ferry crossing, and for every run of an
+  /// answer from a router that doesn't say.
+  final DirectionsRunKind? kind;
+
+  const DirectionsRun({
+    required this.duration,
+    required this.distance,
+    required this.speed,
+    required this.motorway,
+    required this.toll,
+    required this.ferry,
+    this.kind,
+  });
+
+  @override
+  int get hashCode =>
+      duration.hashCode ^
+      distance.hashCode ^
+      speed.hashCode ^
+      motorway.hashCode ^
+      toll.hashCode ^
+      ferry.hashCode ^
+      kind.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DirectionsRun &&
+          runtimeType == other.runtimeType &&
+          duration == other.duration &&
+          distance == other.distance &&
+          speed == other.speed &&
+          motorway == other.motorway &&
+          toll == other.toll &&
+          ferry == other.ferry &&
+          kind == other.kind;
+}
+
+/// What kind of way a run is on, for the tone it's drawn in. Which three a route's runs
+/// are among goes by how it's travelled: a drive's are freeway, main road and street, a
+/// ride's trail, bike lane and shared road, and a walk's path, sidewalk and stairs. How
+/// Valinor's words for a road become these is `run_kind` in the crate's
+/// `route_details.rs`.
+enum DirectionsRunKind {
+  /// Driven, on a motorway or one of its ramps.
+  freeway,
+
+  /// Driven, on a main road: a highway that isn't a motorway, or an arterial.
+  mainRoad,
+
+  /// Driven, on any smaller road.
+  street,
+
+  /// Cycled, on a way without cars: a cycleway, a path, a track.
+  trail,
+
+  /// Cycled, on a road, in a lane of its own, painted or protected.
+  bikeLane,
+
+  /// Cycled, on a road, among its traffic.
+  sharedRoad,
+
+  /// Walked, on a way without cars: a footpath, a trail, a pedestrian street.
+  path,
+
+  /// Walked, along a street: on its sidewalk, a crossing, or the road itself.
+  sidewalk,
+
+  /// Walked, up or down steps or an escalator.
+  stairs,
 }
 
 /// One maneuver and the stretch of road after it.
@@ -203,15 +418,42 @@ class DirectionsStep {
   /// How long this step takes, in seconds.
   final double duration;
 
+  /// What a driver calls the road this step is on: its route number if it has one
+  /// ("I-5 North", "SR 99"), else the street's name. None if the road has neither, or
+  /// the answer didn't say.
+  final String? roadName;
+
+  /// What its maneuver is, broadly: a turn, a merge, the arrival. None if the answer
+  /// didn't say, or said something this doesn't know.
+  final ManeuverType? maneuverType;
+
+  /// Which way its maneuver goes. None for one that goes no way in particular (a
+  /// departure), or if the answer didn't say, or said something this doesn't know.
+  final ManeuverModifier? maneuverModifier;
+
+  /// Which exit to leave by, counting from the first after entering, if its maneuver
+  /// is entering a roundabout and the answer says.
+  final int? roundaboutExit;
+
   const DirectionsStep({
     required this.instruction,
     required this.distance,
     required this.duration,
+    this.roadName,
+    this.maneuverType,
+    this.maneuverModifier,
+    this.roundaboutExit,
   });
 
   @override
   int get hashCode =>
-      instruction.hashCode ^ distance.hashCode ^ duration.hashCode;
+      instruction.hashCode ^
+      distance.hashCode ^
+      duration.hashCode ^
+      roadName.hashCode ^
+      maneuverType.hashCode ^
+      maneuverModifier.hashCode ^
+      roundaboutExit.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -220,7 +462,11 @@ class DirectionsStep {
           runtimeType == other.runtimeType &&
           instruction == other.instruction &&
           distance == other.distance &&
-          duration == other.duration;
+          duration == other.duration &&
+          roadName == other.roadName &&
+          maneuverType == other.maneuverType &&
+          maneuverModifier == other.maneuverModifier &&
+          roundaboutExit == other.roundaboutExit;
 }
 
 /// The units a route's instructions give distances in.

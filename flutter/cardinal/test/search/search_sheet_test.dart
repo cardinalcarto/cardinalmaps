@@ -234,6 +234,70 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  group('the bar fits the header it\'s pinned in, with the room round it it '
+      'has at 1×', () {
+    for (final (platform, scale, chips) in [
+      for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+        for (final scale in [1.3, 1.5, 2.0, 3.1])
+          for (final chips in [false, true]) (platform, scale, chips),
+    ]) {
+      testWidgets('at $scale× on ${platform.name}'
+          '${chips ? ', with pinned places' : ''}', (tester) async {
+        debugDefaultTargetPlatformOverride = platform;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final store = await _pumpApp(tester);
+        if (chips) {
+          final place = Place(
+            id: 'poi:1',
+            kind: 'poi',
+            name: 'Cafe Allegro',
+            center: const LngLat(0, 0),
+          );
+          await store.places.put(place);
+          await store.saved.savePlace(place.id);
+          final saved = (await store.saved.watch().first).copiesOf(place.id);
+          await store.saved.setPinned([saved.single.entryId], true);
+          await tester.pumpAndSettle();
+          expect(find.text('Cafe Allegro'), findsOneWidget);
+        }
+        // What the header pins, the bar on the sheet's color, and the bar.
+        Rect box() => tester.getRect(
+          find
+              .descendant(
+                of: find.byType(SliverPersistentHeader),
+                matching: find.byType(ColoredBox),
+              )
+              .first,
+        );
+        Rect bar() => tester.getRect(
+          find.byType(
+            platform == TargetPlatform.iOS
+                ? CupertinoSearchTextField
+                : SearchBar,
+          ),
+        );
+        final normalBox = box(), normalBar = bar();
+        tester.platformDispatcher.textScaleFactorTestValue = scale;
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(
+          bar().top - box().top,
+          moreOrLessEquals(normalBar.top - normalBox.top),
+        );
+        expect(
+          box().bottom - bar().bottom,
+          moreOrLessEquals(normalBox.bottom - normalBar.bottom),
+        );
+        // It's only taller where the bar's text is.
+        if (bar().height == normalBar.height) {
+          expect(box().height, normalBox.height);
+        }
+        debugDefaultTargetPlatformOverride = null;
+      });
+    }
+  });
+
   testWidgets('the bar\'s Cancel arrow stops searching, as back does', (
     tester,
   ) async {

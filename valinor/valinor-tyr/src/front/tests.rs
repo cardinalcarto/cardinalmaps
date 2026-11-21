@@ -809,6 +809,11 @@ fn deprecated_and_top_level_options() {
         ReverseTimeTracking::RttDisabled as i32
     );
 
+    // Valinor's own option is off unless asked for.
+    assert!(!options.valinor_leg_details);
+    assert!(parse_options("route", &route(r#""valinor_leg_details": true"#)).valinor_leg_details);
+    assert!(!parse_options("route", &route(r#""valinor_leg_details": false"#)).valinor_leg_details);
+
     // Deprecated and unsupported things warn.
     assert_eq!(
         warnings("route", &route(r#""jsonp": "f", "best_paths": 2"#)),

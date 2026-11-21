@@ -205,6 +205,11 @@ class _TabItem extends StatelessWidget {
   final _Tab tab;
   final bool selected;
 
+  /// The most the system's text scale enlarges a label, as the platforms' own bars
+  /// stop their labels growing, and as the directions tabs do: the bar is a fixed
+  /// height, and the label is under its icon.
+  static const double _maxTextScale = 1.3;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -235,12 +240,15 @@ class _TabItem extends StatelessWidget {
               children: [
                 Icon(tab.icon, size: 22, color: color),
                 const SizedBox(height: 2),
-                Text(
-                  tab.label,
-                  maxLines: 1,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontSize: 10,
-                    color: color,
+                MediaQuery.withClampedTextScaling(
+                  maxScaleFactor: _maxTextScale,
+                  child: Text(
+                    tab.label,
+                    maxLines: 1,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 10,
+                      color: color,
+                    ),
                   ),
                 ),
               ],

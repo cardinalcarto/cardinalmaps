@@ -266,16 +266,22 @@ Color routeTextColor(TransitRoute? route, Color background) =>
 
 /// A journey's timeline: ride badges in route colors, dotted walks, and thin waits.
 ///
-/// Its pieces sit at their times on [axis], which rows of a list share, with the axis'
-/// marks ([TimelineAxis.ticks]) drawn faintly behind it if [ticks] is set. With a
+/// Its pieces sit at their times on [axis], which rows of a list share. With a
 /// [chain], it's timed as the departures chosen have it, and when the chain changes it
 /// eases there: each piece moves and recolors to where it now is, the labels
 /// cross-fade, and pieces that come or go fade in or out.
 ///
 /// With [others], the other routes that can be taken for each ride ([otherRoutes]),
-/// a line above it says "or" and badges them, over the start of each ride that has
+/// a line under it says "or" and badges them, each from the left of the ride that has
 /// some, as far as there's room ([placeOrLabels]). Whether it has that line is the
-/// journey's alone, so its height doesn't change with a choice.
+/// journey's alone, so its height doesn't change with a choice; with [reserveOthers]
+/// it keeps the line's room whether or not there's anything to say on it, as rows of
+/// one height do.
+///
+/// The timeline and that line are as tall as [height] and [orHeight] say, or as their
+/// labels need at the system's text size if that's more, so no label is cut short. A
+/// row of a list says where they go in it: the timeline in the middle of [room], and
+/// the line [othersGap] under that, [othersHeight] tall.
 class JourneyTimeline extends StatefulWidget {
   const JourneyTimeline({
     super.key,
@@ -283,22 +289,58 @@ class JourneyTimeline extends StatefulWidget {
     required this.axis,
     this.chain,
     this.others,
-    this.ticks = false,
+    this.reserveOthers = false,
+    this.eases,
     this.height = 26,
+    this.room,
+    this.othersGap = orGap,
+    this.othersHeight,
   });
 
   final Journey journey;
   final TimelineAxis axis;
   final ConnectionChain? chain;
   final List<List<TransitRoute>>? others;
-  final bool ticks;
 
-  /// The height of the timeline itself, below any line of other routes.
+  /// Whether to keep the room of the line of other routes with none to show.
+  final bool reserveOthers;
+
+  /// Whether it eases to what it's given next, rather than just showing it: for a
+  /// timeline that goes on being the same journey's, as its times or its axis
+  /// change. If null, it does while it has a [chain].
+  final bool? eases;
+
+  /// The height of the timeline itself, above any line of other routes, at the
+  /// default text size.
   final double height;
 
-  /// The height of the line of other routes, and the room under it.
+  /// The room the timeline itself is in the middle of, if that's more than it's
+  /// tall: a row's place for its graph.
+  final double? room;
+
+  /// The room between the timeline's and the line of other routes.
+  final double othersGap;
+
+  /// How tall the line of other routes and its badges are, or null for
+  /// [orHeightOf]: a line of a row's text.
+  final double? othersHeight;
+
+  /// The height of the line of other routes at the default text size, and the room
+  /// over it.
   static const orHeight = 16.0;
   static const orGap = 4.0;
+
+  /// How tall a timeline [height] tall at the default text size is at [context]'s.
+  static double barHeightOf(BuildContext context, {double height = 26}) {
+    final size = Theme.of(context).textTheme.labelLarge!.fontSize!;
+    return math.max(height, MediaQuery.textScalerOf(context).scale(size) + 6);
+  }
+
+  /// How tall the line of other routes is at [context]'s text size.
+  static double orHeightOf(BuildContext context) {
+    final size = Theme.of(context).textTheme.labelMedium!.fontSize!;
+    return math.max(orHeight, MediaQuery.textScalerOf(context).scale(size) + 4);
+  }
 
   @override
   State<JourneyTimeline> createState() => JourneyTimelineState();
@@ -350,7 +392,9 @@ class JourneyTimelineState extends State<JourneyTimeline>
     final painted = _frame.pieces;
     // A timeline that follows choices eases between them; one that doesn't, such as
     // an overview row given another journey, just changes.
-    if (widget.chain == null || oldWidget.chain == null || painted == null) {
+    final eases =
+        widget.eases ?? (widget.chain != null && oldWidget.chain != null);
+    if (!eases || painted == null) {
       _from = null;
       _t.value = 1;
       return;
@@ -372,14 +416,16 @@ class JourneyTimelineState extends State<JourneyTimeline>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final others = _othersOf(widget);
-    final hasOthers = others.isNotEmpty;
+    final hasOthers = others.isNotEmpty || widget.reserveOthers;
     final scaler = MediaQuery.textScalerOf(context);
+    final bar = JourneyTimeline.barHeightOf(context, height: widget.height);
+    final room = math.max(bar, widget.room ?? 0.0);
+    final orHeight = widget.othersHeight ?? JourneyTimeline.orHeightOf(context);
+    final orTop = room + widget.othersGap;
     return Semantics(
       label: timelineLabel(_pieces, others: widget.others),
       child: SizedBox(
-        height: hasOthers
-            ? widget.height + JourneyTimeline.orHeight + JourneyTimeline.orGap
-            : widget.height,
+        height: hasOthers ? orTop + orHeight : room,
         width: double.infinity,
         child: CustomPaint(
           painter: _TimelinePainter(
@@ -390,11 +436,11 @@ class JourneyTimelineState extends State<JourneyTimeline>
             fromOthers: _fromOthers,
             t: _curve,
             frame: _frame,
-            barTop: hasOthers
-                ? JourneyTimeline.orHeight + JourneyTimeline.orGap
-                : 0,
+            barTop: (room - bar) / 2,
+            barHeight: bar,
+            orTop: orTop,
+            orHeight: orHeight,
             axis: widget.axis,
-            ticks: widget.ticks,
             scheme: theme.colorScheme,
             textStyle: theme.textTheme.labelLarge!.copyWith(
               fontWeight: FontWeight.w600,
@@ -529,7 +575,8 @@ List<DrawnPiece> lerpDrawn(
     final f = byKey[p.key];
     if (f != null && alike(f, p)) {
       matched.add(f);
-      final relabels = _badgeText(f.piece.route) != _badgeText(p.piece.route);
+      final relabels =
+          routeBadgeText(f.piece.route) != routeBadgeText(p.piece.route);
       coming.add(
         DrawnPiece(
           key: p.key,
@@ -584,10 +631,11 @@ String timelineLabel(
     for (final (i, p) in pieces.indexed)
       if (p.kind == TimelineKind.ride)
         [
-          _badgeText(p.route),
+          routeBadgeText(p.route),
           // Once a ride, at its first piece.
           if (_startsRide(pieces, i))
-            for (final route in _othersOf(others, p.ride)) _badgeText(route),
+            for (final route in _othersOf(others, p.ride))
+              routeBadgeText(route),
         ].join(' or '),
   ];
   return rides.isEmpty ? 'No rides' : rides.join(', then ');
@@ -636,7 +684,9 @@ List<({double left, int count})> placeOrLabels(
   return out;
 }
 
-String _badgeText(TransitRoute? route) {
+/// What a ride's badge calls its [route]: its short name, else its long name, else
+/// the kind of vehicle it runs.
+String routeBadgeText(TransitRoute? route) {
   final name = route?.shortName ?? route?.longName;
   return name == null || name.isEmpty
       ? (route?.kind ?? VehicleKind.other).label
@@ -653,8 +703,10 @@ class _TimelinePainter extends CustomPainter {
     required this.t,
     required this.frame,
     required this.barTop,
+    required this.barHeight,
+    required this.orTop,
+    required this.orHeight,
     required this.axis,
-    required this.ticks,
     required this.scheme,
     required this.textStyle,
     required this.orStyle,
@@ -677,10 +729,14 @@ class _TimelinePainter extends CustomPainter {
   /// Where it notes what it painted.
   final _Frame frame;
 
-  /// Where the timeline itself starts, below any line of other routes.
+  /// Where the timeline itself starts, and how tall it is.
   final double barTop;
+  final double barHeight;
+
+  /// Where the line of other routes starts, under the timeline, and how tall it is.
+  final double orTop;
+  final double orHeight;
   final TimelineAxis axis;
-  final bool ticks;
   final ColorScheme scheme;
   final TextStyle textStyle;
   final TextStyle orStyle;
@@ -689,15 +745,6 @@ class _TimelinePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (ticks) {
-      final tick = Paint()
-        ..color = scheme.outlineVariant.withValues(alpha: 0.5)
-        ..strokeWidth = 1;
-      for (final t in axis.ticks(size.width)) {
-        final x = axis.x(t, size.width).roundToDouble() + 0.5;
-        canvas.drawLine(Offset(x, -12), Offset(x, size.height + 12), tick);
-      }
-    }
     final target = drawnPieces(pieces, axis, size.width, scheme.primary);
     final from = this.from;
     final t = this.t.value;
@@ -713,19 +760,23 @@ class _TimelinePainter extends CustomPainter {
         if (p.key case ('ride', final int ride, 0)) ride: p.left + 1,
     };
     final crossing = from != null && t < 1 && !_sameOthers(fromOthers, others);
+    canvas.save();
+    canvas.translate(0, orTop);
+    final line = Size(size.width, orHeight);
     if (crossing && fromOthers.isNotEmpty) {
-      _faded(canvas, size, 1 - t, () {
+      _faded(canvas, line, 1 - t, () {
         _others(canvas, anchors, fromOthers, size.width);
       });
     }
     if (others.isNotEmpty) {
-      _faded(canvas, size, crossing ? t : 1, () {
+      _faded(canvas, line, crossing ? t : 1, () {
         _others(canvas, anchors, others, size.width);
       });
     }
+    canvas.restore();
     canvas.save();
     canvas.translate(0, barTop);
-    final bar = Size(size.width, size.height - barTop);
+    final bar = Size(size.width, barHeight);
     for (final p in drawn) {
       _faded(canvas, bar, p.opacity, () => _piece(canvas, p, bar));
     }
@@ -766,7 +817,7 @@ class _TimelinePainter extends CustomPainter {
     }
   }
 
-  /// The line of other routes: "or" and their badges, over the start of each ride
+  /// The line of other routes: "or" and their badges, under the start of each ride
   /// that has some, at [anchors].
   void _others(
     Canvas canvas,
@@ -775,7 +826,7 @@ class _TimelinePainter extends CustomPainter {
     double width,
   ) {
     const space = 4.0, padding = 4.0, badgeGap = 3.0;
-    const height = JourneyTimeline.orHeight;
+    final height = orHeight;
     TextPainter text(String label, TextStyle style) => TextPainter(
       text: TextSpan(text: label, style: style),
       textDirection: TextDirection.ltr,
@@ -789,7 +840,7 @@ class _TimelinePainter extends CustomPainter {
       return (
         color,
         text(
-          _badgeText(route),
+          routeBadgeText(route),
           orBadgeStyle.copyWith(color: routeTextColor(route, color)),
         ),
       );
@@ -960,7 +1011,7 @@ class _TimelinePainter extends CustomPainter {
       textScaler: textScaler,
       maxLines: 1,
     )..layout();
-    final name = _badgeText(route);
+    final name = routeBadgeText(route);
     var painter = text(name);
     // "E Line" or "1 Line" says "E" or "1" where it must, as its signs do.
     if (painter.width > room && name.endsWith(' Line') && name.length > 5) {
@@ -1005,9 +1056,11 @@ class _TimelinePainter extends CustomPainter {
       old.textStyle != textStyle ||
       old.orStyle != orStyle ||
       old.barTop != barTop ||
+      old.barHeight != barHeight ||
+      old.orTop != orTop ||
+      old.orHeight != orHeight ||
       !_sameOthers(old.others, others) ||
-      old.textScaler != textScaler ||
-      old.ticks != ticks;
+      old.textScaler != textScaler;
 }
 
 bool _sameOthers(List<List<TransitRoute>> a, List<List<TransitRoute>> b) {
@@ -1037,122 +1090,87 @@ bool _samePieces(List<TimelinePiece> a, List<TimelinePiece> b) {
   return true;
 }
 
-/// Times along the overview's axis, above its rows.
-class TimelineTicks extends StatelessWidget {
-  const TimelineTicks({super.key, required this.axis});
+/// Times along the overview's axis, above its rows. When the axis changes, as it
+/// does when the journeys are planned again, the times slide to where they now are,
+/// in step with the rows' timelines.
+class TimelineTicks extends ImplicitlyAnimatedWidget {
+  const TimelineTicks({super.key, required this.axis})
+    : super(duration: rowDuration, curve: rowCurve);
 
   final TimelineAxis axis;
+
+  /// How tall the times are at [context]'s text size.
+  static double heightOf(BuildContext context) {
+    final size = Theme.of(context).textTheme.labelSmall!.fontSize!;
+    return math.max(16, MediaQuery.textScalerOf(context).scale(size) + 4);
+  }
+
+  @override
+  ImplicitlyAnimatedWidgetState<TimelineTicks> createState() =>
+      _TimelineTicksState();
+}
+
+class _TimelineTicksState extends AnimatedWidgetBaseState<TimelineTicks> {
+  /// The ends of the axis, in milliseconds since the epoch.
+  Tween<double>? _start;
+  Tween<double>? _end;
+
+  @override
+  void forEachTween(TweenVisitor<dynamic> visitor) {
+    Tween<double> tween(dynamic value) => Tween<double>(begin: value as double);
+    _start = visitor(
+      _start,
+      widget.axis.start.millisecondsSinceEpoch.toDouble(),
+      tween,
+    ) as Tween<double>?;
+    _end = visitor(
+      _end,
+      widget.axis.end.millisecondsSinceEpoch.toDouble(),
+      tween,
+    ) as Tween<double>?;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final style = theme.textTheme.labelSmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
+      height: 1,
+    );
+    DateTime at(Tween<double>? tween, DateTime otherwise) => tween == null
+        ? otherwise
+        : DateTime.fromMillisecondsSinceEpoch(
+            tween.evaluate(animation).round(),
+          );
+    final axis = TimelineAxis(
+      at(_start, widget.axis.start),
+      at(_end, widget.axis.end),
     );
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         return SizedBox(
-          height: 16,
+          height: TimelineTicks.heightOf(context),
           child: Stack(
             clipBehavior: Clip.none,
             children: [
               for (final t in axis.ticks(width))
                 Positioned(
-                  left: axis.x(t, width) - 40,
-                  width: 80,
-                  child: Text(
-                    clock(context, t),
-                    textAlign: TextAlign.center,
-                    style: style,
-                    maxLines: 1,
+                  key: ValueKey(t),
+                  left: axis.x(t, width) - 60,
+                  width: 120,
+                  top: 0,
+                  bottom: 0,
+                  // A time too wide for the room between two shrinks.
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(clock(context, t), style: style, maxLines: 1),
                   ),
                 ),
             ],
           ),
         );
       },
-    );
-  }
-}
-
-/// A journey in the overview: its timeline on the shared axis, with the other routes
-/// that can be taken for its rides above it, when to go, and how long it takes.
-class JourneyRow extends StatelessWidget {
-  const JourneyRow({
-    super.key,
-    required this.journey,
-    required this.axis,
-    required this.now,
-    required this.onTap,
-  });
-
-  final Journey journey;
-  final TimelineAxis axis;
-  final DateTime now;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final muted = theme.textTheme.bodySmall?.copyWith(
-      color: scheme.onSurfaceVariant,
-    );
-    final offset = journeyUtcOffset(journey);
-    final moved = journey.legs.whereType<StreetLeg>().any(
-      (leg) => leg.stopMoved.isNotEmpty,
-    );
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            JourneyTimeline(
-              journey: journey,
-              axis: axis,
-              others: otherRoutes(journey),
-              ticks: true,
-            ),
-            const SizedBox(height: 6),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: [
-                Expanded(
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        goInSpan(theme, journey, now),
-                        TextSpan(
-                          text:
-                              '   ${clock(context, journey.departure, utcOffset: offset)}'
-                              ' – '
-                              '${clock(context, journey.arrival, utcOffset: offset)}',
-                          style: muted,
-                        ),
-                      ],
-                    ),
-                    style: theme.textTheme.titleSmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (moved) ...[
-                  Icon(Icons.wrong_location, size: 16, color: scheme.error),
-                  const SizedBox(width: 8),
-                ],
-                Text(
-                  formatDuration(journey.duration.toDouble()),
-                  style: theme.textTheme.titleSmall,
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

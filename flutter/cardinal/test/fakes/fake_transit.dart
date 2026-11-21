@@ -28,15 +28,42 @@ class RideQuestion {
   var aborted = false;
 }
 
+/// The departures between two stops [FakeTransit] was asked for, waiting to be
+/// answered.
+class DeparturesQuestion {
+  DeparturesQuestion(this.query, this.access, this.abort);
+
+  final DeparturesQuery query;
+  final TransitAccess access;
+  final Future<void>? abort;
+  final answer = Completer<List<RideDeparture>>();
+
+  /// Whether the asker has given up on the answer.
+  var aborted = false;
+}
+
 /// Transit plans answered by the test, or at once with [immediately] if it's set; and
-/// departures' legs, answered by the test.
+/// departures' legs, and the departures between two stops, answered by the test.
 class FakeTransit implements TransitSource {
   FakeTransit({this.immediately});
 
   TransitPlan? immediately;
   final asked = <TransitQuestion>[];
   final rides = <RideQuestion>[];
+  final departuresAsked = <DeparturesQuestion>[];
   var prepared = 0;
+
+  @override
+  Future<List<RideDeparture>> departures({
+    required DeparturesQuery query,
+    required TransitAccess access,
+    Future<void>? abort,
+  }) {
+    final question = DeparturesQuestion(query, access, abort);
+    unawaited(abort?.then((_) => question.aborted = true));
+    departuresAsked.add(question);
+    return question.answer.future;
+  }
 
   @override
   Future<TransitLeg> ride({
@@ -208,15 +235,57 @@ Map<String, Object?> _departure(
   if (departureAlerts.isNotEmpty) 'departure_alerts': departureAlerts,
 };
 
+/// A departures lookup's answer, as the source reads it: one departure for each of
+/// [runs], a trip and how many seconds after [fakeStart] it leaves, each taking [ride]
+/// seconds, on [route] and headed for [headsign], which every one says for itself,
+/// with its service day. Those in [canceled] don't run, those in [live] have their
+/// times from real-time data, and [last] is the day's last.
+List<RideDeparture> fakeDepartures(
+  List<(String, int)> runs, {
+  int ride = 1200,
+  Map<String, Object?>? route,
+  String headsign = 'Downtown Seattle',
+  Set<String> canceled = const {},
+  Set<String> live = const {},
+  String? last,
+}) => [
+  for (final (trip, leaves) in runs)
+    RideDeparture.listed(
+      _departure(
+        trip,
+        fakeStart + leaves,
+        ride,
+        status: canceled.contains(trip)
+            ? 'canceled'
+            : live.contains(trip)
+            ? 'live'
+            : 'scheduled',
+        last: trip == last,
+        route:
+            route ??
+            const {'route_id': '100040', 'short_name': '40', 'route_type': 3},
+        headsign: headsign,
+      ),
+    ),
+];
+
 /// A plan's JSON with one journey: a walk to a moved stop, a stay-seated bus ride that
 /// runs 4 minutes late under a detour alert, a transfer, a ride on Link, and a walk.
 ///
 /// The bus lists departures around its own: two the rider misses, then its own, one 12
 /// minutes later with an alert of its own, a canceled one, and the day's last. Link's
 /// own departure is the day's last, after one the rider misses.
-Map<String, Object?> fakePlanJson({int journeys = 1}) {
+///
+/// With more [journeys], each leaves ten minutes after the one before, or [shifts]
+/// seconds after the first would, if that's given. They ride the same trips unless
+/// [tags] gives each its own: a journey's tag ends every one of its trips' IDs.
+Map<String, Object?> fakePlanJson({
+  int journeys = 1,
+  List<String>? tags,
+  List<int>? shifts,
+}) {
   final t = fakeStart;
-  Map<String, Object?> journey(int shift) => {
+  Map<String, Object?> journey(int shift, String tag) => {
     'departure': t + shift,
     'arrival': t + shift + 2700,
     'duration_seconds': 2700,
@@ -291,7 +360,7 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
         },
         'agency': {'name': 'Metro Transit'},
         'trip': {
-          'trip_id': 't40',
+          'trip_id': 't40$tag',
           'headsign': 'Downtown Seattle',
           'realtime_state': 'delayed',
         },
@@ -307,7 +376,7 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
         ],
         'segments': [
           {
-            'trip_id': 't40',
+            'trip_id': 't40$tag',
             'route': {
               'route_id': '100040',
               'short_name': '40',
@@ -318,7 +387,7 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
             'last_stop_index': 1,
           },
           {
-            'trip_id': 't7',
+            'trip_id': 't7$tag',
             'route': {'route_id': '100007', 'short_name': '7', 'route_type': 3},
             'headsign': 'Rainier Beach',
             'first_stop_index': 1,
@@ -347,9 +416,9 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
           },
         ],
         'departures': [
-          _departure('t40a', t + shift, 1200, missed: true),
+          _departure('t40a$tag', t + shift, 1200, missed: true),
           _departure(
-            't40b',
+            't40b$tag',
             t + shift + 300,
             1200,
             status: 'live',
@@ -357,7 +426,7 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
             missed: true,
           ),
           _departure(
-            't40',
+            't40$tag',
             t + shift + 600,
             1200,
             status: 'live',
@@ -366,14 +435,14 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
             alerts: [0],
           ),
           _departure(
-            't40c',
+            't40c$tag',
             t + shift + 1320,
             1200,
             accessibility: 'inaccessible',
             departureAlerts: [0],
           ),
-          _departure('t40d', t + shift + 1800, 1200, status: 'canceled'),
-          _departure('t40e', t + shift + 2040, 1200, last: true),
+          _departure('t40d$tag', t + shift + 1800, 1200, status: 'canceled'),
+          _departure('t40e$tag', t + shift + 2040, 1200, last: true),
         ],
         'departure_alerts': [
           _alert(
@@ -408,16 +477,16 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
           'color': '28813F',
         },
         'agency': {'name': 'Sound Transit'},
-        'trip': {'trip_id': 'link', 'headsign': 'Angle Lake'},
+        'trip': {'trip_id': 'link$tag', 'headsign': 'Angle Lake'},
         'stops': [
           _stop('Westlake Station Bay 1', 0.91, 3.21, t + shift + 2040),
           _stop('Capitol Hill Station', 1, 3.8, t + shift + 2580),
         ],
         'alerts': <Object>[],
         'departures': [
-          _departure('link0', t + shift + 1500, 540, missed: true),
+          _departure('link0$tag', t + shift + 1500, 540, missed: true),
           _departure(
-            'link',
+            'link$tag',
             t + shift + 2040,
             540,
             suggested: true,
@@ -460,13 +529,21 @@ Map<String, Object?> fakePlanJson({int journeys = 1}) {
         },
       ],
     },
-    'journeys': [for (var i = 0; i < journeys; i++) journey(i * 600)],
+    'journeys': [
+      for (var i = 0; i < journeys; i++)
+        journey(shifts?[i] ?? i * 600, tags?[i] ?? ''),
+    ],
     'direct': {'status': 'found', 'seconds': 5400},
   };
 }
 
-TransitPlan fakePlan({int journeys = 1}) =>
-    TransitPlan.fromJson(fakePlanJson(journeys: journeys));
+TransitPlan fakePlan({
+  int journeys = 1,
+  List<String>? tags,
+  List<int>? shifts,
+}) => TransitPlan.fromJson(
+  fakePlanJson(journeys: journeys, tags: tags, shifts: shifts),
+);
 
 /// A plan with no journeys, and why.
 TransitPlan emptyPlan(String reason) => TransitPlan.fromJson({

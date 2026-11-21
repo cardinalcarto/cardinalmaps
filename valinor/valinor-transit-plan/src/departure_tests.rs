@@ -7,15 +7,19 @@
 
 use core::fmt::Write as _;
 
+use insta::assert_json_snapshot;
+
 use valinor_gtfs::{FeedId as CompileFeedId, FeedInput, InMemorySource, LatLon, LoadedTimetable};
 use valinor_gtfs::{TimetableSet, compile};
 use valinor_gtfs_rt::{FeedKind, proto};
 use valinor_transit::Router;
 
+use crate::departures::{DeparturesRequest, departures};
 use crate::error::{Missing, NotRunning, PlanError, StateError};
 use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode, plan};
 use crate::response::{
-    Accessibility, DepartureStatus, JourneyLeg, PlanResponse, RideDeparture, TransitLeg,
+    Accessibility, AlertResponse, DepartureStatus, DeparturesResponse, JourneyLeg, PlanResponse,
+    RideDeparture, TransitLeg,
 };
 use crate::ride::{RideRequest, ride};
 use crate::state::{FeedUpdate, StateConfig, TransitState};
@@ -1600,4 +1604,748 @@ fn a_lookup_on_a_date_outside_the_current_window_pins_one_of_its_own() {
     // The current snapshot stays as it was.
     let after = state.pin(FEED_TIME + 15).expect("pin");
     assert!(std::sync::Arc::ptr_eq(&current, &after));
+}
+
+// A departures lookup lists what a plan's ride would, around a time rather than a leg.
+
+fn between(feed: &str, (board, alight): (&str, &str), around: i64) -> DeparturesRequest {
+    DeparturesRequest {
+        feed: feed.to_owned(),
+        board_stop_id: board.to_owned(),
+        alight_stop_id: alight.to_owned(),
+        around,
+        range: DepartureRange::default(),
+        ready: None,
+        mode: TravelMode::Walking,
+        now: FEED_TIME + 15,
+    }
+}
+
+fn counted(mut request: DeparturesRequest, before: u8, after: u8) -> DeparturesRequest {
+    request.range.before = before;
+    request.range.after = after;
+    request
+}
+
+fn try_list(
+    state: &TransitState,
+    request: &DeparturesRequest,
+) -> Result<DeparturesResponse, LookupError> {
+    departures(state, request, &|| false)
+}
+
+fn list(state: &TransitState, request: &DeparturesRequest) -> DeparturesResponse {
+    try_list(state, request).expect("the lookup succeeds")
+}
+
+fn listed_rows(response: &DeparturesResponse) -> Vec<Row> {
+    response.departures.iter().map(row).collect()
+}
+
+fn listed_trips(response: &DeparturesResponse) -> Vec<&str> {
+    response
+        .departures
+        .iter()
+        .map(|d| d.trip_id.as_str())
+        .collect()
+}
+
+/// A departure apart from any list: its alerts themselves, by ID, rather than indices.
+fn with_alerts(
+    mut departure: RideDeparture,
+    mut alerts: Vec<AlertResponse>,
+) -> (RideDeparture, Vec<AlertResponse>) {
+    departure.alerts.clear();
+    departure.departure_alerts.clear();
+    alerts.sort_by(|a, b| a.id.cmp(&b.id));
+    (departure, alerts)
+}
+
+/// A leg's departures as a lookup states them: with what they left for the leg to say,
+/// and without what only a plan knows, which is the journey's own and what the rider misses.
+fn stated_by_leg(leg: &TransitLeg) -> Vec<(RideDeparture, Vec<AlertResponse>)> {
+    let leg_headsign = leg
+        .stops
+        .first()
+        .and_then(|visit| visit.headsign.clone())
+        .or_else(|| leg.trip.headsign.clone());
+    leg.departures
+        .iter()
+        .map(|departure| {
+            let alerts = departure
+                .alerts
+                .iter()
+                .map(|&index| leg.alerts[index].alert.clone())
+                .chain(
+                    departure
+                        .departure_alerts
+                        .iter()
+                        .map(|&index| leg.departure_alerts[index].clone()),
+                )
+                .collect();
+            let stated = RideDeparture {
+                start_date: departure
+                    .start_date
+                    .clone()
+                    .or_else(|| leg.trip.start_date.clone()),
+                headsign: departure.headsign.clone().or_else(|| leg_headsign.clone()),
+                route: departure.route.clone().or_else(|| leg.route.clone()),
+                suggested: false,
+                missed: false,
+                ..departure.clone()
+            };
+            with_alerts(stated, alerts)
+        })
+        .collect()
+}
+
+fn stated_by_lookup(response: &DeparturesResponse) -> Vec<(RideDeparture, Vec<AlertResponse>)> {
+    response
+        .departures
+        .iter()
+        .map(|departure| {
+            assert!(
+                departure.departure_alerts.is_empty(),
+                "a lookup has one list of alerts"
+            );
+            let alerts = departure
+                .alerts
+                .iter()
+                .map(|&index| response.alerts[index].clone())
+                .collect();
+            with_alerts(departure.clone(), alerts)
+        })
+        .collect()
+}
+
+/// Real-time data that touches every part of a departure: a delay, a cancellation,
+/// and alerts on a route and on one trip.
+fn ingest_everything(state: &TransitState) {
+    ingest(
+        state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![
+            delay_update("R1-0800", JUNE_15, 1, 120),
+            canceled("R1-0900"),
+        ],
+    );
+    ingest(
+        state,
+        FEED,
+        FeedKind::Alerts,
+        vec![
+            alert_entity(
+                "route-1",
+                proto::alert::Effect::Detour,
+                vec![route_selector("R1")],
+            ),
+            alert_entity(
+                "trip-0930",
+                proto::alert::Effect::ReducedService,
+                vec![proto::EntitySelector {
+                    trip: Some(descriptor("R1-0930", JUNE_15, None)),
+                    ..proto::EntitySelector::default()
+                }],
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a_departures_lookup_around_a_legs_departure_agrees_with_the_legs_own_list() {
+    let state = main_state();
+    ingest_everything(&state);
+    let response = run(&state, &request(near_a(), near_c(), june_15(7, 55), 1800));
+    let leg = leg_on(&response, "R1-0800");
+    // The 07:00 leaves more than an hour before the late 08:00 does.
+    assert_eq!(
+        trips_of(leg),
+        vec!["R1-0730", "R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1"],
+    );
+    // A leg lists two before its own, its own, and six after; a lookup counts the departure
+    // at `around` among those after it, so one more is asked for.
+    let looked_up = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), leg.departure), 2, 7),
+    );
+    assert_eq!(stated_by_lookup(&looked_up), stated_by_leg(leg));
+    assert_eq!(looked_up.generated_at, response.generated_at);
+    assert_eq!(looked_up.realtime, response.realtime);
+    // Every departure says what a leg's leaves to the leg, and none is anyone's own.
+    for departure in &looked_up.departures {
+        assert_eq!(departure.start_date.as_deref(), Some(JUNE_15));
+        assert!(departure.headsign.is_some(), "{}", departure.trip_id);
+        assert!(departure.route.is_some(), "{}", departure.trip_id);
+        assert!(!departure.suggested && !departure.missed);
+    }
+    // Each alert is listed once, and the departures index the one list.
+    let ids: Vec<&str> = looked_up.alerts.iter().map(|a| a.id.as_str()).collect();
+    assert_eq!(ids, ["route-1", "trip-0930"]);
+    let indices: Vec<&[usize]> = looked_up
+        .departures
+        .iter()
+        .map(|d| d.alerts.as_slice())
+        .collect();
+    let (route, both, none): (&[usize], &[usize], &[usize]) = (&[0], &[0, 1], &[]);
+    assert_eq!(indices, [route, route, route, route, both, none]);
+
+    // The same holds of a ride after a change, on another route.
+    let response = run(&state, &request(near_a(), near_d(), june_15(7, 55), 1800));
+    let second = transit_legs(&response)
+        .find(|leg| leg.trip.trip_id.starts_with("R2"))
+        .expect("a ride on route 2");
+    let looked_up = list(
+        &state,
+        &counted(between(FEED, ("B", "D"), second.departure), 2, 7),
+    );
+    assert_eq!(stated_by_lookup(&looked_up), stated_by_leg(second));
+}
+
+#[test]
+fn a_departures_lookups_json_is_a_legs_departures_with_everything_stated() {
+    let state = main_state();
+    ingest_everything(&state);
+    let mut request = counted(between(FEED, ("A", "C"), june_15(8, 30)), 1, 3);
+    request.ready = Some(june_15(8, 5));
+    let response = list(&state, &request);
+    assert_json_snapshot!("departures_between_response", &response);
+
+    // Nothing in the range is still a list, and no alerts are no field.
+    let empty = list(&state, &between(FEED, ("A", "C"), june_15(15, 0)));
+    let json = serde_json::to_value(&empty).expect("serializes");
+    assert_eq!(json["departures"], serde_json::json!([]));
+    assert!(json.get("alerts").is_none());
+}
+
+#[test]
+fn a_departures_lookup_counts_before_around_and_from_it_on() {
+    let state = main_state();
+    let around = |hour, minute, before, after| {
+        list(
+            &state,
+            &counted(
+                between(FEED, ("A", "C"), june_15(hour, minute)),
+                before,
+                after,
+            ),
+        )
+    };
+    // A departure leaving exactly at `around` is the first of those after it.
+    assert_eq!(
+        listed_trips(&around(8, 0, 1, 2)),
+        ["R1-0730", "R1-0800", "R1-0830"]
+    );
+    assert_eq!(listed_trips(&around(8, 0, 0, 1)), ["R1-0800"]);
+    assert_eq!(listed_trips(&around(8, 0, 1, 0)), ["R1-0730"]);
+    // A second later, it is the last of those before.
+    let mut late = counted(between(FEED, ("A", "C"), june_15(8, 0) + 1), 1, 2);
+    assert_eq!(
+        listed_trips(&list(&state, &late)),
+        ["R1-0800", "R1-0830", "R1-0900"]
+    );
+    late.range.after = 0;
+    assert_eq!(listed_trips(&list(&state, &late)), ["R1-0800"]);
+    // Between departures, those nearest on each side, in order of departure.
+    assert_eq!(
+        listed_trips(&around(8, 10, 2, 2)),
+        ["R1-0730", "R1-0800", "R1-0830", "R1-0900"]
+    );
+    // The defaults are a plan's: two and six.
+    assert_eq!(
+        listed_trips(&list(&state, &between(FEED, ("A", "C"), june_15(8, 0)))),
+        [
+            "R1-0700", "R1-0730", "R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1"
+        ],
+        "the sixth after would leave more than two hours on"
+    );
+}
+
+#[test]
+fn a_departures_lookup_is_bounded_in_time_as_a_plans_range_is() {
+    let state = main_state();
+    let all = |hour, minute| {
+        list(
+            &state,
+            &counted(between(FEED, ("A", "C"), june_15(hour, minute)), 10, 10),
+        )
+    };
+    // An hour before and two hours after, to the second: the 08:00 leaves an hour before
+    // 09:00, and route 3's last run, at 10:40, two hours after 08:40.
+    assert_eq!(
+        listed_trips(&all(9, 0)),
+        ["R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1", "F1", "F1"]
+    );
+    let a_second_later = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), june_15(9, 0) + 1), 10, 10),
+    );
+    assert_eq!(
+        listed_trips(&a_second_later),
+        ["R1-0830", "R1-0900", "R1-0930", "F1", "F1", "F1"]
+    );
+    assert_eq!(
+        listed_trips(&all(8, 40)),
+        ["R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1", "F1", "F1"]
+    );
+    let a_second_earlier = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), june_15(8, 40) - 1), 10, 10),
+    );
+    assert_eq!(
+        listed_trips(&a_second_earlier),
+        ["R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1", "F1"]
+    );
+    // The bounds a request's range carries are the ones read.
+    let mut narrow = counted(between(FEED, ("A", "C"), june_15(8, 45)), 10, 10);
+    narrow.range.before_seconds = 900;
+    narrow.range.after_seconds = 900;
+    assert_eq!(listed_trips(&list(&state, &narrow)), ["R1-0830", "R1-0900"]);
+}
+
+#[test]
+fn a_departures_lookup_that_can_list_nothing_or_too_much_is_refused() {
+    let state = main_state();
+    let refused = |before, after| {
+        matches!(
+            try_list(
+                &state,
+                &counted(between(FEED, ("A", "C"), june_15(8, 0)), before, after)
+            ),
+            Err(PlanError::InvalidRequest(_))
+        )
+    };
+    assert!(refused(0, 0), "nothing on either side");
+    assert!(refused(11, 1));
+    assert!(refused(1, 11));
+    assert!(!refused(10, 10));
+    let mut far = between(FEED, ("A", "C"), june_15(8, 0));
+    far.range.after_seconds = 24 * 3600 + 1;
+    assert!(matches!(
+        try_list(&state, &far),
+        Err(PlanError::InvalidRequest(_))
+    ));
+}
+
+#[test]
+fn a_departures_lookup_marks_what_leaves_before_the_rider_is_ready() {
+    let state = main_state();
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![
+            delay_update("R1-0800", JUNE_15, 1, 120),
+            canceled("R1-0730"),
+        ],
+    );
+    let mut request = counted(between(FEED, ("A", "C"), june_15(8, 0)), 2, 2);
+    let unmarked = [
+        expected("R1-0700", june_15(7, 0), SCHEDULED, ""),
+        expected("R1-0730", june_15(7, 30), DepartureStatus::Canceled, ""),
+        expected("R1-0800", june_15(8, 2), DepartureStatus::Live, ""),
+        expected("R1-0830", june_15(8, 30), SCHEDULED, ""),
+    ];
+    assert_eq!(
+        listed_rows(&list(&state, &request)),
+        unmarked,
+        "nothing says when the rider is ready"
+    );
+    // Ready at 08:02, when the late 08:00 leaves: it isn't missed, as routing would board it.
+    request.ready = Some(june_15(8, 2));
+    assert_eq!(
+        listed_rows(&list(&state, &request)),
+        [
+            expected("R1-0700", june_15(7, 0), SCHEDULED, "M"),
+            expected("R1-0730", june_15(7, 30), DepartureStatus::Canceled, "M"),
+            expected("R1-0800", june_15(8, 2), DepartureStatus::Live, ""),
+            expected("R1-0830", june_15(8, 30), SCHEDULED, ""),
+        ]
+    );
+    // A second later it is; `ready` needn't be near `around`.
+    request.ready = Some(june_15(8, 2) + 1);
+    let flags: Vec<String> = listed_rows(&list(&state, &request))
+        .into_iter()
+        .map(|row| row.flags)
+        .collect();
+    assert_eq!(flags, ["M", "M", "M", ""]);
+    request.ready = Some(june_15(6, 0));
+    assert_eq!(listed_rows(&list(&state, &request)), unmarked);
+}
+
+#[test]
+fn a_departures_lookup_marks_the_last_of_a_service_day_as_a_plan_does() {
+    let state = main_state();
+    let request = between(FEED, ("A", "C"), june_15(23, 50));
+    let response = list(&state, &request);
+    assert_eq!(
+        listed_rows(&response),
+        [
+            expected("R1-2300", june_15(23, 0), SCHEDULED, ""),
+            expected("R1-2350", june_15(23, 50), SCHEDULED, ""),
+            // 00:20 on June 16, but on June 15's service day, whose last trip it is.
+            expected("R1-2420", june_15(24, 20), SCHEDULED, "L"),
+            expected("R1-0050", june_15(24, 50), SCHEDULED, ""),
+        ]
+    );
+    let dates: Vec<Option<&str>> = response
+        .departures
+        .iter()
+        .map(|d| d.start_date.as_deref())
+        .collect();
+    assert_eq!(
+        dates,
+        [
+            Some(JUNE_15),
+            Some(JUNE_15),
+            Some(JUNE_15),
+            Some("20260616")
+        ],
+        "each states its own service date"
+    );
+    // The day's last is known even when it is the only departure listed.
+    let only = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), june_15(24, 20)), 0, 1),
+    );
+    assert_eq!(
+        listed_rows(&only),
+        [expected("R1-2420", june_15(24, 20), SCHEDULED, "L")]
+    );
+
+    // With 00:20 canceled, 23:50 is the day's last, and the canceled one isn't.
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![canceled("R1-2420")],
+    );
+    let response = list(&state, &request);
+    assert_eq!(
+        listed_rows(&response),
+        [
+            expected("R1-2300", june_15(23, 0), SCHEDULED, ""),
+            expected("R1-2350", june_15(23, 50), SCHEDULED, "L"),
+            expected("R1-2420", june_15(24, 20), DepartureStatus::Canceled, ""),
+            expected("R1-0050", june_15(24, 50), SCHEDULED, ""),
+        ]
+    );
+    let canceled = &response.departures[2];
+    assert_eq!(canceled.scheduled_departure, Some(june_15(24, 20)));
+    assert!(!canceled.realtime);
+    assert_eq!(canceled.delay_seconds, None);
+}
+
+#[test]
+fn a_departures_lookup_lists_skipped_and_delayed_departures_as_real_time_data_has_them() {
+    let state = main_state();
+    let mut skip = entity("tu-skip");
+    skip.trip_update = Some(proto::TripUpdate {
+        trip: descriptor("R1-0900", JUNE_15, None),
+        stop_time_update: vec![proto::trip_update::StopTimeUpdate {
+            stop_sequence: Some(1),
+            schedule_relationship: Some(
+                proto::trip_update::stop_time_update::ScheduleRelationship::Skipped as i32,
+            ),
+            ..proto::trip_update::StopTimeUpdate::default()
+        }],
+        ..proto::TripUpdate::default()
+    });
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![skip, delay_update("R1-0830", JUNE_15, 1, 300)],
+    );
+    // 08:32 is after the 08:30's schedule and before its prediction, which is what counts.
+    let response = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), june_15(8, 32)), 1, 3),
+    );
+    assert_eq!(
+        listed_rows(&response),
+        [
+            expected("R1-0800", june_15(8, 0), SCHEDULED, ""),
+            expected("R1-0830", june_15(8, 35), DepartureStatus::Live, ""),
+            // Shown at its schedule.
+            expected("R1-0900", june_15(9, 0), DepartureStatus::Skipped, ""),
+            expected("R1-0930", june_15(9, 30), SCHEDULED, ""),
+        ]
+    );
+    let live = &response.departures[1];
+    assert!(live.realtime);
+    assert_eq!(live.delay_seconds, Some(300));
+    assert_eq!(live.scheduled_departure, Some(june_15(8, 30)));
+    assert_eq!(live.headsign.as_deref(), Some("Charlie Express"));
+    // From `B`, where it still stops, the 09:00 runs.
+    let from_b = list(
+        &state,
+        &counted(between(FEED, ("B", "C"), june_15(9, 10)), 0, 1),
+    );
+    assert_eq!(
+        listed_rows(&from_b),
+        [expected("R1-0900", june_15(9, 10), SCHEDULED, "")]
+    );
+}
+
+#[test]
+fn a_departures_lookup_reads_the_rules_of_its_mode() {
+    let state = main_state();
+    let mut request = between(FEED, ("A", "C"), june_15(9, 0));
+    assert_eq!(
+        listed_trips(&list(&state, &request)),
+        ["R1-0800", "R1-0830", "R1-0900", "R1-0930", "F1", "F1", "F1"]
+    );
+    // The 09:30 is marked inaccessible.
+    request.mode = TravelMode::Wheelchair;
+    let wheelchair = list(&state, &request);
+    assert_eq!(
+        listed_trips(&wheelchair),
+        ["R1-0800", "R1-0830", "R1-0900", "F1", "F1", "F1"]
+    );
+    assert!(
+        wheelchair
+            .departures
+            .iter()
+            .all(|d| d.accessibility == Accessibility::Accessible)
+    );
+    // Route 3's trip doesn't say it takes bikes.
+    request.mode = TravelMode::Cycling;
+    let cycling = list(&state, &request);
+    assert_eq!(
+        listed_trips(&cycling),
+        ["R1-0800", "R1-0830", "R1-0900", "R1-0930"]
+    );
+    assert!(
+        cycling
+            .departures
+            .iter()
+            .all(|d| d.bikes_allowed == Some("yes"))
+    );
+}
+
+#[test]
+fn a_departures_lookup_lists_each_run_of_a_frequency_trip() {
+    let state = main_state();
+    let response = list(&state, &between(FEED, ("A", "C"), june_15(10, 0)));
+    let runs: Vec<(&str, i64, Option<&str>)> = response
+        .departures
+        .iter()
+        .map(|d| {
+            (
+                d.trip_id.as_str(),
+                d.departure,
+                d.route.as_ref().and_then(|r| r.short_name.as_deref()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        runs,
+        [
+            ("R1-0900", june_15(9, 0), Some("1")),
+            ("R1-0930", june_15(9, 30), Some("1")),
+            ("F1", june_15(10, 0), Some("3")),
+            ("F1", june_15(10, 20), Some("3")),
+            ("F1", june_15(10, 40), Some("3")),
+        ]
+    );
+    assert!(
+        response.departures.iter().all(|d| !d.last_of_day),
+        "route 1 runs until after midnight"
+    );
+    // Around a run, the runs on each side of it.
+    let middle = list(
+        &state,
+        &counted(between(FEED, ("A", "C"), june_15(10, 30)), 1, 1),
+    );
+    let times: Vec<i64> = middle.departures.iter().map(|d| d.departure).collect();
+    assert_eq!(times, [june_15(10, 20), june_15(10, 40)]);
+}
+
+#[test]
+fn a_departures_lookup_lists_stay_seated_trips_by_the_route_they_board() {
+    let state = seated_state();
+    let response = list(&state, &between("seated", ("ORG", "DST"), june_15(8, 30)));
+    // `T3` and `T4` don't make the ride without a change; `T1` into `T2` and `T5` into `T6`
+    // do, and so does `T7` on route 3.
+    let boarded: Vec<(&str, Option<&str>, Option<&str>)> = response
+        .departures
+        .iter()
+        .map(|d| {
+            (
+                d.trip_id.as_str(),
+                d.route.as_ref().map(|r| r.route_id.as_str()),
+                d.headsign.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        boarded,
+        [
+            ("T1", Some("R1"), Some("To Middle")),
+            ("T7", Some("R3"), Some("To Destination")),
+            ("T5", Some("R1"), Some("To Middle")),
+        ],
+        "a seated ride is on the route it boards, under the headsign it boards with"
+    );
+    let times: Vec<(i64, i64, bool)> = response
+        .departures
+        .iter()
+        .map(|d| (d.departure, d.arrival, d.last_of_day))
+        .collect();
+    assert_eq!(
+        times,
+        [
+            // Where `T2` reaches the destination.
+            (june_15(8, 5), june_15(8, 50), false),
+            (june_15(8, 40), june_15(9, 15), false),
+            (june_15(9, 5), june_15(9, 50), true),
+        ]
+    );
+    // It is what the plan's seated ride lists.
+    let plan = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 0), 3600),
+    );
+    let seated = transit_legs(&plan)
+        .find(|leg| leg.trip.trip_id == "T1" && !leg.segments.is_empty())
+        .expect("the ride stays seated from T1 into T2");
+    let around_it = list(
+        &state,
+        &counted(between("seated", ("ORG", "DST"), seated.departure), 2, 7),
+    );
+    assert_eq!(stated_by_lookup(&around_it), stated_by_leg(seated));
+    // Combined trips are listed once on a route they ride part of.
+    let to_middle = list(&state, &between("seated", ("ORG", "MID"), june_15(8, 30)));
+    assert_eq!(listed_trips(&to_middle), ["T1", "T3", "T5"]);
+}
+
+#[test]
+fn a_departures_lookup_lists_every_route_between_the_two_stops() {
+    let state = connection_state();
+    let plan = run(&state, &request(near_p(), near_q(), june_15(20, 55), 600));
+    let leg = leg_on(&plan, "R7-2100");
+    let looked_up = list(
+        &state,
+        &counted(between(CONNECTION, ("P", "Q"), leg.departure), 2, 7),
+    );
+    assert_eq!(stated_by_lookup(&looked_up), stated_by_leg(leg));
+    let routes: Vec<Option<&str>> = looked_up
+        .departures
+        .iter()
+        .map(|d| d.route.as_ref().and_then(|r| r.short_name.as_deref()))
+        .collect();
+    assert!(
+        routes.contains(&Some("7")) && routes.contains(&Some("14")),
+        "{routes:?}"
+    );
+}
+
+#[test]
+fn a_departures_lookup_names_what_isnt_there_and_lists_nothing_where_nothing_runs() {
+    let state = main_state();
+    let around = june_15(8, 0);
+    assert!(matches!(
+        try_list(&state, &between("other", ("A", "C"), around)),
+        Err(PlanError::State(StateError::UnknownFeed(feed))) if feed == "other"
+    ));
+    for stops in [("A", "Z"), ("Z", "C"), ("Z", "Z")] {
+        assert!(
+            matches!(
+                try_list(&state, &between(FEED, stops, around)),
+                Err(PlanError::NotFound(Missing::Stop))
+            ),
+            "{stops:?}"
+        );
+    }
+    // A moment no timetable covers at all.
+    assert!(matches!(
+        try_list(&state, &between(FEED, ("A", "C"), 1_893_456_000)),
+        Err(PlanError::State(StateError::DateNotCovered(_)))
+    ));
+    assert!(matches!(
+        try_list(&state, &between(FEED, ("A", "C"), i64::MAX)),
+        Err(PlanError::State(StateError::DateNotCovered(_)))
+    ));
+    // Two stops nothing runs between, in that order, are a list of nothing: no trip runs from
+    // `C` back to `A`, none from `A` to `D` without a change, and none from a stop to itself.
+    for stops in [("C", "A"), ("A", "D"), ("A", "A")] {
+        let response = list(&state, &between(FEED, stops, around));
+        assert!(response.departures.is_empty(), "{stops:?}");
+        assert!(response.alerts.is_empty(), "{stops:?}");
+    }
+    assert!(matches!(
+        departures::<core::convert::Infallible, core::convert::Infallible>(
+            &state,
+            &between(FEED, ("A", "C"), around),
+            &|| true
+        ),
+        Err(PlanError::Interrupted)
+    ));
+}
+
+#[test]
+fn a_departures_lookup_on_a_date_outside_the_current_window_pins_one_of_its_own() {
+    let state = main_state();
+    let current = state.pin(FEED_TIME + 15).expect("pin");
+    let friday = june_15(4 * 24 + 8, 0);
+    let response = list(&state, &counted(between(FEED, ("A", "C"), friday), 1, 1));
+    assert_eq!(
+        listed_rows(&response),
+        [
+            expected("R1-0730", friday - 1800, SCHEDULED, ""),
+            expected("R1-0800", friday, SCHEDULED, ""),
+        ]
+    );
+    assert_eq!(
+        response.departures[1].start_date.as_deref(),
+        Some("20260619")
+    );
+    // The current snapshot stays as it was.
+    let after = state.pin(FEED_TIME + 15).expect("pin");
+    assert!(std::sync::Arc::ptr_eq(&current, &after));
+}
+
+#[test]
+fn json_departures_lookups_set_the_range_and_when_the_rider_is_ready() {
+    let parsed = crate::json::parse_departures(
+        br#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C","around":1781535600}"#,
+        FEED_TIME,
+    )
+    .expect("parses");
+    assert_eq!(parsed.range, DepartureRange::default());
+    assert_eq!(
+        (parsed.around, parsed.ready, parsed.mode, parsed.now),
+        (1_781_535_600, None, TravelMode::Walking, FEED_TIME)
+    );
+    let parsed = crate::json::parse_departures(
+        br#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C","around":1781535600,
+            "departures_before":0,"departures_after":10,"ready":1781535700,"mode":"wheelchair"}"#,
+        FEED_TIME,
+    )
+    .expect("parses");
+    assert_eq!(
+        parsed.range,
+        DepartureRange {
+            before: 0,
+            after: 10,
+            ..DepartureRange::default()
+        }
+    );
+    assert_eq!(
+        (parsed.ready, parsed.mode),
+        (Some(1_781_535_700), TravelMode::Wheelchair)
+    );
+    // `around` is required, and a mode must be one there is.
+    for body in [
+        r#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C"}"#,
+        r#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C","around":"now"}"#,
+        r#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C","around":1,"mode":"flying"}"#,
+        r#"{"feed":"metro","board_stop_id":"A","alight_stop_id":"C","around":1,"departures_after":-1}"#,
+        "not json",
+    ] {
+        let refused =
+            crate::json::parse_departures(body.as_bytes(), FEED_TIME).expect_err("doesn't parse");
+        assert_eq!(refused.status, 400, "{body}");
+    }
 }

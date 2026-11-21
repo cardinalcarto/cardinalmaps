@@ -47,6 +47,7 @@ use valinor_walk::{
 use valinor_walk::snap_stops;
 
 use crate::build::{BuildLoadError, TransitBuild};
+use crate::departures::{DeparturesRequest, departures};
 use crate::error::{PlanError, StateError};
 use crate::nearby::{
     NearbyRequest, RouteDetailRequest, nearby_pinned, route_detail, validated_nearby,
@@ -56,8 +57,8 @@ use crate::plan::{
     PlanStage, TransitRequest, TravelMode, plan_pinned, validated_latest,
 };
 use crate::response::{
-    NearbyResponse, PlanResponse, RideResponse, RouteDetailResponse, VehicleUpdate, WalkManeuver,
-    WalkPath, lower,
+    DeparturesResponse, NearbyResponse, PlanResponse, RideResponse, RouteDetailResponse,
+    VehicleUpdate, WalkManeuver, WalkPath, lower,
 };
 use crate::ride::{RideRequest, ride};
 use crate::state::{StateConfig, StopSnapper, TransitSnapshot, TransitState};
@@ -1414,6 +1415,19 @@ impl StreetPlanner {
         interrupt: &dyn Fn() -> bool,
     ) -> Result<RideResponse, StreetPlanError> {
         ride(&self.state, request, interrupt)
+    }
+
+    /// Every route's departures between two stops around a moment, as a plan's ride lists them.
+    ///
+    /// # Errors
+    ///
+    /// If the request is invalid or names what isn't loaded, or `interrupt` asks to stop.
+    pub fn departures(
+        &self,
+        request: &DeparturesRequest,
+        interrupt: &dyn Fn() -> bool,
+    ) -> Result<DeparturesResponse, StreetPlanError> {
+        departures(&self.state, request, interrupt)
     }
 }
 

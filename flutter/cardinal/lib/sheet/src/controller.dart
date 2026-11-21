@@ -10,7 +10,8 @@ enum _Phase {
   /// Springing to an anchor.
   settling,
 
-  /// Gliding to a stop within a range (see [SheetRange]).
+  /// Gliding to a stop within a range, from within it or from outside (see
+  /// [SheetRange]).
   gliding,
 
   /// Coasting with a fling to the anchor it's caught at, for the spring to take over
@@ -98,16 +99,26 @@ class SheetController extends ChangeNotifier
   ValueListenable<bool> get collapsed => _collapsed;
   final _collapsed = ValueNotifier<bool>(false);
 
-  /// The anchor the current page's sheet first moves to (see
-  /// [SheetContent.initialAnchor]), for [expand].
-  SheetAnchor? _initial;
+  /// Where the current page's sheet first rests (see [SheetContent.initialAnchor] and
+  /// [SheetContent.initialSection]), for [expand].
+  _Rest? _initial;
 
-  /// Brings a collapsed sheet back up to the current page's initial anchor. Does
+  /// Brings a collapsed sheet back up to where the current page first rests. Does
   /// nothing unless it's collapsed.
   void expand() {
     if (!isCollapsed) return;
-    final initial = _initial;
-    if (initial != null) animateTo(initial);
+    switch (_initial) {
+      case _AtAnchor(:final anchor):
+        animateTo(anchor);
+      case final _InRange rest:
+        final extent = rest.extentIn(_anchors, _ranges);
+        if (extent != null && !isTransitioning) {
+          _asked = null;
+          _springTo(rest, extent, 0);
+        }
+      case null:
+        break;
+    }
   }
 
   /// The furthest the sheet can be pulled up at all.
@@ -151,8 +162,26 @@ class SheetController extends ChangeNotifier
   /// of its ranges, keeping whatever speed it has. If a page transition has the sheet,
   /// or the current page doesn't have that anchor yet, as when it's about to add it,
   /// once that's over.
+  ///
+  /// The page it's asked of is the page as the frame this is called in lays it out
+  /// (the next frame, between frames). So a page that changes its content, its anchors
+  /// or its ranges can ask in the same breath, before or after it marks itself to build
+  /// or while it builds, and the sheet goes to where the new content has [anchor], in
+  /// one motion from where it is: staying where it is, if that's where it rests
+  /// already. If the new content hasn't got it, that's a page that doesn't have it yet.
   void animateTo(SheetAnchor anchor) {
     _awaited = null;
+    _asked = null;
+    final scheduler = SchedulerBinding.instance;
+    final laidOut =
+        scheduler.schedulerPhase == SchedulerPhase.postFrameCallbacks;
+    if (laidOut) {
+      // After a frame the page is laid out, though the scaffold may not have said so
+      // yet: from where the sheet is, before it follows anything that moved.
+      _asked = anchor;
+      _takeAnchors?.call();
+      _asked = null;
+    }
     final target = _placeOf(anchor);
     if (isTransitioning || target == null) {
       _awaited = anchor;
@@ -163,10 +192,29 @@ class SheetController extends ChangeNotifier
       target.$2,
       _phase == _Phase.settling ? _spring.velocity : 0,
     );
+    if (laidOut) return;
+    // Sprung from where it is, towards where the page had the anchor last frame:
+    // [_setAnchors] turns it to where this frame has it before the spring first moves.
+    _asked = anchor;
+    scheduler
+      ..addPostFrameCallback((_) {
+        if (_asked == null) return;
+        _takeAnchors?.call();
+        _asked = null;
+      })
+      ..ensureVisualUpdate();
   }
 
   /// The anchor to spring to as soon as the current page has it.
   SheetAnchor? _awaited;
+
+  /// The anchor [animateTo] sprang the sheet to, until the frame it was asked in is
+  /// laid out: the page may place it elsewhere in that frame, or drop it.
+  SheetAnchor? _asked;
+
+  /// Has the scaffold showing this sheet give it the current page's anchors as they're
+  /// laid out now (see [_setAnchors]), rather than after the frame.
+  VoidCallback? _takeAnchors;
 
   /// Where [anchor] is on the current page, as a rest and its extent: one of its anchors,
   /// or else an end of one of its ranges.
@@ -198,6 +246,7 @@ class SheetController extends ChangeNotifier
     final next =
         stops.firstWhereOrNull((s) => s.$2 > extent + _epsilon) ??
         stops.firstWhere((s) => s.$1 is _AtAnchor);
+    _asked = null;
     _springTo(next.$1, next.$2, 0);
   }
 
@@ -208,6 +257,7 @@ class SheetController extends ChangeNotifier
   void hold({Object? holder}) {
     if (isTransitioning || !_draggable) return;
     _awaited = null;
+    _asked = null;
     _spring.stop();
     _wheelSettle?.cancel();
     _phase = _Phase.held;
@@ -253,53 +303,95 @@ class SheetController extends ChangeNotifier
     return delta - rest;
   }
 
-  /// Lets go of a sheet [holder] is holding, moving at [velocity] (logical pixels per second, positive
-  /// upwards), springing it to the anchor [SheetPhysics.target] picks, or gliding within
-  /// a range (see [SheetRange]).
+  /// Lets go of a sheet [holder] is holding, moving at [velocity] (logical pixels per
+  /// second, positive upwards), springing it to the anchor [SheetPhysics.target] picks,
+  /// or gliding to a stop in a range (see [SheetRange]) as [SheetPhysics.glide] has it:
+  /// within the range it was let go in, or on into one ahead of it if no anchor on the
+  /// way catches the fling. That's one motion from here to where it stops, at the
+  /// fling's own speed all the way, over the anchors it passes.
   ///
-  /// If the fling would carry the sheet past its highest anchor from within a range that
-  /// [SheetRange.carriesIntoScroll], it glides there instead and calls [carryOn] with the
-  /// speed it has left, for the content to scroll on with.
+  /// If the fling would carry the sheet past the top of a range that
+  /// [SheetRange.carriesIntoScroll], where that's as high as the sheet goes, from
+  /// within the range or on its way into it, it glides there instead and calls
+  /// [carryOn] with the speed it has left, for the content to scroll on with.
   void release(
     double velocity, {
     Object? holder,
     ValueChanged<double>? carryOn,
   }) {
     if (!isHeldBy(holder)) return;
-    if (carryOn != null && _carryIntoScroll(velocity, carryOn)) return;
-    _settle(velocity);
+    final from = extent;
+    final decision =
+        (carryOn == null ? null : _carryIntoScroll(velocity, carryOn)) ??
+        _settle(velocity);
+    if (SheetLog.enabled) {
+      debugPrint(
+        SheetLog.release(
+          extent: from,
+          velocity: velocity,
+          anchors: _anchors,
+          ranges: _ranges,
+          decision: decision,
+          content: holder is _SheetScrollPosition,
+          carries: carryOn != null,
+          finger: _finger,
+        ),
+      );
+      _finger = null;
+    }
   }
+
+  /// How fast the finger that last lifted from the sheet was moving, for [SheetLog].
+  VelocityEstimate? _finger;
 
   /// Called with the speed left when a glide reaches the highest anchor.
   ValueChanged<double>? _carryOn;
 
-  /// Glides the sheet up to its highest anchor at [velocity], then hands what's left of
-  /// its speed to [carryOn], if a range lets it and the fling would carry it that far.
-  bool _carryIntoScroll(double velocity, ValueChanged<double> carryOn) {
-    if (velocity < _physics.minFlingVelocity || _anchors.isEmpty) return false;
+  /// Glides the sheet up to the top of a range, as high as it goes, at [velocity], then
+  /// hands what's left of its speed to [carryOn], if the range lets it and the fling
+  /// would carry it that far: from within the range, or into it from below. Null if
+  /// not.
+  SheetDecision? _carryIntoScroll(
+    double velocity,
+    ValueChanged<double> carryOn,
+  ) {
+    if (velocity < _physics.minFlingVelocity || _anchors.isEmpty) return null;
     final top = _max;
-    final range = _ranges.firstWhereOrNull(
-      (r) =>
-          r.range.carriesIntoScroll &&
-          r.contains(extent) &&
-          (r.upper - top).abs() < _epsilon,
+    bool carries(ResolvedRange r) =>
+        r.range.carriesIntoScroll && (r.upper - top).abs() < _epsilon;
+    // The range it's in, or the one the fling glides into from below.
+    var range = _ranges.firstWhereOrNull(
+      (r) => carries(r) && r.contains(extent),
     );
-    if (range == null) return false;
-    if (_physics.landing(extent, velocity) <= top + _epsilon) {
-      return false;
+    if (range == null) {
+      final entered = _entered(velocity);
+      if (entered != null && carries(entered)) range = entered;
     }
+    if (range == null) return null;
+    final landing = _physics.landing(extent, velocity);
+    if (landing <= top + _epsilon) return null;
+    final decision = SheetDecision.range(
+      SheetRule.carriedIntoScroll,
+      range,
+      range.upper,
+      landing: landing,
+      at: top,
+      arrival: SheetLog.enabled
+          ? _physics.speedAt(extent, velocity, top)
+          : null,
+    );
     _wheelSettle?.cancel();
     _spring.stop();
     _settlingTo = null;
-    _phase = _Phase.gliding;
-    _rest = null;
-    _glidingIn = range.range;
-    _carryOn = carryOn;
-    _spring.value = extent;
-    _spring
-        .animateWith(_physics.coast(extent, velocity))
-        .then((_) => _endGlide());
-    return true;
+    _glideIn(range, velocity, carryOn: carryOn);
+    return decision;
+  }
+
+  /// The range a release at [velocity] glides into from outside every range (see
+  /// [SheetPhysics.glide]), if it does.
+  ResolvedRange? _entered(double velocity) {
+    final decision = _physics.decide(_anchors, _ranges, extent, velocity);
+    return decision.rule == SheetRule.glideIntoRange ? decision.range : null;
   }
 
   /// Moves the sheet by [delta] for a mouse wheel, settling once the wheel stops.
@@ -312,16 +404,20 @@ class SheetController extends ChangeNotifier
     });
   }
 
-  void _settle(double velocity) {
+  /// Sets the sheet on its way to where it rests from here, let go at [velocity], and
+  /// says where that is and why: null on a page with no anchors, which rests nowhere.
+  SheetDecision? _settle(double velocity) {
     if (_anchors.isEmpty) {
       _phase = _Phase.idle;
-      return;
+      return null;
     }
+    final decision = _physics.decide(_anchors, _ranges, extent, velocity);
     // Pulled down past the bottom of a range, with no anchor from here up to it: back
     // up to it, as to an anchor there, unless an anchor below it (collapsed, say) is
-    // nearer or catches the fling.
+    // nearer or catches the fling, or the fling carries on into the range.
     final bottom = _ranges.firstOrNull;
-    if (bottom != null &&
+    if (decision.rule != SheetRule.glideIntoRange &&
+        bottom != null &&
         extent < bottom.lower - _epsilon &&
         !_anchors.any(
           (a) =>
@@ -334,20 +430,28 @@ class SheetController extends ChangeNotifier
           if (a.extent < bottom.lower - _epsilon) a,
         ResolvedAnchor(end, bottom.lower, end.gravity ?? _physics.gravity),
       ];
-      final i = _physics.target(stops, extent, velocity);
-      if (i == stops.length - 1) {
-        _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
-      } else {
-        _catchOn(stops[i], velocity);
+      final caught = _physics._catch(stops, extent, velocity);
+      if (caught.anchor != stops.last) {
+        _catchOn(caught.anchor!, velocity);
+        return caught;
       }
-      return;
+      _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
+      return SheetDecision.range(
+        caught.rule,
+        bottom,
+        bottom.lower,
+        landing: caught.landing,
+        at: caught.at,
+        arrival: caught.arrival,
+        gravity: caught.gravity,
+      );
     }
-    if (_physics.glide(_anchors, _ranges, extent, velocity)
-        case final landing?) {
-      _glideTo(landing, velocity);
-      return;
+    if (decision.range case final range?) {
+      _glideTo(range, decision.extent, velocity);
+    } else {
+      _catchOn(decision.anchor!, velocity);
     }
-    _catchOn(_anchors[_physics.target(_anchors, extent, velocity)], velocity);
+    return decision;
   }
 
   /// Settles on [target], let go at [velocity]. A fling that would carry the sheet past
@@ -409,34 +513,34 @@ class SheetController extends ChangeNotifier
     _springTo(target, _coastingExtent, velocity);
   }
 
-  /// The range a glide from the sheet's extent to [landing] stays within.
-  ResolvedRange? _rangeFor(double landing) => _ranges.firstWhereOrNull(
-    (r) => r.contains(extent) && r.contains(landing),
-  );
-
-  /// Glides the sheet from where it is at [velocity] to a stop at [landing], within one
-  /// of the current ranges, slowing as [SheetPhysics.coast] has it.
-  void _glideTo(double landing, double velocity) {
+  /// Glides the sheet from where it is at [velocity] to a stop at [landing] within
+  /// [range], one of the current ranges, slowing as [SheetPhysics.coast] has it.
+  void _glideTo(ResolvedRange range, double landing, double velocity) {
     _wheelSettle?.cancel();
     _spring.stop();
     _settlingTo = null;
-    final range = _rangeFor(landing);
-    if (range == null) {
-      _settleOn(
-        _anchors[_physics.target(_anchors, extent, velocity)],
-        velocity,
-      );
-      return;
-    }
     if (velocity.abs() < _physics.minFlingVelocity ||
         (landing - extent).abs() < _epsilon) {
       _restWithin(range, extent);
       return;
     }
+    _glideIn(range, velocity);
+  }
+
+  /// Sets the sheet coasting from where it is at [velocity], to stop in [range]: the
+  /// one coast all the way, whether it starts within the range or outside it, so it
+  /// passes over the range's near end, and any anchor on the way to it, at the speed
+  /// the fling has there.
+  void _glideIn(
+    ResolvedRange range,
+    double velocity, {
+    ValueChanged<double>? carryOn,
+  }) {
     _phase = _Phase.gliding;
     _rest = null;
     _glidingIn = range.range;
-    _carryOn = null;
+    _glidingFrom = range.contains(extent) ? 0 : velocity.sign;
+    _carryOn = carryOn;
     _spring.value = extent;
     _spring
         .animateWith(_physics.coast(extent, velocity))
@@ -449,15 +553,36 @@ class SheetController extends ChangeNotifier
     _glidingIn = null;
     _carryOn = null;
     final now = _ranges.firstWhereOrNull((r) => r.range == glidingIn);
-    if (now != null) {
+    if (now == null) {
+      _settle(0);
+      return;
+    }
+    final within = extent.clamp(now.lower, now.upper);
+    if ((within - extent).abs() < _epsilon) {
       _restWithin(now, extent);
     } else {
-      _settle(0);
+      // Stopped just short of the range it was gliding into: eases on to its end.
+      _springTo(_restIn(now, within), within, 0);
     }
   }
 
-  /// The range the sheet is gliding within.
+  /// The range the sheet is gliding to a stop in.
   SheetRange? _glidingIn;
+
+  /// Which way the sheet is gliding into that range from outside it, 1 up or -1 down,
+  /// or 0 if the glide began within the range.
+  double _glidingFrom = 0;
+
+  /// Where the sheet rests at [extent] within [range]: at the anchor there, if it's at
+  /// an end with one.
+  _Rest _restIn(ResolvedRange range, double extent) {
+    final anchor = _anchors.firstWhereOrNull(
+      (a) => (a.extent - extent).abs() < _epsilon,
+    );
+    return anchor != null
+        ? _AtAnchor(anchor.anchor)
+        : _InRange(range.range, range.fractionOf(extent));
+  }
 
   /// Rests the sheet at [extent] within [range], or at the anchor there if it's at one
   /// of its ends.
@@ -534,14 +659,19 @@ class SheetController extends ChangeNotifier
           _set(value.clamp(0.0, _maxExtent));
         }
       case _Phase.gliding:
-        // Within the range, should its ends have moved since the glide began.
+        // Within the range, should its ends have moved since the glide began: but for
+        // a glide into it from outside, which is still on its way to the nearer end.
         final range = _ranges.firstWhereOrNull((r) => r.range == _glidingIn);
         final value = _spring.value;
         if (range == null) {
           _set(value);
           break;
         }
-        final clamped = value.clamp(range.lower, range.upper);
+        final clamped = clampDouble(
+          value,
+          _glidingFrom > 0 ? math.min(range.lower, value) : range.lower,
+          _glidingFrom < 0 ? math.max(range.upper, value) : range.upper,
+        );
         _set(clamped);
         final carryOn = _carryOn;
         if (carryOn != null && value >= _max - _epsilon) {
@@ -553,17 +683,17 @@ class SheetController extends ChangeNotifier
           _restWithin(range, range.upper);
           carryOn(velocity);
         } else if (value != clamped) {
-          // Carried out to an end with no anchor past it. At the top of the screen it
-          // stops; anywhere else it runs on past the end with the speed it has, and
-          // springs back, as content scrolled past its end does.
+          // Carried out to an end with no anchor past it, or right across a range it
+          // glided into to its far end. At the top of the screen it stops; anywhere
+          // else it runs on past the end with the speed it has, and springs back, as
+          // content scrolled past its end does.
           final velocity = _spring.velocity;
           _spring.stop();
           if (clamped >= _maxExtent - _epsilon) {
             _endGlide();
           } else {
             _glidingIn = null;
-            final upper = clamped == range.upper;
-            _springTo(_InRange(range.range, upper ? 1 : 0), clamped, velocity);
+            _springTo(_restIn(range, clamped), clamped, velocity);
           }
         }
       case _Phase.idle || _Phase.held || _Phase.transition:
@@ -585,7 +715,7 @@ class SheetController extends ChangeNotifier
     List<ResolvedRange> ranges = const [],
     double floor = 0,
     bool draggable = true,
-    SheetAnchor? initial,
+    _Rest? initial,
   }) {
     _draggable = draggable;
     _initial = initial;
@@ -602,6 +732,24 @@ class SheetController extends ChangeNotifier
         _phase == _Phase.settling ? _spring.velocity : 0,
       );
       return;
+    }
+    if (_asked case final asked?) {
+      // Asked for before this frame laid the page out. Where the page has it now is
+      // where to go, from where the sheet is and at its speed: the spring hasn't moved
+      // it yet.
+      if (_placeOf(asked) case (final rest, final to)?) {
+        final settling = _phase == _Phase.settling;
+        final headed =
+            settling &&
+            _settlingTo == rest &&
+            (_settlingExtent - to).abs() <= _epsilon;
+        if (!headed) _springTo(rest, to, settling ? _spring.velocity : 0);
+        return;
+      }
+      // The page hasn't got it after all: it's waited for, as if asked for now, and the
+      // sheet goes on from where it was headed, which is gone.
+      _asked = null;
+      _awaited = asked;
     }
     if (_phase == _Phase.settling) {
       // Springing to an anchor that moved (as when the keyboard hides): spring on to
@@ -659,6 +807,7 @@ class SheetController extends ChangeNotifier
 
   /// Hands the sheet to a page transition, which moves it with [_follow].
   void _beginTransition() {
+    _asked = null;
     _spring.stop();
     _wheelSettle?.cancel();
     _glidingIn = null;
@@ -712,6 +861,7 @@ class SheetController extends ChangeNotifier
 
   @override
   void dispose() {
+    _asked = null;
     _wheelSettle?.cancel();
     _spring.dispose();
     _collapsed.dispose();

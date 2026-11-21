@@ -1,0 +1,216 @@
+---
+source: valinor-transit-plan/src/departure_tests.rs
+expression: "&response"
+---
+{
+  "generated_at": 1781535015,
+  "realtime": {
+    "level": "realtime",
+    "built_at": 1781535015,
+    "feeds": [
+      {
+        "feed": "metro",
+        "kind": "trip_updates",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 300,
+        "entities_dropped": 0
+      },
+      {
+        "feed": "metro",
+        "kind": "alerts",
+        "state": "applied",
+        "age_seconds": 15,
+        "header_timestamp": 1781535000,
+        "stale_after_seconds": 1800,
+        "entities_dropped": 0
+      }
+    ]
+  },
+  "departures": [
+    {
+      "trip_id": "R1-0800",
+      "start_date": "20260615",
+      "headsign": "North",
+      "route": {
+        "route_id": "R1",
+        "short_name": "1",
+        "route_type": 3
+      },
+      "status": "live",
+      "departure": 1781535720,
+      "arrival": 1781536920,
+      "scheduled_departure": 1781535600,
+      "scheduled_arrival": 1781536800,
+      "delay_seconds": 120,
+      "realtime": true,
+      "accessibility": "accessible",
+      "bikes_allowed": "yes",
+      "missed": true,
+      "alerts": [
+        0
+      ]
+    },
+    {
+      "trip_id": "R1-0830",
+      "start_date": "20260615",
+      "headsign": "Charlie Express",
+      "route": {
+        "route_id": "R1",
+        "short_name": "1",
+        "route_type": 3
+      },
+      "status": "scheduled",
+      "departure": 1781537400,
+      "arrival": 1781538600,
+      "scheduled_departure": 1781537400,
+      "scheduled_arrival": 1781538600,
+      "accessibility": "accessible",
+      "bikes_allowed": "yes",
+      "alerts": [
+        0
+      ]
+    },
+    {
+      "trip_id": "R1-0900",
+      "start_date": "20260615",
+      "headsign": "North",
+      "route": {
+        "route_id": "R1",
+        "short_name": "1",
+        "route_type": 3
+      },
+      "status": "canceled",
+      "departure": 1781539200,
+      "arrival": 1781540400,
+      "scheduled_departure": 1781539200,
+      "scheduled_arrival": 1781540400,
+      "accessibility": "accessible",
+      "bikes_allowed": "yes",
+      "alerts": [
+        0
+      ]
+    },
+    {
+      "trip_id": "R1-0930",
+      "start_date": "20260615",
+      "headsign": "North",
+      "route": {
+        "route_id": "R1",
+        "short_name": "1",
+        "route_type": 3
+      },
+      "status": "scheduled",
+      "departure": 1781541000,
+      "arrival": 1781542200,
+      "scheduled_departure": 1781541000,
+      "scheduled_arrival": 1781542200,
+      "accessibility": "inaccessible",
+      "bikes_allowed": "yes",
+      "alerts": [
+        0,
+        1
+      ]
+    }
+  ],
+  "alerts": [
+    {
+      "feed": "metro",
+      "id": "route-1",
+      "cause": "construction",
+      "effect": "detour",
+      "severity": "warning",
+      "active_periods": [
+        {
+          "start": 1700000000,
+          "end": 1900000000
+        }
+      ],
+      "communication_periods": [],
+      "impact_periods": [],
+      "header": [
+        {
+          "text": "Stop relocated",
+          "language": "en"
+        },
+        {
+          "text": "Parada reubicada",
+          "language": "es"
+        }
+      ],
+      "description": [
+        {
+          "text": "The temporary stop is on Pine St just east of the old one.",
+          "language": "en"
+        }
+      ],
+      "url": [
+        {
+          "text": "https://m.test/alert",
+          "language": "en"
+        }
+      ],
+      "tts_header": [],
+      "tts_description": [],
+      "cause_detail": [],
+      "effect_detail": [],
+      "image": [],
+      "image_alternative_text": [],
+      "informed": [
+        {
+          "route_id": "R1"
+        }
+      ]
+    },
+    {
+      "feed": "metro",
+      "id": "trip-0930",
+      "cause": "construction",
+      "effect": "reduced_service",
+      "severity": "warning",
+      "active_periods": [
+        {
+          "start": 1700000000,
+          "end": 1900000000
+        }
+      ],
+      "communication_periods": [],
+      "impact_periods": [],
+      "header": [
+        {
+          "text": "Stop relocated",
+          "language": "en"
+        },
+        {
+          "text": "Parada reubicada",
+          "language": "es"
+        }
+      ],
+      "description": [
+        {
+          "text": "The temporary stop is on Pine St just east of the old one.",
+          "language": "en"
+        }
+      ],
+      "url": [
+        {
+          "text": "https://m.test/alert",
+          "language": "en"
+        }
+      ],
+      "tts_header": [],
+      "tts_description": [],
+      "cause_detail": [],
+      "effect_detail": [],
+      "image": [],
+      "image_alternative_text": [],
+      "informed": [
+        {
+          "trip_id": "R1-0930",
+          "trip_date": "20260615"
+        }
+      ]
+    }
+  ]
+}

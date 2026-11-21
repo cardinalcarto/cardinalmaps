@@ -14,7 +14,8 @@
 /// | fetching | the latest chain no longer takes it | dropped; its answer ignored |
 /// | fetching | the source fails | not known; asked again when a chain takes it again |
 /// | known | another chain takes it | known, not asked again |
-/// | any | a new plan | not known |
+/// | known | a newer plan whose chain still takes it | fetching again, the leg it had standing in until the answer |
+/// | any | a new plan whose chain doesn't take it | not known |
 library;
 
 import 'dart:async';
@@ -28,6 +29,26 @@ import 'transit_plan.dart';
 /// Which departure a leg is of, and how the plan got to and from stops: the travel
 /// mode decides which departures the planner lists.
 typedef DepartureLegKey = ({RideQuery query, TransitAccess access});
+
+/// A departure whatever time real-time data gives it: the run of a trip between two
+/// stops, of a plan that got to stops one way.
+typedef _Run = ({
+  String feed,
+  String boardStopId,
+  String alightStopId,
+  String tripId,
+  String startDate,
+  TransitAccess access,
+});
+
+_Run _runOf(DepartureLegKey key) => (
+  feed: key.query.feed,
+  boardStopId: key.query.boardStopId,
+  alightStopId: key.query.alightStopId,
+  tripId: key.query.tripId,
+  startDate: key.query.startDate,
+  access: key.access,
+);
 
 /// The departure [choice] takes, as the transit source looks it up, unless it's the
 /// plan's own or what's needed isn't known.
@@ -59,6 +80,11 @@ class DepartureLegs extends ChangeNotifier {
   TransitPlan? _plan;
   final _legs = <DepartureLegKey, TransitLeg>{};
 
+  /// The legs an older plan's chain took and this one's still does, each standing in
+  /// until it's fetched again, so the stops it lists and the line it draws don't go
+  /// and come back each time the trip is planned again.
+  final _standIns = <_Run, TransitLeg>{};
+
   /// What's being fetched, each with what aborts it.
   final _fetching = <DepartureLegKey, Completer<void>>{};
   var _disposed = false;
@@ -67,7 +93,9 @@ class DepartureLegs extends ChangeNotifier {
   /// [access], if it's another than the plan's own and has been fetched.
   TransitLeg? legOf(RideChoice choice, TransitAccess access) {
     final query = rideQueryOf(choice);
-    return query == null ? null : _legs[(query: query, access: access)];
+    if (query == null) return null;
+    final key = (query: query, access: access);
+    return _legs[key] ?? _standIns[_runOf(key)];
   }
 
   /// Whether the leg of [query] is being fetched.
@@ -79,17 +107,23 @@ class DepartureLegs extends ChangeNotifier {
   /// made getting to stops by [access], and stops fetching those it no longer takes.
   /// A null [chain] takes none.
   void follow(TransitPlan plan, ConnectionChain? chain, TransitAccess access) {
-    if (!identical(plan, _plan)) {
-      // Another plan's real-time data may have moved its departures.
-      _plan = plan;
-      _legs.clear();
-      _abortWhere((_) => true);
-    }
     final wanted = <DepartureLegKey>{
       for (final choice in chain?.rides ?? const <RideChoice>[])
         if (rideQueryOf(choice) case final query?)
           (query: query, access: access),
     };
+    if (!identical(plan, _plan)) {
+      // Another plan's real-time data may have moved its departures: each is fetched
+      // again, and what was known of those still taken stands in until then.
+      _plan = plan;
+      for (final entry in _legs.entries) {
+        _standIns[_runOf(entry.key)] = entry.value;
+      }
+      _legs.clear();
+      _abortWhere((_) => true);
+      final runs = {for (final key in wanted) _runOf(key)};
+      _standIns.removeWhere((run, _) => !runs.contains(run));
+    }
     _abortWhere((key) => !wanted.contains(key));
     for (final key in wanted) {
       if (_legs.containsKey(key) || _fetching.containsKey(key)) continue;
@@ -124,6 +158,7 @@ class DepartureLegs extends ChangeNotifier {
     _fetching.remove(key);
     if (leg == null) return;
     _legs[key] = leg;
+    _standIns.remove(_runOf(key));
     notifyListeners();
   }
 

@@ -20,6 +20,7 @@ class SheetGeometry {
     required this.placement,
     this.keyboard = 0,
     this.bottomBar = 0,
+    this.footer = 0,
     this.handleHeight = 24,
     this.cornerRadius = 28,
     this.dockedWidth = 400,
@@ -62,10 +63,22 @@ class SheetGeometry {
   /// doesn't show one (see [SheetContent.showsBottomBar]).
   final double bottomBar;
 
+  /// How tall the page's footer is over whatever else covers the bottom of the window
+  /// (see [SheetContent.footer]), 0 if it hasn't one: its height less the
+  /// [footerPadding] it runs down behind the navigation bar.
+  final double footer;
+
   /// What covers the bottom of the window: the keyboard, or else the navigation bar and
-  /// the bottom bar, which the keyboard hides. The content's anchors are measured from
-  /// its top.
-  double get bottomInset => math.max(padding.bottom + bottomBar, keyboard);
+  /// the bottom bar, which the keyboard hides, and over either the page's footer. The
+  /// content's anchors are measured from its top.
+  double get bottomInset =>
+      math.max(padding.bottom + bottomBar, keyboard) + footer;
+
+  /// How far below its controls a page's footer runs (see [SheetContent.footer]): down
+  /// behind the navigation bar, where neither the keyboard nor the bottom bar covers
+  /// it. That much of [bottomInset] is under the footer rather than below it.
+  double get footerPadding =>
+      bottomBar > 0 ? 0 : math.max(0, padding.bottom - keyboard);
 
   /// This geometry for a page that shows a bottom bar [height] tall.
   SheetGeometry withBottomBar(double height) => SheetGeometry(
@@ -74,6 +87,21 @@ class SheetGeometry {
     placement: placement,
     keyboard: keyboard,
     bottomBar: height,
+    footer: footer,
+    handleHeight: handleHeight,
+    cornerRadius: cornerRadius,
+    dockedWidth: dockedWidth,
+    margin: margin,
+  );
+
+  /// This geometry for a page whose footer is [height] tall.
+  SheetGeometry withFooter(double height) => SheetGeometry(
+    size: size,
+    padding: padding,
+    placement: placement,
+    keyboard: keyboard,
+    bottomBar: bottomBar,
+    footer: height,
     handleHeight: handleHeight,
     cornerRadius: cornerRadius,
     dockedWidth: dockedWidth,
@@ -203,6 +231,7 @@ class SheetGeometry {
       other.placement == placement &&
       other.keyboard == keyboard &&
       other.bottomBar == bottomBar &&
+      other.footer == footer &&
       other.handleHeight == handleHeight &&
       other.cornerRadius == cornerRadius &&
       other.dockedWidth == dockedWidth &&
@@ -215,6 +244,7 @@ class SheetGeometry {
     placement,
     keyboard,
     bottomBar,
+    footer,
     handleHeight,
     cornerRadius,
     dockedWidth,

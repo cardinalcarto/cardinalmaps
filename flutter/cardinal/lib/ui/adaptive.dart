@@ -111,12 +111,16 @@ class AppListSection extends StatelessWidget {
     required this.children,
     this.header,
     this.footer,
+    this.color,
   });
 
   /// Usually [AppListTile]s.
   final List<Widget> children;
   final String? header;
   final String? footer;
+
+  /// The rows' fill on iOS, if not [groupedRowColor].
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
@@ -125,7 +129,7 @@ class AppListSection extends StatelessWidget {
         // The sheet is the background.
         backgroundColor: const Color(0x00000000),
         decoration: BoxDecoration(
-          color: groupedRowColor(context),
+          color: color ?? groupedRowColor(context),
           borderRadius: BorderRadius.circular(10),
         ),
         // The margin above is for a header; without one, just a little room.
@@ -187,6 +191,11 @@ Color groupedRowColor(BuildContext context) {
       ? colors.surfaceContainerHigh
       : colors.surface;
 }
+
+/// [groupedRowColor] as a tint, for rows on the sheet while it's glass, as it is on
+/// iOS while it's low: nothing on glass is opaque.
+Color groupedRowTint(BuildContext context) =>
+    groupedRowColor(context).withValues(alpha: 0.7);
 
 /// The style of an [AppListSection]'s header and footer on iOS: Footnote, secondary.
 TextStyle? _sectionNote(BuildContext context) {

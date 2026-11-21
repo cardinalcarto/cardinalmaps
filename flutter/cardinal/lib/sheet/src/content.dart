@@ -11,11 +11,17 @@ class SheetContent extends StatefulWidget {
     required this.anchors,
     this.freeRanges = const [],
     this.initialAnchor = 0,
+    this.initialSection,
+    this.initialMaxFraction = 1,
     this.showsBottomBar = false,
     this.draggable = true,
     this.collapsible = false,
     this.keepsHeight = false,
     this.scrollId,
+    this.footer,
+    this.held,
+    this.holdDuration = const Duration(milliseconds: 200),
+    this.holdCurve = Curves.easeOut,
     required this.slivers,
   }) : assert(anchors.length > 0);
 
@@ -28,6 +34,18 @@ class SheetContent extends StatefulWidget {
 
   /// The index into [anchors] the sheet moves to when this content first shows.
   final int initialAnchor;
+
+  /// A section (see [SheetSection]) for the sheet to first rest showing the content
+  /// down to the end of, within one of the [freeRanges], rather than at
+  /// [initialAnchor]: as [SheetAnchor.section] would rest, but no higher than
+  /// [initialMaxFraction]. If that isn't within one of the [freeRanges], the sheet
+  /// first rests at [initialAnchor] after all. Like a section anchor, it can't be
+  /// placed until its section and the ranges' ends are laid out.
+  final Object? initialSection;
+
+  /// The highest the sheet first rests for [initialSection], as a fraction of the
+  /// furthest it can be pulled up (see [SheetAnchor.fraction]).
+  final double initialMaxFraction;
 
   /// Whether the scaffold's bottom bar shows on this page, in which case the anchors
   /// and the end of the content keep clear of it. It slides away and back as pages
@@ -59,14 +77,65 @@ class SheetContent extends StatefulWidget {
   /// shows. Null, the default, is one content throughout.
   final Object? scrollId;
 
+  /// Stays along the bottom of the window (of the column, in a wide window) wherever
+  /// the sheet is. It's as wide as the content and takes its own height, which
+  /// shouldn't depend on how far the sheet is pulled up. It's part of the page, so it
+  /// comes and goes with it.
+  ///
+  /// Its box runs to the bottom of the window, behind the navigation bar, as the
+  /// scaffold's bottom bar does, so that content passing behind it never shows again
+  /// below it. It's given the navigation bar's height as [MediaQueryData.padding]'s
+  /// bottom, and must keep its controls clear of it (in a [SafeArea], say), with any
+  /// background it paints over all of its box. While the keyboard shows, or on a
+  /// page that [showsBottomBar], it sits directly on the keyboard or the bar, and
+  /// that padding is 0.
+  ///
+  /// The content isn't painted or hit anywhere in its box, so nothing shows through
+  /// it even if it paints no background, as over a [SheetScaffold.backdrop].
+  ///
+  /// Its height above that padding joins what covers the bottom of the window
+  /// ([SheetGeometry.bottomInset]), so the anchors and the end of the content keep
+  /// clear of its controls. A vertical drag on it moves the sheet as one on the
+  /// content does.
+  final Widget? footer;
+
+  /// The [SheetSlot] among the [slivers] whose child is held in view, by the slot's
+  /// ID, or null to hold none.
+  ///
+  /// While its slot is in view the child shows there, as any other. Once the sheet
+  /// lowers, or the content scrolls, so far that the slot would pass under the
+  /// [footer] (or whatever else covers the bottom of the window), or above the top of
+  /// the content, the child stops there, and the rest of the content passes behind it.
+  /// The content isn't painted or hit within the box of a child out of its slot (as
+  /// wide and tall as the slot), so nothing shows through it or round its corners,
+  /// whatever background it paints. It's painted over the content, and so outside
+  /// whatever the slot's ancestors paint around it (a clip, a fade).
+  ///
+  /// When this changes the children move to and from their places over
+  /// [holdDuration]; when the newly held one comes to rest where the other is (both
+  /// held against the same edge, say), it fades in over it in place instead, as the
+  /// other fades out as far as it's out of its slot.
+  ///
+  /// The slot must be built to be held: one in a sliver that only builds what's near
+  /// the viewport (a [SliverList], say) isn't held once it scrolls far enough away
+  /// not to be. A [SliverToBoxAdapter] always builds its child.
+  final Object? held;
+
+  /// How long a child takes to move to or from where it's held when [held] changes.
+  final Duration holdDuration;
+
+  /// The curve a child moves along when [held] changes.
+  final Curve holdCurve;
+
   final List<Widget> slivers;
 
   @override
   State<SheetContent> createState() => _SheetContentState();
 }
 
-class _SheetContentState extends State<SheetContent> {
-  final _SheetEntry _entry = _SheetEntry();
+class _SheetContentState extends State<SheetContent>
+    with TickerProviderStateMixin {
+  late final _SheetEntry _entry = _SheetEntry(this);
   _SheetScaffoldState? _scaffold;
   _SheetScrollController? _scroll;
 
@@ -80,6 +149,15 @@ class _SheetContentState extends State<SheetContent> {
   SheetGeometry _geometry(_SheetScope scope) => widget.showsBottomBar
       ? scope.geometry.withBottomBar(scope.bottomBarHeight)
       : scope.geometry;
+
+  @override
+  void initState() {
+    super.initState();
+    _entry.holds
+      ..duration = widget.holdDuration
+      ..curve = widget.holdCurve
+      ..start(widget.held);
+  }
 
   @override
   void didChangeDependencies() {
@@ -97,11 +175,13 @@ class _SheetContentState extends State<SheetContent> {
     }
     _entry
       ..route = ModalRoute.of(context)
-      ..geometry = _geometry(scope)
+      ..baseGeometry = _geometry(scope)
       ..physics = scope.controller.physics
       ..anchors = _anchors
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
+      ..initialSection = widget.initialSection
+      ..initialMaxFraction = widget.initialMaxFraction
       ..showsBottomBar = widget.showsBottomBar
       ..draggable = widget.draggable
       ..keepsHeight = widget.keepsHeight;
@@ -125,13 +205,19 @@ class _SheetContentState extends State<SheetContent> {
       position.jumpTo(_scrolledTo.remove(widget.scrollId) ?? 0);
     }
     _entry
-      ..geometry = _geometry(_SheetScope.of(context))
+      ..baseGeometry = _geometry(_SheetScope.of(context))
       ..anchors = _anchors
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
+      ..initialSection = widget.initialSection
+      ..initialMaxFraction = widget.initialMaxFraction
       ..showsBottomBar = widget.showsBottomBar
       ..draggable = widget.draggable
       ..keepsHeight = widget.keepsHeight;
+    _entry.holds
+      ..duration = widget.holdDuration
+      ..curve = widget.holdCurve
+      ..target = widget.held;
     if (widget.draggable != oldWidget.draggable) _scaffold?._scheduleUpdate();
   }
 
@@ -145,18 +231,21 @@ class _SheetContentState extends State<SheetContent> {
 
   @override
   Widget build(BuildContext context) {
+    final scope = _SheetScope.of(context);
+    final footerPadding = _entry.baseGeometry?.footerPadding ?? 0;
     final bottom = math.max(
-      _entry.geometry?.bottomInset ?? 0,
+      _entry.baseGeometry?.bottomInset ?? 0,
       MediaQuery.viewInsetsOf(context).bottom,
     );
     return _SheetContentScope(
       entry: _entry,
       child: _SheetContentLayout(
         entry: _entry,
-        geometry: _entry.geometry,
+        geometry: _entry.baseGeometry,
         anchors: _anchors,
         freeRanges: widget.freeRanges,
         physics: _entry.physics,
+        held: widget.held,
         child: Scrollable(
           controller: _scroll,
           // Always, to catch drags for the sheet; without that, content that fits
@@ -164,14 +253,46 @@ class _SheetContentState extends State<SheetContent> {
           physics: widget.draggable
               ? const AlwaysScrollableScrollPhysics()
               : const ScrollPhysics(),
-          viewportBuilder: (context, offset) => _SheetViewport(
+          // The footer and the held child are within the scrollable, so a drag on
+          // either moves the sheet as one on the content does.
+          viewportBuilder: (context, offset) => _SheetBody(
             entry: _entry,
+            controller: scope.controller,
+            extent: scope.state._paintExtent,
             offset: offset,
-            slivers: [
-              ...widget.slivers,
-              // Clear of the navigation bar or keyboard at the end.
-              SliverToBoxAdapter(child: SizedBox(height: bottom)),
-            ],
+            held: widget.held,
+            footerPadding: footerPadding,
+            // Each a layer of its own, as the sheet moving repaints only where they
+            // are.
+            viewport: RepaintBoundary(
+              child: _SheetViewport(
+                entry: _entry,
+                offset: offset,
+                slivers: [
+                  ...widget.slivers,
+                  // Clear of the navigation bar or keyboard, and the footer, at the
+                  // end.
+                  SliverToBoxAdapter(
+                    child: _SheetEndInset(entry: _entry, inset: bottom),
+                  ),
+                ],
+              ),
+            ),
+            footer: switch (widget.footer) {
+              final footer? => _SheetFooter(
+                child: RepaintBoundary(
+                  // The navigation bar it runs down behind, for it to keep clear of.
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      padding: EdgeInsets.only(bottom: footerPadding),
+                      viewPadding: EdgeInsets.only(bottom: footerPadding),
+                    ),
+                    child: footer,
+                  ),
+                ),
+              ),
+              null => null,
+            },
           ),
         ),
       ),
@@ -182,12 +303,29 @@ class _SheetContentState extends State<SheetContent> {
 /// The sheet's view of a page's content: where its sections are, where its anchors
 /// rest, and where the sheet last rested on it.
 class _SheetEntry extends ChangeNotifier {
+  _SheetEntry(TickerProvider vsync) {
+    holds = _SheetHolds(vsync, this);
+  }
+
   ModalRoute<Object?>? route;
-  SheetGeometry? geometry;
+
+  /// [SheetScaffold]'s geometry as the page sees it, but for its footer.
+  SheetGeometry? baseGeometry;
+
+  /// How tall the page's footer was last laid out over what else covers the bottom of
+  /// the window (see [SheetGeometry.footer]), 0 if it hasn't one.
+  double footerHeight = 0;
+
+  /// [SheetScaffold]'s geometry as the page sees it.
+  SheetGeometry? get geometry =>
+      footerHeight == 0 ? baseGeometry : baseGeometry?.withFooter(footerHeight);
+
   SheetPhysics physics = const SheetPhysics();
   List<SheetAnchor> anchors = const [];
   List<SheetRange> freeRanges = const [];
   int initialAnchor = 0;
+  Object? initialSection;
+  double initialMaxFraction = 1;
   bool showsBottomBar = false;
   bool draggable = true;
   bool keepsHeight = false;
@@ -197,6 +335,24 @@ class _SheetEntry extends ChangeNotifier {
 
   final Set<_RenderSheetSection> sections = {};
   Map<Object, _Span> spans = const {};
+
+  /// The page's slots, and which of their children are held (see [SheetContent.held]).
+  final Set<_RenderSheetSlot> slots = {};
+  late final _SheetHolds holds;
+
+  _RenderSheetSlot? slotFor(Object id) =>
+      slots.firstWhereOrNull((slot) => slot.id == id);
+
+  /// Where the slot whose child the page holds sits in the content, if it's laid out.
+  _Span? get _heldSpan => switch (holds.target) {
+    final id? => slotFor(id)?.place?.span,
+    null => null,
+  };
+
+  _RenderSheetBody? body;
+
+  /// The space at the end of the content, which follows the footer's height.
+  _RenderSheetEndInset? endInset;
   List<ResolvedAnchor> resolved = const [];
   List<ResolvedRange> ranges = const [];
 
@@ -216,13 +372,39 @@ class _SheetEntry extends ChangeNotifier {
       ? null
       : resolved.firstWhereOrNull((a) => a.anchor == anchor);
 
-  /// Where the sheet rests on this page: where it was left, or the initial anchor.
-  _Rest? get resting =>
-      memory ??
-      switch (initial) {
-        final initial? => _AtAnchor(initial),
-        _ => null,
-      };
+  /// Where the sheet first rests on this page: at the initial anchor, or within a
+  /// range, showing the content down to [initialSection]. Null if that can't be
+  /// placed yet.
+  _Rest? get initialRest {
+    final anchor = switch (initial) {
+      final initial? => _AtAnchor(initial),
+      _ => null,
+    };
+    final section = initialSection;
+    if (section == null) return anchor;
+    final geometry = this.geometry;
+    if (geometry == null) return null;
+    final showing = _SectionAnchor(section)
+        ._resolve(geometry, spans, _heldSpan);
+    // Not until its section and every range are laid out, as a range placed later
+    // might have it.
+    if (showing == null || ranges.length < freeRanges.length) return null;
+    final extent = math.min(
+      showing,
+      geometry.extentAtFraction(initialMaxFraction),
+    );
+    final range = ranges.firstWhereOrNull((r) => r.contains(extent));
+    if (range == null) return anchor;
+    final at = resolved.firstWhereOrNull(
+      (a) => (a.extent - extent).abs() < _epsilon,
+    );
+    return at != null
+        ? _AtAnchor(at.anchor)
+        : _InRange(range.range, range.fractionOf(extent));
+  }
+
+  /// Where the sheet rests on this page: where it was left, or where it first rests.
+  _Rest? get resting => memory ?? initialRest;
 
   /// The extent the sheet rests at on this page, or null if it can't be placed yet.
   double? get restingExtent => resting?.extentIn(resolved, ranges);
@@ -251,8 +433,15 @@ class _SheetEntry extends ChangeNotifier {
   void resolve() {
     final geometry = this.geometry;
     if (geometry == null) return;
-    final placed = _resolveAnchors(anchors, geometry, spans, physics);
-    final placedRanges = _resolveRanges(freeRanges, placed, geometry, spans);
+    final held = _heldSpan;
+    final placed = _resolveAnchors(anchors, geometry, spans, physics, held);
+    final placedRanges = _resolveRanges(
+      freeRanges,
+      placed,
+      geometry,
+      spans,
+      held,
+    );
     if (listEquals(placed, resolved) && listEquals(placedRanges, ranges)) {
       return;
     }
@@ -262,28 +451,36 @@ class _SheetEntry extends ChangeNotifier {
   }
 
   /// Finds where the sections sit in [viewport], after it's laid out.
-  void measure(RenderAbstractViewport viewport) {
+  void measure(_RenderSheetViewport viewport) {
     final measured = <Object, _Span>{};
     for (final section in sections) {
       if (!section.hasSize ||
           RenderAbstractViewport.maybeOf(section) != viewport) {
         continue;
       }
-      var top = viewport.getOffsetToReveal(section, 0).offset;
-      if (!top.isFinite) {
-        // A section in a pinned sliver can't be revealed at the leading edge (Flutter
-        // says infinity), but it can at the trailing edge, a viewport's height less
-        // its own above where its top is.
-        final bottom = viewport.getOffsetToReveal(section, 1).offset;
-        top =
-            bottom + (viewport as RenderBox).size.height - section.size.height;
-      }
-      measured[section.id] = _Span(top, top + section.size.height);
+      measured[section.id] = _spanOf(viewport, section);
     }
     if (!mapEquals(measured, spans)) {
       spans = measured;
       _changed();
     }
+    // And the slots, which the held child is placed by.
+    var moved = false;
+    for (final slot in slots) {
+      final place =
+          slot.hasSize && RenderAbstractViewport.maybeOf(slot) == viewport
+          ? _SlotPlace.of(viewport, slot)
+          : null;
+      if (place != slot.place) {
+        slot.place = place;
+        moved = true;
+      }
+    }
+    assert(
+      slots.map((slot) => slot.id).toSet().length == slots.length,
+      'Two SheetSlots in one SheetContent have the same ID.',
+    );
+    if (moved) body?.markNeedsPaint();
     resolve();
 
     // The viewport's height follows the highest anchor, which may have moved.
@@ -314,8 +511,20 @@ class _SheetEntry extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    holds.dispose();
     super.dispose();
   }
+}
+
+/// Where [box] sits in [viewport]'s content, as an anchor shows down to it.
+_Span _spanOf(RenderAbstractViewport viewport, RenderBox box) {
+  // Revealed at the trailing edge, a viewport's height less its own above where its
+  // top is. Not at the leading edge: there Flutter stops short by the height of
+  // whatever is pinned before the box, to reveal it under that, and a box in a pinned
+  // sliver can't be revealed at all (it says infinity).
+  final bottom = viewport.getOffsetToReveal(box, 1).offset;
+  final top = bottom + (viewport as RenderBox).size.height - box.size.height;
+  return _Span(top, top + box.size.height);
 }
 
 class _SheetContentScope extends InheritedWidget {
@@ -348,6 +557,7 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
     required this.anchors,
     required this.freeRanges,
     required this.physics,
+    required this.held,
     required super.child,
   });
 
@@ -356,11 +566,12 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
   final List<SheetAnchor> anchors;
   final List<SheetRange> freeRanges;
   final SheetPhysics physics;
+  final Object? held;
 
   @override
   _RenderSheetContent createRenderObject(BuildContext context) =>
       _RenderSheetContent(entry)
-        ..config = (geometry, anchors, freeRanges, physics);
+        ..config = (geometry, anchors, freeRanges, physics, held);
 
   @override
   void updateRenderObject(
@@ -369,7 +580,7 @@ class _SheetContentLayout extends SingleChildRenderObjectWidget {
   ) {
     renderObject
       ..entry = entry
-      ..config = (geometry, anchors, freeRanges, physics);
+      ..config = (geometry, anchors, freeRanges, physics, held);
   }
 }
 
@@ -386,16 +597,19 @@ class _RenderSheetContent extends RenderProxyBox {
     markNeedsLayout();
   }
 
-  (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics)? _config;
+  (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics, Object?)?
+  _config;
   set config(
-    (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics) value,
+    (SheetGeometry?, List<SheetAnchor>, List<SheetRange>, SheetPhysics, Object?)
+    value,
   ) {
     final old = _config;
     if (old != null &&
         old.$1 == value.$1 &&
         listEquals(old.$2, value.$2) &&
         listEquals(old.$3, value.$3) &&
-        old.$4 == value.$4) {
+        old.$4 == value.$4 &&
+        old.$5 == value.$5) {
       return;
     }
     _config = value;
@@ -477,6 +691,10 @@ class _RenderSheetViewport extends RenderViewport {
   });
 
   _SheetEntry entry;
+
+  /// How far down the content the point [within] the scroll extent of [sliver] is.
+  double contentOffsetOf(RenderSliver sliver, double within) =>
+      scrollOffsetOf(sliver, within);
 
   @override
   void performLayout() {

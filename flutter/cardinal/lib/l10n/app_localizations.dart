@@ -357,6 +357,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You\'ve arrived'**
   String get navigationArrived;
+
+  /// The line under a route's travel time in the directions sheet's list of routes, naming the main roads the route takes. roads is one road's name, or several already joined as a list with listTwo, listStart, listMiddle and listEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'via {roads}'**
+  String directionsVia(String roads);
+
+  /// A list of exactly two things, such as two road names, as the language writes one (Unicode CLDR's list pattern for two).
+  ///
+  /// In en, this message translates to:
+  /// **'{first} and {second}'**
+  String listTwo(String first, String second);
+
+  /// The start of a list of three or more things: its first thing, then the rest of the list, already joined (Unicode CLDR's list pattern start).
+  ///
+  /// In en, this message translates to:
+  /// **'{first}, {rest}'**
+  String listStart(String first, String rest);
+
+  /// The middle of a list of four or more things: one of the things between its first and its last two, then the rest of the list, already joined (Unicode CLDR's list pattern middle).
+  ///
+  /// In en, this message translates to:
+  /// **'{first}, {rest}'**
+  String listMiddle(String first, String rest);
+
+  /// The end of a list of three or more things: its last two (Unicode CLDR's list pattern end).
+  ///
+  /// In en, this message translates to:
+  /// **'{first}, and {last}'**
+  String listEnd(String first, String last);
 }
 
 class _AppLocalizationsDelegate

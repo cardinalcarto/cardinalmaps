@@ -67,7 +67,7 @@ Store fakeStore() {
 }
 
 /// The app's real sheet pages and navigation bar, over a blank body, starting at
-/// [location].
+/// [location], in a window of [size].
 Future<GoRouter> pumpFakeApp(
   WidgetTester tester, {
   Store? store,
@@ -89,10 +89,11 @@ Future<GoRouter> pumpFakeApp(
   Geocoder? offline,
   bool offerModels = false,
   bool locationButton = false,
+  Size size = appScreen,
 }) async {
   final here = locationSource ?? FakeLocation();
   tester.view
-    ..physicalSize = appScreen * 2
+    ..physicalSize = size * 2
     ..devicePixelRatio = 2
     ..padding = const FakeViewPadding(bottom: appNavigationBar * 2)
     ..viewPadding = const FakeViewPadding(bottom: appNavigationBar * 2);
@@ -146,6 +147,7 @@ Future<GoRouter> pumpFakeApp(
           routes: routes ?? FakeRoutes(),
           transit: transit ?? FakeTransit(),
           location: here,
+          clock: clock ?? DateTime.now,
           child: MapScope(
             controller: map ?? FakeMap(),
             overlays: overlays ?? MapOverlays(),

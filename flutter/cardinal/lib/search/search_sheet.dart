@@ -300,6 +300,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
               pinned: true,
               delegate: _SearchBarHeader(
                 height: _SearchBarHeader.heightOf(
+                  context,
                   cupertino: cupertino,
                   chips: _chipsShowing,
                 ),
@@ -391,15 +392,35 @@ class _SearchBarHeader extends SliverPersistentHeaderDelegate {
   final double height;
   final Widget child;
 
+  /// Material's search bar's height, which it grows past when a line of its text is
+  /// taller.
+  static const double _materialBar = 56;
+
   /// The bar and its padding, and a row of pinned places under it if [chips]: Material's
-  /// 56 high search bar, or iOS's 44 high search field.
-  static double heightOf({required bool cupertino, required bool chips}) =>
-      switch ((cupertino, chips)) {
-        (false, false) => 72,
-        (false, true) => 112,
-        (true, false) => 64,
-        (true, true) => 104,
-      };
+  /// 56 high search bar, as tall as a line of its text at [context]'s text size if
+  /// that's taller, or iOS's 44 high search field.
+  static double heightOf(
+    BuildContext context, {
+    required bool cupertino,
+    required bool chips,
+  }) {
+    final height = switch ((cupertino, chips)) {
+      (false, false) => 72.0,
+      (false, true) => 112.0,
+      (true, false) => 64.0,
+      (true, true) => 104.0,
+    };
+    if (cupertino) return height;
+    final painter = TextPainter(
+      text: TextSpan(text: ' ', style: Theme.of(context).textTheme.bodyLarge),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final line = painter.height;
+    painter.dispose();
+    return height + math.max(0, line - _materialBar);
+  }
 
   @override
   double get minExtent => height;

@@ -45,18 +45,95 @@ enum RouteProblem {
   noOfflineArea,
 }
 
-/// A trip being planned: its ends, how you're traveling, and the routes for those.
+/// What one way of traveling has for the trip: its routes, or for transit its plan,
+/// which of them is selected, and whether they're still on their way.
+@immutable
+class ModeOptions {
+  const ModeOptions({
+    this.loading = false,
+    this.problem,
+    this.routes = const [],
+    this.plan,
+    this.selected = 0,
+  });
+
+  /// Whether an answer is on its way.
+  final bool loading;
+
+  /// Why there's nothing to show, if asking came to nothing.
+  final RouteProblem? problem;
+
+  /// The routes, as the router returned them, the fastest first. Empty for transit.
+  final List<DirectionsRoute> routes;
+
+  /// Transit's plan, which may have no journeys and says why. Null for the others.
+  final TransitPlan? plan;
+
+  /// The index of the selected one among [routes], or the plan's journeys.
+  final int selected;
+
+  DirectionsRoute? get route =>
+      selected < routes.length ? routes[selected] : null;
+
+  Journey? get journey => switch (plan?.journeys) {
+    final journeys? when selected < journeys.length => journeys[selected],
+    _ => null,
+  };
+
+  /// How many routes or journeys there are to choose from.
+  int get count => plan?.journeys.length ?? routes.length;
+
+  /// How long the quickest of them takes: the fastest route's duration, or for
+  /// transit the time from [now] until the earliest arrival. Null with none.
+  Duration? best(DateTime now) {
+    if (plan case final plan?) {
+      if (plan.journeys.isEmpty) return null;
+      final arrival = plan.journeys
+          .map((journey) => journey.arrival)
+          .reduce((a, b) => a.isBefore(b) ? a : b);
+      final left = arrival.difference(now);
+      return left.isNegative ? Duration.zero : left;
+    }
+    if (routes.isEmpty) return null;
+    final seconds = routes
+        .map((route) => route.duration)
+        .reduce((a, b) => a < b ? a : b);
+    return Duration(milliseconds: (seconds * 1000).round());
+  }
+
+  ModeOptions _selecting(int index) => ModeOptions(
+    loading: loading,
+    problem: problem,
+    routes: routes,
+    plan: plan,
+    selected: index,
+  );
+}
+
+/// A trip being planned: its ends, and what every way of traveling has for it, with
+/// the way that's showing ([mode]).
+///
+/// Every way is asked at once, each on its own, and each answer lands when it comes:
 ///
 /// | In | When | Then |
 /// |---|---|---|
-/// | either end missing | both are set | loading |
-/// | anywhere | an end, the mode, or a recalculation changes the question | loading |
-/// | walking | walking by wheelchair is turned on or off | loading |
-/// | loading | routes arrive | showing routes, the best selected |
-/// | loading | there are none, or asking failed | a [RouteProblem], no routes |
-/// | anywhere | an end is cleared | no routes, no problem, nothing loading |
+/// | either end missing | both are set | every way loading |
+/// | anywhere | an end changes, or the ends are swapped | every way loading, with nothing to show |
+/// | anywhere | walking by wheelchair is turned on or off | walking loading |
+/// | anywhere | how transit gets to stops changes | transit loading |
+/// | a way loading | its routes or plan arrive | that way has them, the first selected |
+/// | a way loading | there are none, or asking failed | that way has a [RouteProblem] |
+/// | anywhere | an end is cleared | no way has anything, a problem, or is loading |
+/// | anywhere | another way is chosen | that way showing, as it was left, with no request |
 /// | showing routes | a route is selected | that route selected, with no request |
 /// | showing journeys | a journey is selected | that journey selected, with no request |
+/// | transit has a plan or a problem | it's refreshed | the same, until the answer comes; then the same, with the answer waiting as [refreshed] |
+/// | transit being refreshed | planning fails | the same, with nothing waiting |
+/// | a refreshed plan waiting | it's shown | transit has that plan, the journey that was selected still selected if it's there, the first otherwise |
+/// | transit being refreshed, or a refreshed plan waiting | transit is asked again | transit loading; the refresh, or the plan waiting, dropped |
+///
+/// [routes], [plan], [loading] and the like are those of the way that's showing;
+/// [options] has any way's. A way keeps its selection until it's asked again.
 ///
 /// Walking is by wheelchair while [wheelchair] is set.
 ///
@@ -64,9 +141,8 @@ enum RouteProblem {
 /// stops ([transitAccess]) is part of its question. A plan with no journeys isn't a
 /// [RouteProblem]: the plan says why it has none.
 ///
-/// Only the latest question's answer counts: asking again aborts the last request, and an
-/// answer that arrives anyway is dropped. While loading, routes for the last question
-/// stay, so the map and the sheet don't flash empty.
+/// Only the answer to a way's latest question counts: asking again aborts its last
+/// request, and an answer that arrives anyway is dropped.
 ///
 /// The trip starts from where you are if you've already allowed that, without asking,
 /// and unless the start has been chosen some other way by the time your position arrives
@@ -89,6 +165,7 @@ class Directions extends ChangeNotifier {
   RouteEndpoint? get to => _to;
   RouteEndpoint? _to;
 
+  /// The way of traveling that's showing.
   TravelMode get mode => _mode;
   TravelMode _mode;
 
@@ -100,37 +177,33 @@ class Directions extends ChangeNotifier {
   TransitAccess get transitAccess => _transitAccess;
   TransitAccess _transitAccess = TransitAccess.walking;
 
-  /// The transit plan for the latest question to be answered, if it was for transit.
-  TransitPlan? get plan => _plan;
-  TransitPlan? _plan;
+  final Map<TravelMode, ModeOptions> _options = {};
+
+  /// What traveling by [mode] has for the trip.
+  ModeOptions options(TravelMode mode) => _options[mode] ?? const ModeOptions();
+
+  ModeOptions get _showing => options(_mode);
+
+  /// The transit plan, if transit is showing and has one.
+  TransitPlan? get plan => _showing.plan;
 
   /// The index in [plan]'s journeys of the selected one.
-  int get selectedJourney => _selectedJourney;
-  int _selectedJourney = 0;
+  int get selectedJourney => _showing.plan == null ? 0 : _showing.selected;
 
-  Journey? get journey => switch (_plan?.journeys) {
-    final journeys? when _selectedJourney < journeys.length =>
-      journeys[_selectedJourney],
-    _ => null,
-  };
+  Journey? get journey => _showing.journey;
 
-  /// The routes for the latest question to be answered, the best first.
-  List<DirectionsRoute> get routes => _routes;
-  List<DirectionsRoute> _routes = const [];
+  /// The routes of the way that's showing, the best first.
+  List<DirectionsRoute> get routes => _showing.routes;
 
   /// The index in [routes] of the selected one.
-  int get selected => _selected;
-  int _selected = 0;
+  int get selected => _showing.plan == null ? _showing.selected : 0;
 
-  DirectionsRoute? get selectedRoute =>
-      _selected < _routes.length ? _routes[_selected] : null;
+  DirectionsRoute? get selectedRoute => _showing.route;
 
-  /// Whether an answer is on its way.
-  bool get loading => _loading;
-  bool _loading = false;
+  /// Whether the answer for the way that's showing is on its way.
+  bool get loading => _showing.loading;
 
-  RouteProblem? get problem => _problem;
-  RouteProblem? _problem;
+  RouteProblem? get problem => _showing.problem;
 
   /// Whether a position is being fetched for one of the ends.
   bool get locating => _locating > 0;
@@ -139,9 +212,9 @@ class Directions extends ChangeNotifier {
   /// Whether the start has been set, or cleared, by anything but [startFromMyLocation].
   bool _startChosen = false;
 
-  /// How many questions have been asked; only the answer to the latest counts.
-  int _asked = 0;
-  Completer<void>? _abort;
+  /// How many questions each way has been asked; only the answer to its latest counts.
+  final Map<TravelMode, int> _asked = {};
+  final Map<TravelMode, Completer<void>> _aborts = {};
   bool _disposed = false;
 
   RouteEndpoint? endpoint(RouteField field) => switch (field) {
@@ -158,7 +231,7 @@ class Directions extends ChangeNotifier {
       case RouteField.to:
         _to = endpoint;
     }
-    _ask();
+    _askAll();
   }
 
   /// Swaps the two ends of the trip.
@@ -167,47 +240,50 @@ class Directions extends ChangeNotifier {
     _from = _to;
     _to = from;
     _startChosen = true;
-    _ask();
+    _askAll();
   }
 
-  /// Changes how you're traveling, if it can be routed.
+  /// Shows another way of traveling, if it can be routed. Its answer is already here
+  /// or on its way.
   void setMode(TravelMode mode) {
     if (!mode.available || mode == _mode) return;
     _mode = mode;
     if (mode == TravelMode.transit) _transit.prepare();
-    _ask();
+    notifyListeners();
   }
 
-  /// Turns walking by wheelchair on or off, asking again if that's how you're traveling.
+  /// Turns walking by wheelchair on or off, and asks for walking again.
   void setWheelchair(bool wheelchair) {
     if (wheelchair == _wheelchair) return;
     _wheelchair = wheelchair;
-    if (_mode == TravelMode.walking) {
-      _ask();
-    } else {
-      notifyListeners();
-    }
+    _ask(TravelMode.walking);
+    notifyListeners();
   }
 
-  /// Changes how transit gets to and from stops.
+  /// Changes how transit gets to and from stops, and asks for transit again.
   void setTransitAccess(TransitAccess access) {
     if (access == _transitAccess) return;
     _transitAccess = access;
-    if (_mode == TravelMode.transit) _ask();
+    _ask(TravelMode.transit);
+    notifyListeners();
   }
 
   /// Selects one of [plan]'s journeys.
   void selectJourney(int index) {
-    final count = _plan?.journeys.length ?? 0;
-    if (index == _selectedJourney || index < 0 || index >= count) return;
-    _selectedJourney = index;
-    notifyListeners();
+    if (_showing.plan != null) _select(index);
   }
 
   /// Selects one of [routes].
   void select(int index) {
-    if (index == _selected || index < 0 || index >= _routes.length) return;
-    _selected = index;
+    if (_showing.plan == null) _select(index);
+  }
+
+  void _select(int index) {
+    final showing = _showing;
+    if (index == showing.selected || index < 0 || index >= showing.count) {
+      return;
+    }
+    _options[_mode] = showing._selecting(index);
     notifyListeners();
   }
 
@@ -217,7 +293,7 @@ class Directions extends ChangeNotifier {
     final point = await _allowedPosition();
     if (_disposed || point == null || _startChosen) return;
     _from = RouteEndpoint.myLocation(point);
-    _ask();
+    _askAll();
   }
 
   Future<LngLat?> _allowedPosition() async {
@@ -266,70 +342,124 @@ class Directions extends ChangeNotifier {
     }
   }
 
-  /// Asks again, with a new position for an end that's where you are, if there is one.
-  Future<void> recalculate() async {
-    if (_from?.isMyLocation ?? false) {
-      final point = await _position();
-      if (_disposed) return;
-      if (point != null && (_from?.isMyLocation ?? false)) {
-        _from = RouteEndpoint.myLocation(point);
-      }
+  /// How many times transit has been asked for the trip: it's asked again when the
+  /// trip changes (an end, or how stops are reached), and not when it's refreshed.
+  int get transitQuestion => _asked[TravelMode.transit] ?? 0;
+
+  /// A newer plan of the trip as transit was last asked for it, waiting to be shown
+  /// ([showRefreshed]) in place of the one that is.
+  TransitPlan? get refreshed => _refreshed;
+  TransitPlan? _refreshed;
+
+  /// Whether transit is being planned again by [refreshTransit].
+  bool get refreshing => _refresh != null;
+
+  /// Completes to give up the refresh under way, if there is one.
+  Completer<void>? _refresh;
+
+  /// Plans transit again for the trip as it is, leaving what transit has as it is: the
+  /// answer waits as [refreshed], and listeners are told. Does nothing while transit
+  /// is being asked or refreshed already, or without both ends. If planning fails,
+  /// nothing changes.
+  Future<void> refreshTransit() async {
+    const mode = TravelMode.transit;
+    final from = _from, to = _to;
+    if (from == null || to == null || _refresh != null) return;
+    if (!_options.containsKey(mode) || options(mode).loading) return;
+    final question = _asked[mode];
+    final abort = _refresh = Completer<void>();
+    TransitPlan? plan;
+    try {
+      plan = await _transit.plan(
+        access: _transitAccess,
+        from: from.point,
+        to: to.point,
+        abort: abort.future,
+      );
+    } on Object catch (e) {
+      // What's showing stays, and the next refresh asks again.
+      if (!abort.isCompleted) debugPrint('directions: transit refresh: $e');
     }
-    if (_to?.isMyLocation ?? false) {
-      final point = await _position();
-      if (_disposed) return;
-      if (point != null && (_to?.isMyLocation ?? false)) {
-        _to = RouteEndpoint.myLocation(point);
-      }
-    }
-    _ask();
+    if (identical(_refresh, abort)) _refresh = null;
+    // Asked again meanwhile, for a trip that may be another.
+    if (_disposed || abort.isCompleted || question != _asked[mode]) return;
+    if (plan == null) return;
+    _refreshed = plan;
+    notifyListeners();
   }
 
-  void _ask() {
-    _abort?.complete();
-    _abort = null;
-    final question = ++_asked;
+  /// Shows the plan waiting as [refreshed] in place of transit's: the journey that
+  /// was selected is selected in it if it has it (see [JourneyIdentity]), and its
+  /// first otherwise.
+  void showRefreshed() {
+    const mode = TravelMode.transit;
+    final fresh = _refreshed;
+    if (fresh == null) return;
+    _refreshed = null;
+    final was = options(mode);
+    var selected = 0;
+    if (was.plan case final plan? when was.selected < plan.journeys.length) {
+      final key = journeyKeys(plan.journeys)[was.selected];
+      final index = journeyKeys(fresh.journeys).indexOf(key);
+      if (index >= 0) selected = index;
+    }
+    _options[mode] = ModeOptions(plan: fresh, selected: selected);
+    notifyListeners();
+  }
+
+  /// Asks every way of traveling for the trip as it is now.
+  void _askAll() {
+    for (final mode in TravelMode.values) {
+      _ask(mode);
+    }
+    notifyListeners();
+  }
+
+  /// Asks for the trip by [mode], dropping what it had. Listeners aren't told: the
+  /// caller does that, once it has asked all it means to.
+  void _ask(TravelMode mode) {
+    _aborts.remove(mode)?.complete();
+    if (mode == TravelMode.transit) {
+      _refresh?.complete();
+      _refresh = null;
+      _refreshed = null;
+    }
+    final question = _asked[mode] = (_asked[mode] ?? 0) + 1;
     final from = _from, to = _to;
-    _problem = null;
-    if (from == null || to == null) {
-      _routes = const [];
-      _selected = 0;
-      _plan = null;
-      _selectedJourney = 0;
-      _loading = false;
-      notifyListeners();
+    if (from == null || to == null || !mode.available) {
+      _options.remove(mode);
       return;
     }
-    _loading = true;
-    notifyListeners();
-    final abort = _abort = Completer<void>();
-    unawaited(_answer(question, from, to, abort.future));
+    _options[mode] = const ModeOptions(loading: true);
+    final abort = _aborts[mode] = Completer<void>();
+    unawaited(_answer(mode, question, from, to, abort));
   }
 
   Future<void> _answer(
+    TravelMode mode,
     int question,
     RouteEndpoint from,
     RouteEndpoint to,
-    Future<void> abort,
+    Completer<void> abort,
   ) async {
     List<DirectionsRoute> routes = const [];
     TransitPlan? plan;
     RouteProblem? problem;
     try {
-      if (_mode == TravelMode.transit) {
+      if (mode == TravelMode.transit) {
         plan = await _transit.plan(
           access: _transitAccess,
           from: from.point,
           to: to.point,
-          abort: abort,
+          abort: abort.future,
         );
       } else {
         routes = await _source.routes(
-          mode: _mode,
+          mode: mode,
           wheelchair: _wheelchair,
           from: from.point,
           to: to.point,
-          abort: abort,
+          abort: abort.future,
         );
         if (routes.isEmpty) problem = RouteProblem.noRoute;
       }
@@ -356,14 +486,9 @@ class Directions extends ChangeNotifier {
       debugPrint('directions: $e');
       problem = RouteProblem.failed;
     }
-    if (_disposed || question != _asked) return;
-    _abort = null;
-    _routes = routes;
-    _selected = 0;
-    _plan = plan;
-    _selectedJourney = 0;
-    _problem = problem;
-    _loading = false;
+    if (_disposed || question != _asked[mode]) return;
+    if (_aborts[mode] == abort) _aborts.remove(mode);
+    _options[mode] = ModeOptions(routes: routes, plan: plan, problem: problem);
     notifyListeners();
   }
 
@@ -374,8 +499,11 @@ class Directions extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _abort?.complete();
-    _abort = null;
+    for (final abort in _aborts.values) {
+      abort.complete();
+    }
+    _aborts.clear();
+    _refresh?.complete();
     super.dispose();
   }
 }

@@ -8,6 +8,7 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:routing/routing.dart' show DirectionsPoint;
 
 /// What is known about whether a stop or leg can be used in a wheelchair.
@@ -180,6 +181,76 @@ class Journey {
 
   /// The first ride's departure, which a rider has to make.
   DateTime? get firstBoarding => rides.firstOrNull?.departure;
+}
+
+/// One ride of a journey, as it's told from any other from one plan to the next: the
+/// run of a trip ([tripId] on its service day) between two stops.
+///
+/// A ride whose trip the plan doesn't name is told by its route and when it's
+/// scheduled to leave instead, which real-time data doesn't move.
+typedef RideIdentity = ({
+  String? tripId,
+  String? startDate,
+  String board,
+  String alight,
+  String? route,
+  DateTime? scheduled,
+});
+
+/// Which journey a journey is, from one plan of a trip to the next: its rides, in
+/// order (see [RideIdentity]). Two plans' journeys with the same rides are the same
+/// journey, whatever their times; a journey with no rides, on the streets all the way,
+/// is the same as any other with none.
+@immutable
+class JourneyIdentity {
+  JourneyIdentity.of(Journey journey)
+    : rides = [
+        for (final ride in journey.rides)
+          (
+            tripId: ride.tripId,
+            startDate: ride.startDate,
+            board: ride.boarding.stop.id,
+            alight: ride.alighting.stop.id,
+            route: ride.tripId == null ? ride.route?.id : null,
+            scheduled: ride.tripId == null
+                ? ride.boarding.scheduledDeparture ?? ride.departure
+                : null,
+          ),
+      ];
+
+  final List<RideIdentity> rides;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! JourneyIdentity || other.rides.length != rides.length) {
+      return false;
+    }
+    for (var i = 0; i < rides.length; i++) {
+      if (other.rides[i] != rides[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hashAll(rides);
+}
+
+/// A journey among a plan's: which it is, and, where the plan has several that are
+/// the same (runs of a trip the feed doesn't tell apart, say), which of those, in the
+/// plan's order.
+typedef JourneyKey = ({JourneyIdentity identity, int nth});
+
+/// The key of each of [journeys], a plan's, in their order: no two the same.
+List<JourneyKey> journeyKeys(List<Journey> journeys) {
+  final seen = <JourneyIdentity, int>{};
+  return [
+    for (final journey in journeys)
+      () {
+        final identity = JourneyIdentity.of(journey);
+        final nth = seen[identity] = (seen[identity] ?? -1) + 1;
+        return (identity: identity, nth: nth);
+      }(),
+  ];
 }
 
 /// One leg of a journey.
@@ -533,6 +604,19 @@ class StopDeparture {
       accessibility = Accessibility.parse(json['accessibility']),
       bikesAllowed = json['bikes_allowed'] as String?;
 
+  /// [other], with its [startDate] and [headsign] as given.
+  StopDeparture._copy(StopDeparture other, {this.startDate, this.headsign})
+    : tripId = other.tripId,
+      status = other.status,
+      departure = other.departure,
+      scheduledDeparture = other.scheduledDeparture,
+      delaySeconds = other.delaySeconds,
+      realtime = other.realtime,
+      vehicleId = other.vehicleId,
+      accessibility = other.accessibility,
+      bikesAllowed = other.bikesAllowed,
+      alerts = other.alerts;
+
   static List<LegAlert> _indexed(Object? indices, List<LegAlert> alerts) => [
     for (final i in _list(indices))
       if (i is int && i >= 0 && i < alerts.length) alerts[i],
@@ -588,6 +672,65 @@ class RideDeparture extends StopDeparture {
         ...StopDeparture._indexed(json['alerts'], legAlerts),
         ...StopDeparture._indexed(json['departure_alerts'], departureAlerts),
       ]);
+
+  /// One of a departures lookup's answer (`POST /transit/departures`), whose `alerts`
+  /// index [alerts], the answer's own. It says its own route, headsign and service
+  /// day, there being no ride whose own they could be, and is never [suggested];
+  /// [relisted] makes it one of a ride's.
+  RideDeparture.listed(
+    Map<String, Object?> json, {
+    List<LegAlert> alerts = const [],
+  }) : this._(json, alerts, const []);
+
+  /// The departures of a departures lookup's answer, in the order it lists them.
+  static List<RideDeparture> decodeLookup(List<int> body) {
+    final answer = _map(jsonDecode(utf8.decode(body)));
+    final alerts = [
+      for (final a in _list(answer['alerts'])) LegAlert.fromJson(_map(a)),
+    ];
+    return [
+      for (final d in _list(answer['departures']))
+        RideDeparture.listed(_map(d), alerts: alerts),
+    ];
+  }
+
+  RideDeparture._relisted(
+    super.other, {
+    required this.route,
+    required this.arrival,
+    required this.scheduledArrival,
+    required this.lastOfDay,
+    required super.startDate,
+    required super.headsign,
+    required this.suggested,
+  }) : missed = false,
+       super._copy();
+
+  /// This departure, listed with [from], as [to]'s list would have it: [from] and [to]
+  /// are rides between the same two stops, so it's one of [to]'s departures too. What
+  /// a list says by leaving it out (its route and headsign the ride's own) is said of
+  /// [to], its service day is said outright, it's [suggested] if it's [to]'s own run,
+  /// and it's never [missed], which [from]'s journey told, not [to]'s.
+  RideDeparture relisted({required TransitLeg from, required TransitLeg to}) {
+    final route = this.route ?? from.route;
+    final startDate = this.startDate ?? from.startDate;
+    final headsign = suggested ? from.headsign : this.headsign ?? from.headsign;
+    return RideDeparture._relisted(
+      this,
+      route: route == null || route.id == to.route?.id ? null : route,
+      arrival: arrival,
+      scheduledArrival: scheduledArrival,
+      lastOfDay: lastOfDay,
+      startDate: startDate,
+      headsign: headsign == to.headsign ? null : headsign,
+      suggested:
+          to.tripId != null &&
+          tripId == to.tripId &&
+          (startDate == null ||
+              to.startDate == null ||
+              startDate == to.startDate),
+    );
+  }
 
   /// Its route when that isn't the ride's: null for one of the ride's own route.
   final TransitRoute? route;

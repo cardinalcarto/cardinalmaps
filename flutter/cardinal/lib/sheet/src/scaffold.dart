@@ -138,6 +138,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
     if (widget.controller == null) {
       _ownController = SheetController(vsync: this, physics: widget.physics);
     }
+    _controller._takeAnchors = _giveAnchors;
+  }
+
+  /// Gives the controller the current page's anchors as they are now, when it asks
+  /// (see [SheetController.animateTo]).
+  void _giveAnchors() {
+    if (mounted) _update();
   }
 
   @override
@@ -153,12 +160,20 @@ class _SheetScaffoldState extends State<SheetScaffold>
       _ownController = SheetController(vsync: this, physics: widget.physics);
     }
     _ownController?.physics = widget.physics;
+    if (widget.controller != oldWidget.controller) {
+      final old = oldWidget.controller ?? _ownController;
+      if (old?._takeAnchors == _giveAnchors) old!._takeAnchors = null;
+      _controller._takeAnchors = _giveAnchors;
+    }
   }
 
   @override
   void dispose() {
     for (final MapEntry(key: entry, value: animation) in _animations.entries) {
       _unlisten(entry, animation);
+    }
+    if (_controller._takeAnchors == _giveAnchors) {
+      _controller._takeAnchors = null;
     }
     _ownController?.dispose();
     _barShown.dispose();
@@ -320,7 +335,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       ranges: entry.ranges,
       floor: geometry.keyboard,
       draggable: entry.draggable,
-      initial: entry.initial,
+      initial: entry.initialRest,
     );
     final rest = entry.resting;
     final at = entry.restingExtent;
@@ -384,40 +399,43 @@ class _SheetScaffoldState extends State<SheetScaffold>
                     builder: backdrop,
                   ),
                 RepaintBoundary(
-                  child: GestureDetector(
-                    onVerticalDragStart: (_) => controller.hold(),
-                    onVerticalDragUpdate: (details) =>
-                        controller.dragBy(-details.primaryDelta!),
-                    onVerticalDragEnd: (details) =>
-                        controller.release(-details.primaryVelocity!),
-                    onVerticalDragCancel: () => controller.release(0),
-                    child: _SheetSurface(
-                      controller: controller,
-                      geometry: geometry,
-                      extent: _paintExtent,
-                      color: color,
-                      translucent: widget.backdrop != null,
-                      shadowColor: theme.colorScheme.shadow,
-                      elevation: widget.elevation,
-                      handle: _DragHandle(controller: controller),
-                      content: RepaintBoundary(
-                        child: Material(
-                          type: MaterialType.transparency,
-                          child: MediaQuery.removePadding(
-                            context: context,
-                            removeTop: true,
-                            removeBottom: true,
-                            removeLeft: true,
-                            removeRight: true,
-                            child: ScrollConfiguration(
-                              // Drag with a mouse too, as with a finger.
-                              behavior: ScrollConfiguration.of(context)
-                                  .copyWith(
-                                    dragDevices: PointerDeviceKind.values
-                                        .toSet(),
-                                    scrollbars: false,
-                                  ),
-                              child: widget.sheet,
+                  child: _withFingerLog(
+                    controller,
+                    GestureDetector(
+                      onVerticalDragStart: (_) => controller.hold(),
+                      onVerticalDragUpdate: (details) =>
+                          controller.dragBy(-details.primaryDelta!),
+                      onVerticalDragEnd: (details) =>
+                          controller.release(-details.primaryVelocity!),
+                      onVerticalDragCancel: () => controller.release(0),
+                      child: _SheetSurface(
+                        controller: controller,
+                        geometry: geometry,
+                        extent: _paintExtent,
+                        color: color,
+                        translucent: widget.backdrop != null,
+                        shadowColor: theme.colorScheme.shadow,
+                        elevation: widget.elevation,
+                        handle: _DragHandle(controller: controller),
+                        content: RepaintBoundary(
+                          child: Material(
+                            type: MaterialType.transparency,
+                            child: MediaQuery.removePadding(
+                              context: context,
+                              removeTop: true,
+                              removeBottom: true,
+                              removeLeft: true,
+                              removeRight: true,
+                              child: ScrollConfiguration(
+                                // Drag with a mouse too, as with a finger.
+                                behavior: ScrollConfiguration.of(context)
+                                    .copyWith(
+                                      dragDevices: PointerDeviceKind.values
+                                          .toSet(),
+                                      scrollbars: false,
+                                    ),
+                                child: widget.sheet,
+                              ),
                             ),
                           ),
                         ),

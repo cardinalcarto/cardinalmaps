@@ -5,6 +5,7 @@ use serde_json::json;
 use valinor_gtfs::LatLon;
 use valinor_walk::WalkError;
 
+use crate::departures::DeparturesRequest;
 use crate::error::{PlanError, StateError};
 use crate::nearby::{
     DEFAULT_HORIZON_SECONDS, DEFAULT_NEARBY_DEPARTURES, NearbyRequest, RouteDetailRequest,
@@ -249,6 +250,52 @@ fn parse_ride(body: &[u8], now: i64) -> Result<RideRequest, JsonResponse> {
     })
 }
 
+/// A departures lookup, as the server and the bridge take it, by the identifiers a plan gave:
+/// a transit leg's stops, and the time to list departures around.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeparturesRequestBody {
+    /// The feed of the two stops.
+    pub feed: String,
+    /// The boarding stop's `stop_id`: a leg's first stop's.
+    pub board_stop_id: String,
+    /// The alighting stop's `stop_id`: a leg's last stop's.
+    pub alight_stop_id: String,
+    /// The departure time to centre the list on, in POSIX seconds.
+    pub around: i64,
+    /// How many departures leaving before `around` to list, at most ten; two when absent.
+    #[serde(default)]
+    pub departures_before: Option<u8>,
+    /// How many departures leaving at `around` or later to list, at most ten; six when absent.
+    #[serde(default)]
+    pub departures_after: Option<u8>,
+    /// When the rider can be at the boarding stop, in POSIX seconds:
+    /// departures leaving before it are `missed`. None is when absent.
+    #[serde(default)]
+    pub ready: Option<i64>,
+    /// The plan's mode: `walking` (the default), `cycling`, or `wheelchair`.
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+pub(crate) fn parse_departures(body: &[u8], now: i64) -> Result<DeparturesRequest, JsonResponse> {
+    let parsed: DeparturesRequestBody = parse_json(body)?;
+    let defaults = DepartureRange::default();
+    Ok(DeparturesRequest {
+        feed: parsed.feed,
+        board_stop_id: parsed.board_stop_id,
+        alight_stop_id: parsed.alight_stop_id,
+        around: parsed.around,
+        range: DepartureRange {
+            before: parsed.departures_before.unwrap_or(defaults.before),
+            after: parsed.departures_after.unwrap_or(defaults.after),
+            ..defaults
+        },
+        ready: parsed.ready,
+        mode: parse_mode(parsed.mode.as_deref())?,
+        now,
+    })
+}
+
 fn parse_nearby(body: &[u8], now: i64) -> Result<NearbyRequest, JsonResponse> {
     let parsed: NearbyRequestBody = parse_json(body)?;
     let mut request = NearbyRequest::new(
@@ -330,6 +377,23 @@ impl StreetPlanner {
             Err(response) => return response,
         };
         match self.ride(&request, interrupt) {
+            Ok(response) => ok_body(&response),
+            Err(error) => plan_error(&error),
+        }
+    }
+
+    /// Answers a JSON departures lookup, as the HTTP endpoint and the app's bridge do.
+    pub fn departures_json(
+        &self,
+        body: &[u8],
+        now: i64,
+        interrupt: &dyn Fn() -> bool,
+    ) -> JsonResponse {
+        let request = match parse_departures(body, now) {
+            Ok(parsed) => parsed,
+            Err(response) => return response,
+        };
+        match self.departures(&request, interrupt) {
             Ok(response) => ok_body(&response),
             Err(error) => plan_error(&error),
         }

@@ -170,6 +170,10 @@ impl OfflineTransit {
     /// plan's leg on it would be.
     pub fn ride(&self, request: Vec<u8>, feeds: Vec<TransitFeed>, cancel: &TransitCancel) -> TransitResponse;
 
+    /// The body of the server's `POST /transit/departures`: every route's departures between
+    /// two stops around a moment, as a plan's ride lists them.
+    pub fn departures(&self, request: Vec<u8>, feeds: Vec<TransitFeed>, cancel: &TransitCancel) -> TransitResponse;
+
     /// A vehicle's latest state, as the server's vehicle lookup returns it.
     pub fn vehicle(&self, feed: String, id: String) -> TransitResponse;
 }
@@ -198,6 +202,9 @@ impl OfflineTransit {
 - `ride` describes a departure the rider picked from a transit leg's `departures`, by the leg's
   feed and first and last stops and the departure's `trip_id` and `start_date`, as a leg with
   its stops, shape, and segments; see "Departure ranges" in `transit.md`.
+- `departures` lists the departures between a transit leg's first and last stops around a
+  time, for a journey a later plan no longer has, each with its route, headsign, and start
+  date stated; see "Departures between two stops" in `transit.md`.
 - The device refuses access or egress walks above 45 minutes with a 400,
   and a timetable must be replaced by renaming, never rewritten in place, while open.
 On first open (or `TransitBuild::prepare`) a flat transfer table is assembled under the build's

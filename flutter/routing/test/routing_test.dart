@@ -93,6 +93,82 @@ void main() {
     expect(best.duration, greaterThan(0));
     expect(best.geometry.length, greaterThan(2));
     expect(best.steps.first.instruction, isNotEmpty);
+    // What the answer says besides: the roads, and the speed profile.
+    expect(best.steps.first.roadName, 'Carrer Doctor Nequí');
+    expect(best.roadNames, ['CG-2']);
+    expect(
+      (best.hasToll, best.hasFerry, best.hasMotorway),
+      (false, false, false),
+    );
+    expect(best.runs.length, inInclusiveRange(10, 50));
+    final ran = best.runs.fold(0.0, (sum, run) => sum + run.duration);
+    expect(ran, closeTo(best.duration, best.duration / 200));
+    expect(best.runs.first.speed, greaterThan(0));
+    // From the router's own runs, each is a kind of road: this drive starts on a
+    // street and is mostly main road.
+    expect(best.runs.first.kind, DirectionsRunKind.street);
+    expect(best.runs.map((run) => run.kind).toSet(), {
+      DirectionsRunKind.street,
+      DirectionsRunKind.mainRoad,
+    });
+    // Each step has its maneuver.
+    expect(best.steps.first.maneuverType, ManeuverType.depart);
+    expect(best.steps.first.maneuverModifier, isNull);
+    expect(best.steps[1].maneuverType, isNotNull);
+    expect(best.steps[1].maneuverModifier, isNotNull);
+    expect(best.steps.last.maneuverType, ManeuverType.arrive);
+    // Only a step into a roundabout says which exit to leave it by; one with a name
+    // is a rotary.
+    final roundabouts = best.steps.where((step) => step.roundaboutExit != null);
+    expect(roundabouts, isNotEmpty);
+    for (final step in roundabouts) {
+      expect(
+        step.maneuverType,
+        anyOf(ManeuverType.roundabout, ManeuverType.rotary),
+      );
+      expect(step.roundaboutExit, greaterThan(0));
+    }
+    // A drive isn't asked for its elevation, and has no trails or stairs.
+    expect(best.elevation, isNull);
+    expect(
+      (best.trailShare, best.bikeLaneShare, best.hasStairs),
+      (0, 0, false),
+    );
+  });
+
+  test('a ride has its elevation and how much of it is trail', () async {
+    final router = await OfflineRouter.open(tileSets: [tiles]);
+    final adapter = DirectionsAdapter.valhalla(
+      endpointUrl: 'http://unused/route',
+      costing: 'bicycle',
+      alternates: 0,
+      language: 'en-US',
+      units: DistanceUnits.kilometers,
+      wheelchair: false,
+    );
+    final request = adapter.request(
+      from: const DirectionsPoint(lat: 42.5078, lng: 1.5211),
+      to: const DirectionsPoint(lat: 42.5562, lng: 1.5331),
+    );
+    final response = await router.route(body: request.body);
+    expect(response.status, 200);
+    final ride = (await adapter.parse(body: response.body)).first;
+    // Up the valley: a height at the start, every 30 m, and at the end.
+    final elevation = ride.elevation!;
+    expect(elevation.interval, 30);
+    expect(elevation.heights.length, (ride.distance / 30).floor() + 2);
+    expect(elevation.heights.first, closeTo(1038.6, 0.05));
+    expect(elevation.heights.last, closeTo(1296.2, 0.05));
+    expect(elevation.climb, closeTo(378, 0.05));
+    expect(elevation.descent, closeTo(123, 0.05));
+    expect(ride.runs.map((run) => run.kind).toSet(), {
+      DirectionsRunKind.trail,
+      DirectionsRunKind.bikeLane,
+      DirectionsRunKind.sharedRoad,
+    });
+    expect(ride.trailShare, closeTo(0.139, 0.001));
+    expect(ride.bikeLaneShare, closeTo(0.275, 0.001));
+    expect(ride.hasStairs, isFalse);
   });
 
   test('navigation follows the route the directions show', () async {

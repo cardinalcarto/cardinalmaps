@@ -2,21 +2,24 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
+
+import 'package:flutter/foundation.dart' show listEquals;
+
 import 'package:cupertino_ui/cupertino_ui.dart'
     show
         CupertinoActivityIndicator,
         CupertinoButton,
-        CupertinoButtonSize,
         CupertinoIcons,
-        CupertinoSearchTextField,
-        CupertinoSlidingSegmentedControl;
+        CupertinoSearchTextField;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart';
 import 'package:sparkle/sparkle.dart';
 
 import '../geocoder/address.dart';
-import '../geocoder/geocoder.dart';
+import '../geocoder/geocoder.dart' hide Viewport;
 import '../map/location.dart';
 import '../map/map.dart';
 import '../map/route_layer.dart';
@@ -30,73 +33,183 @@ import '../settings/accessibility.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
 import '../ui/adaptive.dart';
-import '../ui/haptics.dart';
 import '../units.dart';
 import 'callouts.dart';
-import 'connections.dart';
 import 'departure_legs.dart';
+import 'departure_lists.dart';
 import 'directions.dart';
+import 'fade_layers.dart';
 import 'format.dart';
+import 'journey_list.dart';
+import 'mode_tabs.dart';
+import 'option_row.dart';
 import 'route_source.dart';
-import 'transit_details.dart';
+import 'scrub.dart';
+import 'scrub_marker.dart';
+import 'scrub_track.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
+import 'trip_buttons.dart';
+import 'trip_card.dart';
+import 'trip_details_page.dart';
 
-/// Directions to the place with [to]: the trip's two ends, the chips for how you're
-/// traveling, and the selected route's summary and steps, with the routes on the map.
+/// How often transit is planned again while its journeys, or one of them in Trip
+/// details, show.
+const transitRefresh = Duration(seconds: 30);
+
+/// The least time between two plans asked for by the clock ([clockRefresh]), and how
+/// long after a plan arrives with a journey it already can't make the clock asks again.
+const clockRefreshGap = Duration(seconds: 5);
+
+/// When the clock has transit planned again, besides every [transitRefresh]: just after
+/// the soonest of a plan's journeys to [leave] (each one's time to set out) can no
+/// longer be made, so no row says "Go now" for one that's gone. With what follows:
+///
+/// | The plan | Then |
+/// |---|---|
+/// | has a journey whose time to leave passed before it [arrived], and didn't answer the clock ([byClock]) | asked again [clockRefreshGap] after it arrived, once |
+/// | otherwise | asked again just after the soonest time to leave that was still to come when it arrived, and that hasn't been asked for under this plan ([spent]) |
+/// | has none of those | not asked again by the clock |
+/// | any | never sooner than [clockRefreshGap] after the clock [last] asked |
+///
+/// So a planner that keeps answering with a journey that's already gone is asked once
+/// more, a few seconds on, and not again until the next [transitRefresh], and one that
+/// fails isn't asked again for the same journey. Returns when to ask, and what that
+/// spends: the time to leave asked for, or, for the ask after a gone journey, when the
+/// plan arrived, so no time to leave up to then is asked for again.
+({DateTime at, DateTime spends})? clockRefresh({
+  required Iterable<DateTime> leave,
+  required DateTime arrived,
+  required bool byClock,
+  DateTime? spent,
+  DateTime? last,
+}) {
+  ({DateTime at, DateTime spends})? ask;
+  if (!byClock && spent == null && leave.any((t) => t.isBefore(arrived))) {
+    ask = (at: arrived.add(clockRefreshGap), spends: arrived);
+  } else {
+    DateTime? soonest;
+    for (final t in leave) {
+      if (t.isBefore(arrived) || (spent != null && !t.isAfter(spent))) continue;
+      if (soonest == null || t.isBefore(soonest)) soonest = t;
+    }
+    if (soonest != null) {
+      ask = (at: soonest.add(const Duration(microseconds: 1)), spends: soonest);
+    }
+  }
+  if (ask == null || last == null) return ask;
+  final earliest = last.add(clockRefreshGap);
+  return ask.at.isBefore(earliest) ? (at: earliest, spends: ask.spends) : ask;
+}
+
+/// How long after the last finger lifts a newer plan waits before it adds, drops or
+/// moves rows, so nothing is tapped as it goes from under the finger.
+const structureSettle = Duration(milliseconds: 400);
+
+/// Directions to the place with [to], as a choice among the ways to get there: the
+/// trip's two ends, a tab for each way of traveling with its best time, and that way's
+/// options as rows, with the routes on the map. The buttons pinned under the rows act
+/// on the selected one: Steps and Start on a route, Trip details on a transit journey.
+///
+/// Every way is asked for as soon as the trip has two ends, and each tab and list
+/// fills in when its answer comes. The selected row is held in view wherever the sheet
+/// is: it stops above the buttons as the rest of the sheet passes behind it.
 ///
 /// It's showing the trip, or editing one of its ends:
 ///
 /// | In | When | Then |
 /// |---|---|---|
-/// | showing the trip | a field is tapped | editing it: full, keyboard up, the field's text selected |
-/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the summary |
-/// | editing | back | showing the trip, at the summary, the end as it was unless it was cleared |
-/// | showing the trip | back | the place's card |
-/// | showing the trip | transit is chosen | its journeys, the sheet full and held there |
-/// | showing transit journeys | a journey is tapped | its legs in detail, the sheet at 40% so the map shows it |
-/// | showing a journey | back, or a new plan | the journeys, the sheet full and held there |
-/// | showing transit journeys | another mode is chosen | that mode's routes, the sheet free and down to the summary |
+/// | opening | | the sheet comes to rest on the header and up to three rows, in no more than 60% of the window; the trip shows nothing until the way last chosen is read, then fades in as that way |
+/// | showing the trip | a field is tapped | editing it: full, keyboard up, the field's text selected; the trip (ends, tabs, rows, the held row, buttons) fades out as the search fades in |
+/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the header anchor, the keyboard going; the ends, tabs, rows and buttons fade in as the search, as it was, fades out where it was, not to be tapped |
+/// | editing | back | showing the trip, the same, the end as it was unless it was cleared |
+/// | showing the trip | X, or back | the place's card |
+/// | showing the trip | an end changes, or the ends are swapped | every way is asked again: placeholders, then its options, the first selected |
+/// | showing the trip | another tab is tapped | that way's options, as they were left, fading in over the last way's where each is; the held row and the buttons fade to its own in place; nothing is asked |
+/// | a way loading, or the start being found | | three placeholder rows, the first held; its tab's time empty; the buttons disabled |
+/// | a way loading | its options arrive | its rows fade in where the placeholders were, the first selected; its tab's time fades in |
+/// | a way loading | there's no route or journey, or asking failed | the message in the first row's place, held; a dash on its tab; the buttons disabled |
+/// | either end missing | | the message asking for them, in the first row's place, held; the tabs' times empty |
+/// | showing a street way | a row, or its callout on the map, is tapped | that route selected: its row filled and held, the map's highlight on it |
+/// | showing a street way | Steps | the steps page, pushed; back returns here, the sheet where it was |
+/// | showing a street way | Start | navigating the selected route |
+/// | showing transit | | over the rows, how live the times are, how stops are reached, and the times along the rows' axis; the first journey selected, and the only one on the map |
+/// | showing transit | a journey is tapped | that journey selected: its row filled and held, the map showing it alone |
+/// | showing a way's options | a row's graph is dragged sideways, or a screen reader steps along it | scrubbing: the row selected (for transit, its journey drawn where the map is); what was held stays held, so a row cut off by the buttons stays put; a hairline at the finger, the readout in place of when it arrives (or of a journey's times), and the marker on the map, which pans as little as it must when the marker leaves what shows, but not while the map is moved by hand |
+/// | scrubbing | the finger lifts, or a second passes after the screen reader's last step | the readout fades back; the row is held, rising into the dock if it's cut off; the marker fades a second later |
+/// | showing transit | how stops are reached is chosen from its menu | transit asked again that way: placeholders, then its journeys |
+/// | showing transit | Trip details | the selected journey's Trip details, pushed: the journey from its top, the sheet at 40% so the map shows it |
+/// | Trip details showing | back | the journeys, the sheet and the list where they were left |
+/// | showing transit, or Trip details over it, the app in front | [transitRefresh] since transit last answered | transit planned again; what shows stays as it is until the answer, and if planning fails |
+/// | showing transit, or Trip details over it, the app in front | the soonest journey listed can no longer be made: just after its time to leave, as [clockRefresh] has it | transit planned again, as above; no sooner than [clockRefreshGap] after the clock last asked, nor while a refresh is under way |
+/// | transit planned again | the new plan has the same journeys in the same order | each row's times and timeline ease to the new ones, in place |
+/// | transit planned again | the new plan adds, drops or reorders journeys | once no finger is down, and [structureSettle] after: rows grow in, shrink out and slide; the selected journey stays selected and held if it's still there, and the first is selected if not |
+/// | Trip details showing, transit planned again | the new plan has a journey whose rides are the departures now taken, every ride connected | once no finger is down: it's open on that one, as for the same journey, the departures chosen kept; the list under it selects it (unless it's the journey opened), which neither moves the map nor the page over it, so back lands on it |
+/// | Trip details showing, transit planned again | the open journey is in the new plan (and none as above) | once no finger is down: it stays open, its times ease, the departures chosen kept |
+/// | Trip details showing, transit planned again | the open journey isn't in the new plan | once no finger is down: it stays open on the journey as it was, each ride's departures as last looked up, or as the new plan lists them between its stops where it does, the departures chosen kept as far as they can be; the map goes on drawing it. Each ride's departures are asked for between its stops, once for that plan |
+/// | Trip details showing a journey the plan hasn't | a ride's departures looked up arrive | once no finger is down, and [structureSettle] after: the ride's departures are those, the journey re-timed by them, on the map too |
+/// | Trip details showing a journey the plan hasn't | a newer plan is shown, Trip details closes, or transit is asked again | what's being looked up is given up on |
+/// | Trip details showing | the clock passes the last moment one of the first ride's departures can be made | once no finger is down, and [structureSettle] after: it's missed, and the journey re-timed, on the map too |
+/// | Trip details showing | transit is asked again (an end, or how stops are reached, changed) | back to the journeys |
+/// | any | the text is so large for the window that a held row, the ends and tabs, and the buttons don't fit with the sheet as high as it goes | no row is held, in any way or state: the selected row is one of the list's like any other, still filled; the anchors show the buttons with only the handle over them, and with the ends and tabs; a callout tapped selects its route without bringing its row into view |
+/// | any | the window or the text size changes so they fit again, or no longer do | a row held, or none, from that frame on, the anchors moving with it as they do with the rest of the layout |
+///
+/// The sheet rests at two anchors, each with the held row above the buttons: with
+/// only the handle over it, and with the ends and tabs over it. From the second up it
+/// rests wherever it's let go. A fling stops at the second only if it's slow by the
+/// time it gets there ([headerGravity]); otherwise one swipe carries the sheet from the
+/// first up into the list, or from the list down to the first. The rows, the placeholders and the message are one
+/// height in every way, and so are the buttons, so the anchors are the same in every
+/// way and state. Where no row is held, the anchors are the same without it.
 class DirectionsPage extends StatefulWidget {
   const DirectionsPage({super.key, required this.to});
 
   /// The ID of the place to go to.
   final String to;
 
+  /// The trip's ends and the tabs.
+  static const _headerSection = #directionsHeader;
+
+  /// How hard the sheet's header anchor ([headerAnchor]) holds a fling passing over
+  /// it, in logical pixels per second (see [SheetAnchor.gravity]): a fling still going
+  /// at least this fast when it gets there carries on, down to where only the held
+  /// row and the buttons show or up into the list, and a slower one stops with the
+  /// ends and tabs showing. So one swipe gets between the two, and a gentle one stops
+  /// on the way.
+  ///
+  /// Tuned by feel on the phone.
+  static const headerGravity = 2400.0;
+
+  /// Where the sheet rests with the ends and tabs showing, over the held row or, where
+  /// no row is held, over the buttons. A waypoint between the sheet's lowest anchor
+  /// and the list, not a guard: see [headerGravity].
+  ///
+  /// The one value for the page's anchors, the end of its range, and whatever moves
+  /// the sheet there or asks whether it's there, as an anchor is the same as another
+  /// only with the same gravity.
+  static const headerAnchor = SheetAnchor.section(
+    _headerSection,
+    gravity: headerGravity,
+  );
+
   @override
   State<DirectionsPage> createState() => _DirectionsPageState();
 }
 
-class _DirectionsPageState extends State<DirectionsPage> {
-  static const _modes = #directionsModes;
-  static const _summary = #directionsSummary;
-  static const _journeySummary = #directionsJourneySummary;
+class _DirectionsPageState extends State<DirectionsPage>
+    with TickerProviderStateMixin {
+  /// Ends under the last row the sheet first opens to show.
+  static const _opening = #directionsOpening;
 
-  /// Where a transit journey's details rest: low enough for the map to show its shape.
-  static const _detailsAnchor = SheetAnchor.fraction(0.4);
-
-  /// From the details anchor up, the sheet rests wherever it's let go, with no anchor
-  /// at the top to spring to, and a fling up carries on into scrolling the journey, so
-  /// reading through it is one long scroll.
-  static const _detailsRange = SheetRange(
-    _detailsAnchor,
-    SheetAnchor.full(),
-    carriesIntoScroll: true,
-  );
-
-  /// How often "Go in" times count down.
+  /// How often the times that follow the clock are shown again: when a route
+  /// arrives, how long until a journey does, and "Go in".
   static const _tick = Duration(seconds: 30);
 
-  /// Just below the summary. Flings always stop here, on the way up or down.
-  static const _summaryAnchor = SheetAnchor.section(
-    _summary,
-    gravity: double.infinity,
-  );
-
-  /// From just below the summary and its Go button up, as for a journey's details.
-  static const _summaryRange = SheetRange(
-    _summaryAnchor,
+  /// From the header anchor up the sheet rests wherever it's let go, with no anchor at
+  /// the top to spring to, and a fling up carries on into scrolling the list.
+  static const _tripRange = SheetRange(
+    DirectionsPage.headerAnchor,
     SheetAnchor.full(),
     carriesIntoScroll: true,
   );
@@ -107,12 +220,26 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// The closest the map moves in to show a short trip.
   static const _maxZoom = 17.0;
 
+  /// Transit's list, among the lists of [OptionList]s' slots.
+  static const _transitGroup = #transit;
+
   /// How long the map has to be still for the callouts to move.
   static const _calloutDelay = Duration(milliseconds: 150);
 
   /// How far a callout's point stays from the edge of what's showing, in logical pixels:
   /// enough for the bubble, which sits above the point.
   static const _calloutMargin = EdgeInsets.fromLTRB(44, 40, 44, 4);
+
+  /// How far the scrub marker is kept from the edge of what's showing of the map, in
+  /// logical pixels, before the map pans to keep it in view.
+  static const _scrubMargin = EdgeInsets.all(32);
+
+  /// How long the map pans for to bring the scrub marker back into view.
+  static const _scrubPan = Duration(milliseconds: 300);
+
+  /// How long after the last finger lifts from the map, and the map stops moving, it's
+  /// taken to be done with the gesture.
+  static const _mapSettle = Duration(milliseconds: 300);
 
   Directions? _directions;
   late SparkleMapController _map;
@@ -135,27 +262,145 @@ class _DirectionsPageState extends State<DirectionsPage> {
   Timer? _calloutTimer;
   Timer? _clock;
 
+  /// Whether the way last chosen has been read. Until it has, the trip is laid out,
+  /// for the sheet to come to rest on, but none of it shows, so the page is never
+  /// seen in one way and then another.
+  bool _ready = false;
+
+  /// Whether the start has been looked for too, so the first questions have been
+  /// asked if they could be.
+  bool _resumed = false;
+
+  /// What shows of the trip, which keeps its state as it goes from the sheet's
+  /// content to fading out over the search for an end, and back.
+  final _tripKey = GlobalKey();
+
+  /// How far the trip was scrolled when an end was last tapped, for it to fade out
+  /// where it was.
+  double _tripScrolled = 0;
+
+  /// Whether the app is in front.
+  bool _appShown = true;
+  late final AppLifecycleListener _lifecycle = AppLifecycleListener(
+    onShow: () {
+      _appShown = true;
+      _scheduleRefresh();
+      _retime();
+    },
+    onHide: () {
+      _appShown = false;
+      _scheduleRefresh();
+    },
+  );
+
+  /// Plans transit again when it runs out.
+  Timer? _refreshTimer;
+
+  /// Plans transit again when the soonest of its journeys can no longer be made
+  /// ([clockRefresh]); with when the plan showing arrived, whether it answered the
+  /// clock, what the clock has asked for under it, when the clock last asked, and
+  /// whether the refresh last asked for was the clock's.
+  Timer? _clockRefreshTimer;
+  DateTime? _planArrived;
+  bool _planByClock = false;
+  DateTime? _clockSpent;
+  DateTime? _lastClockRefresh;
+  bool _refreshByClock = false;
+
+  /// Transit's plan and whether it was loading, as last seen, and when it last
+  /// answered.
+  TransitPlan? _transitPlan;
+  bool _transitLoading = false;
+  DateTime? _transitAnswered;
+
+  /// The fingers down anywhere in the window.
+  final _pointers = <int>{};
+
+  /// The fingers that went down on the map, out from under the sheet, and the time
+  /// after the last lifted until the map is still.
+  final _mapPointers = <int>{};
+  Timer? _mapSettling;
+
+  /// Whether the map is being moved by hand, or still moving from it.
+  bool get _mapTouched => _mapPointers.isNotEmpty || _mapSettling != null;
+
+  /// The row being scrubbed, and the slot that was held when the scrub started, which
+  /// stays held until it ends: a row selected by a scrub rises into the dock only once
+  /// the finger lifts, as one that's tapped does.
+  Object? _scrubbing;
+  Object? _scrubHeld;
+
+  /// The slot held as the page was last built.
+  Object? _held;
+
+  late final _scrubSink = ScrubSink(
+    onStart: _scrubStarted,
+    onMove: _scrubMoved,
+    onEnd: _scrubEnded,
+  );
+
+  late final _marker = ScrubMarker(
+    map: _map,
+    vsync: this,
+    onPlaced: _keepInView,
+  );
+
+  /// Runs for [structureSettle] after the last of them lifts.
+  Timer? _settling;
+
+  /// How much the trip shows, with its rows and buttons: none of it until the way
+  /// last chosen is read, then all, but not while an end is edited.
+  late final _chrome =
+      AnimationController(
+        vsync: this,
+        value: 0,
+        duration: const Duration(milliseconds: 200),
+      )..addStatusListener(
+        (status) => setState(() {
+          // The search has faded out.
+          if (status.isCompleted) _forgetLeft();
+        }),
+      );
+
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'directions');
 
   /// The end being edited, if one is.
   RouteField? _editing;
 
-  /// Whether the selected transit journey's legs are showing.
-  bool _journeyOpen = false;
+  /// The search for the end last edited, as it was when editing ended, and the field
+  /// of it, which keeps its state as it goes from the sheet's content to fading out
+  /// over the trip.
+  _LeftSearch? _left;
+  final _inputKey = GlobalKey();
 
-  /// How many times a journey has been opened, so each opening scrolls on its own.
-  int _journeyOpens = 0;
+  /// Lets the search last edited go, once it's faded out or an end is edited again.
+  void _forgetLeft() {
+    _left?.offset.dispose();
+    _left = null;
+  }
 
-  /// The transit journey the map shows.
+  /// The transit journey the map shows, and which it is of which question's plans:
+  /// the map moves to show another journey, not the same one planned again.
   Journey? _shownJourney;
+  (int, JourneyKey)? _shownKey;
 
-  /// The departures chosen of the open journey's rides, if they've been worked out.
-  ConnectionChain? _chain;
+  /// Which journey is open in Trip details, of which plan, of which of the times
+  /// transit has been asked.
+  JourneyKey? _openKey;
+  TransitPlan? _openPlan;
+  int _openQuestion = 0;
 
-  /// The legs of the departures chosen other than the plan's, for the map to draw and
-  /// the itinerary to list the stops of.
-  DepartureLegs? _legs;
+  /// Whether a journey was open in Trip details as the open journey last changed.
+  bool _wasOpen = false;
+
+  /// Runs out when one of the open journey's first ride's departures can no longer be
+  /// made.
+  Timer? _missTimer;
+
+  /// The journey open in Trip details, if one is, with the departures chosen of its
+  /// rides and the legs of those other than the plan's, for the map to draw.
+  late final OpenJourney _open;
 
   List<SavedPlace> _saved = const [];
 
@@ -212,13 +457,14 @@ class _DirectionsPageState extends State<DirectionsPage> {
       transit: scope.transit,
       location: scope.location,
     )..addListener(_changed);
-    _legs = DepartureLegs(scope.transit)
-      ..addListener(() {
-        if (!mounted) return;
-        // The itinerary lists the stops of one that's arrived.
-        setState(() {});
-        _drawRoutes();
-      });
+    _open = OpenJourney(
+      directions: directions,
+      legs: DepartureLegs(scope.transit),
+      lists: DepartureLists(scope.transit),
+    )..addListener(_chainChanged);
+    _open.lists.addListener(_relist);
+    // The map draws one that's arrived along its own line.
+    _open.legs.addListener(_drawRoutes);
     // The place's card under this page has it, or is fetching it.
     final cached = store.places.cached(widget.to);
     if (cached != null) {
@@ -235,9 +481,23 @@ class _DirectionsPageState extends State<DirectionsPage> {
       setState(() => _saved = tree.allPlaces);
     });
     _watchUnits = store.settings.watch(unitSystem).listen((units) {
+      _open.units = units;
       if (units != _units) setState(() => _units = units);
     });
     _taps = routeTaps.stream.listen(directions.select);
+    _appShown = switch (WidgetsBinding.instance.lifecycleState) {
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => false,
+      _ => true,
+    };
+    _lifecycle;
+    WidgetsBinding.instance.pointerRouter.addGlobalRoute(_pointer);
+    _clock = Timer.periodic(_tick, (_) {
+      if (!mounted) return;
+      setState(() {});
+      _retime();
+    });
     _map.cameraMoved.addListener(_viewChanged);
     // This page's own pin marks the destination, which can change.
     showSelection(_map, null);
@@ -246,21 +506,29 @@ class _DirectionsPageState extends State<DirectionsPage> {
 
   /// Starts with the mode last chosen, by wheelchair if that's the default, then from
   /// where you are. The default is followed if it changes while this page is open.
+  ///
+  /// The three settings are read at once, and the trip shows only once they're known,
+  /// in the way last chosen from the first.
   Future<void> _resume(Directions directions) async {
     final settings = _settings!;
-    final wheelchair = await settings.get(wheelchairByDefault);
-    _rememberedAccess = await settings.get(lastTransitAccess);
+    final (wheelchair, access, mode) = await (
+      settings.get(wheelchairByDefault),
+      settings.get(lastTransitAccess),
+      settings.get(lastTravelMode),
+    ).wait;
+    if (!mounted) return;
+    _rememberedAccess = access;
     directions
       ..setWheelchair(wheelchair)
-      ..setTransitAccess(
-        transitAccess(_rememberedAccess, wheelchair: wheelchair),
-      )
-      ..setMode(await settings.get(lastTravelMode));
-    if (!mounted) return;
+      ..setTransitAccess(transitAccess(access, wheelchair: wheelchair))
+      ..setMode(mode);
+    setState(() => _ready = true);
+    _chrome.forward();
     _watchWheelchair = settings
         .watch(wheelchairByDefault)
         .listen(_wheelchairChanged);
     await directions.startFromMyLocation();
+    if (mounted) setState(() => _resumed = true);
   }
 
   /// Walking, and getting to stops if no way has been chosen, follow the default.
@@ -281,18 +549,31 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _watchWheelchair?.cancel();
     _calloutTimer?.cancel();
     _clock?.cancel();
+    _refreshTimer?.cancel();
+    _clockRefreshTimer?.cancel();
+    _settling?.cancel();
+    _missTimer?.cancel();
+    _mapSettling?.cancel();
+    _marker.dispose();
+    if (_directions != null) {
+      _lifecycle.dispose();
+      WidgetsBinding.instance.pointerRouter.removeGlobalRoute(_pointer);
+    }
     _map.cameraMoved.removeListener(_viewChanged);
     _sheet?.removeListener(_viewChanged);
     _navigation?.removeListener(_navigationChanged);
     _map
       ..setGeoJson(routeSource, empty)
       ..setGeoJson(routeCalloutSource, empty)
-      ..setGeoJson(transitSource, empty);
+      ..setGeoJson(transitSource, empty)
+      ..setGeoJson(scrubSource, empty);
     _directions?.dispose();
-    _legs?.dispose();
+    _open.dispose();
     _search?.dispose();
     _focus.dispose();
     _text.dispose();
+    _chrome.dispose();
+    _forgetLeft();
     super.dispose();
   }
 
@@ -305,6 +586,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     if (!mounted) return;
     if (_navigating) {
       _calloutTimer?.cancel();
+      _marker.hide();
       _callouts = const [];
       _drawRoutes();
       _map.setGeoJson(routeCalloutSource, empty);
@@ -315,22 +597,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
     }
   }
 
-  /// Starts navigating the selected route, and opens the navigation screen over this
-  /// page.
-  void _startNavigation() {
-    final directions = _directions!;
-    final route = directions.selectedRoute;
-    if (route == null) return;
-    NavigationScope.of(context).controller.start(
-      route: route,
-      mode: directions.mode,
-      wheelchair: directions.wheelchair,
-      destinationName: switch (directions.to) {
-        RouteEndpoint(:final place?) => placeTitle(place),
-        _ => null,
-      },
-    );
-    unawaited(context.push(navigationLocation(widget.to)));
+  /// Opens the selected route's steps over this page.
+  void _openSteps() {
+    unawaited(context.push(stepsLocation(widget.to), extra: _directions!));
   }
 
   /// The trip changed: redraw it, and if the routes are new, show them all and place
@@ -338,6 +607,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
   void _changed() {
     if (!mounted) return;
     final directions = _directions!;
+    // Showing a newer plan tells this again, with it.
+    if (_showRefreshed()) return;
+    _followTransit();
     if (_navigating) {
       // Drawn as it is when navigation closes.
       setState(() {});
@@ -348,51 +620,261 @@ class _DirectionsPageState extends State<DirectionsPage> {
       _placer = _shownRoutes.isEmpty ? null : CalloutPlacer(_shownRoutes);
       _showAll();
     }
+    _followOpen();
     final journey = directions.journey;
     if (!identical(journey, _shownJourney)) {
-      if (_journeyOpen &&
-          (journey == null ||
-              directions.plan?.journeys.contains(_shownJourney) != true)) {
-        // A new plan: back to its list, which holds the sheet full.
-        _journeyOpen = false;
-        _animateAfterFrame(const SheetAnchor.full());
-      }
       _shownJourney = journey;
-      _showJourney();
+      final key = switch (directions.plan) {
+        final plan? when journey != null => (
+          directions.transitQuestion,
+          journeyKeys(plan.journeys)[directions.selectedJourney],
+        ),
+        _ => null,
+      };
+      // The same journey planned again is drawn again, where the map is; one a scrub
+      // selects is drawn where the map is too, which pans only to follow the marker.
+      // Trip details' journey stays the map's subject while it's open, whatever's
+      // selected under it.
+      if (key != _shownKey && _scrubbing == null && !_open.isOpen) {
+        _showJourney();
+      }
+      _shownKey = key;
     }
-    // A newer plan of the open journey keeps its choices, as far as it can.
-    if (_journeyOpen && journey != null) _chainOf(journey);
     _followChain();
     _drawRoutes();
     _placeCallouts();
-    _keepClock(directions.mode == TravelMode.transit);
     setState(() {});
   }
 
-  /// While transit shows, "Go in" counts down.
-  void _keepClock(bool running) {
-    if (!running) {
-      _clock?.cancel();
-      _clock = null;
+  /// Keeps Trip details on its journey as transit's plan changes: open, on the
+  /// journey as a newer plan of the same trip has it, with the departures chosen; or
+  /// on the journey as it was, with the departures the newer plan lists between its
+  /// rides' stops, if that plan doesn't have it; closed if the trip is another.
+  void _followOpen() {
+    if (!_open.isOpen) return;
+    final directions = _directions!;
+    final plan = directions.plan;
+    if (plan == null || directions.transitQuestion != _openQuestion) {
+      _open.close();
+      return;
+    }
+    if (identical(plan, _openPlan)) return;
+    _openPlan = plan;
+    final now = DirectionsScope.of(context).clock();
+    final keys = journeyKeys(plan.journeys);
+    // The journey of the departures now taken, as the clock or the rider has
+    // re-timed it, is the one open from now on; otherwise the one opened.
+    final chain = _open.chain!;
+    final taken = plan.journeys.indexWhere(chain.takes);
+    if (taken >= 0) {
+      final adopted = keys[taken] != _openKey;
+      _openKey = keys[taken];
+      _open.rebase(plan.journeys[taken], now: now);
+      // The list under it follows another journey adopted, so back lands on it,
+      // and the map, which draws the open journey, doesn't move.
+      if (adopted && directions.selectedJourney != taken) {
+        directions.selectJourney(taken);
+      }
+      return;
+    }
+    final index = keys.indexOf(_openKey!);
+    if (index < 0) {
+      // What the plan lists between each ride's stops stands in until the ride's own
+      // departures, asked for now, arrive.
+      _open.refresh(plan.journeys, now: now);
+      _open.lookUp(plan, directions.transitAccess, now);
     } else {
-      _clock ??= Timer.periodic(_tick, (_) {
-        if (mounted) setState(() {});
-      });
+      _open.rebase(plan.journeys[index], now: now);
     }
   }
 
-  /// Springs the sheet to [anchor] once this frame has laid out the content that has it.
-  void _animateAfterFrame(SheetAnchor anchor) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _sheet!.animateTo(anchor);
+  /// Makes the open journey's first ride's departures as the clock has them now, once
+  /// no finger is down and [structureSettle] after, as a newer plan is shown: a tile
+  /// may turn Missed, and the rides re-time.
+  void _retime() {
+    if (!mounted || !_open.isOpen || _touched) return;
+    _open.at(DirectionsScope.of(context).clock());
+    _scheduleMiss();
+  }
+
+  /// Has the open journey take the departures looked up between its rides' stops,
+  /// once no finger is down and [structureSettle] after, as a newer plan is shown:
+  /// tiles may come and go, and the rides re-time.
+  void _relist() {
+    if (!mounted || !_open.isOpen || _touched) return;
+    _open.relist(now: DirectionsScope.of(context).clock());
+  }
+
+  /// Sets [_retime] to run when the next of the open journey's first ride's
+  /// departures can no longer be made.
+  void _scheduleMiss() {
+    _missTimer?.cancel();
+    _missTimer = null;
+    final at = _open.chain?.missesAt;
+    if (at == null || !mounted) return;
+    final wait = at.difference(DirectionsScope.of(context).clock());
+    _missTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      _missTimer = null;
+      _retime();
     });
   }
 
-  /// Where the sheet rests for the trip, outside a journey's details: full for transit,
-  /// whose journeys need the room, and below the summary otherwise.
-  SheetAnchor get _tripAnchor => _directions!.mode == TravelMode.transit
-      ? const SheetAnchor.full()
-      : _summaryAnchor;
+  /// Whether transit's journeys, or one of them in Trip details, are showing, with
+  /// the app in front.
+  bool get _transitShowing {
+    final directions = _directions!;
+    return _ready &&
+        _appShown &&
+        _editing == null &&
+        directions.mode == TravelMode.transit &&
+        directions.from != null &&
+        directions.to != null;
+  }
+
+  /// Notes when transit answers, and has it planned again in time.
+  void _followTransit() {
+    final options = _directions!.options(TravelMode.transit);
+    if (!options.loading &&
+        (_transitLoading || !identical(options.plan, _transitPlan))) {
+      final now = _transitAnswered = DirectionsScope.of(context).clock();
+      _planArrived = now;
+      _planByClock = !_transitLoading && _refreshByClock;
+      _clockSpent = null;
+    }
+    _transitLoading = options.loading;
+    _transitPlan = options.plan;
+    _scheduleRefresh();
+  }
+
+  /// Sets transit to be planned again [transitRefresh] after it last answered, or at
+  /// once if that's passed, while it's showing; and not to be while it isn't.
+  void _scheduleRefresh() {
+    final directions = _directions;
+    if (directions == null) return;
+    _scheduleClockRefresh();
+    if (!_transitShowing || directions.options(TravelMode.transit).loading) {
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      return;
+    }
+    if (_refreshTimer != null || directions.refreshing) return;
+    final since = switch (_transitAnswered) {
+      final answered? => DirectionsScope.of(
+        context,
+      ).clock().difference(answered),
+      null => transitRefresh,
+    };
+    final wait = transitRefresh - since;
+    _refreshTimer = Timer(wait.isNegative ? Duration.zero : wait, _refresh);
+  }
+
+  /// Sets transit to be planned again when the clock runs out on the soonest of its
+  /// journeys ([clockRefresh]), while it's showing, its plan isn't loading and no
+  /// refresh is under way; and not to be otherwise.
+  void _scheduleClockRefresh() {
+    _clockRefreshTimer?.cancel();
+    _clockRefreshTimer = null;
+    final directions = _directions!;
+    final options = directions.options(TravelMode.transit);
+    final plan = options.plan;
+    final arrived = _planArrived;
+    if (!mounted ||
+        !_transitShowing ||
+        options.loading ||
+        directions.refreshing ||
+        plan == null ||
+        arrived == null) {
+      return;
+    }
+    final ask = clockRefresh(
+      leave: [for (final journey in plan.journeys) journey.departure],
+      arrived: arrived,
+      byClock: _planByClock,
+      spent: _clockSpent,
+      last: _lastClockRefresh,
+    );
+    if (ask == null) return;
+    final wait = ask.at.difference(DirectionsScope.of(context).clock());
+    _clockRefreshTimer = Timer(wait.isNegative ? Duration.zero : wait, () {
+      _clockRefreshTimer = null;
+      if (!mounted || !_transitShowing || directions.refreshing) return;
+      _clockSpent = ask.spends;
+      _lastClockRefresh = DirectionsScope.of(context).clock();
+      // Asked now, the half minute runs from this answer.
+      _refreshTimer?.cancel();
+      _refreshTimer = null;
+      unawaited(_refresh(byClock: true));
+    });
+  }
+
+  /// Plans transit again, for the clock if [byClock]. A slow answer isn't given up for
+  /// the next; one that fails leaves what's showing, and the next is asked for in its
+  /// turn.
+  Future<void> _refresh({bool byClock = false}) async {
+    _refreshTimer = null;
+    final directions = _directions!;
+    if (!directions.refreshing) _refreshByClock = byClock;
+    await directions.refreshTransit();
+    if (!mounted) return;
+    _transitAnswered = DirectionsScope.of(context).clock();
+    _scheduleRefresh();
+  }
+
+  /// Whether a finger is down, or one lifted within [structureSettle].
+  bool get _touched => _pointers.isNotEmpty || _settling != null;
+
+  /// Whether showing [fresh] in place of transit's plan would add, drop or move
+  /// anything that shows: its journeys aren't the same ones in the same order, or one
+  /// is open in Trip details, where a ride's departures and rows may differ.
+  bool _restructures(TransitPlan fresh) {
+    final directions = _directions!;
+    if (directions.mode != TravelMode.transit) return false;
+    final plan = directions.plan;
+    if (plan == null || _open.isOpen) return true;
+    return !listEquals(journeyKeys(plan.journeys), journeyKeys(fresh.journeys));
+  }
+
+  /// Shows the newer plan of transit that's waiting, if there is one and nothing
+  /// would move under a finger; returns whether it did.
+  bool _showRefreshed() {
+    final directions = _directions!;
+    final fresh = directions.refreshed;
+    if (fresh == null || (_touched && _restructures(fresh))) return false;
+    directions.showRefreshed();
+    return true;
+  }
+
+  /// A finger went down or lifted, anywhere: a newer plan that would move rows waits
+  /// until none is down, and a little longer.
+  ///
+  /// It notes too which fingers are on the map, for the scrub marker not to pan it
+  /// while it's moved by hand.
+  void _pointer(PointerEvent event) {
+    if (event is PointerDownEvent) {
+      _pointers.add(event.pointer);
+      _settling?.cancel();
+      _settling = null;
+      if (mounted && _onMap(event.position)) {
+        _mapPointers.add(event.pointer);
+        _mapSettling?.cancel();
+        _mapSettling = null;
+      }
+    } else if (event is PointerUpEvent || event is PointerCancelEvent) {
+      _pointers.remove(event.pointer);
+      if (_mapPointers.remove(event.pointer) && _mapPointers.isEmpty) {
+        _settleMap();
+      }
+      if (_pointers.isNotEmpty) return;
+      _settling?.cancel();
+      _settling = Timer(structureSettle, () {
+        _settling = null;
+        if (!mounted) return;
+        _showRefreshed();
+        _relist();
+        _retime();
+      });
+    }
+  }
 
   /// Draws the routes, their start and the destination's pin, and the transit journey;
   /// while navigating, only the pin, the trip's own drawing taking the place of the
@@ -415,18 +897,11 @@ class _DirectionsPageState extends State<DirectionsPage> {
     _map.setGeoJson(
       transitSource,
       journeyGeoJson(
-        navigating ? null : _shownJourney,
+        navigating ? null : _drawnJourney,
         rides: navigating ? const {} : _chosenRides(),
       ),
     );
   }
-
-  /// The open journey's choices, rebased onto [journey] when that's a newer plan of it.
-  ConnectionChain _chainOf(Journey journey) => _chain = switch (_chain) {
-    final chain? when identical(chain.journey, journey) => chain,
-    final chain? => chain.rebase(journey),
-    null => ConnectionChain(journey),
-  };
 
   /// Has the legs fetched of the departures the open journey takes but the plan's own,
   /// and no others.
@@ -434,7 +909,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     final directions = _directions!;
     final plan = directions.plan;
     if (plan == null) return;
-    _legs!.follow(plan, _journeyOpen ? _chain : null, directions.transitAccess);
+    _open.legs.follow(plan, _open.chain, directions.transitAccess);
   }
 
   /// How the map draws each ride of the open journey that takes another departure than
@@ -442,10 +917,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// it's fetched, and until then along the plan's, which is between the same two stops,
   /// in the departure's route's colors.
   Map<int, DrawnRide> _chosenRides() {
-    final journey = _shownJourney;
-    final chain = _chain;
-    if (!_journeyOpen ||
-        journey == null ||
+    final journey = _drawnJourney;
+    final chain = _open.chain;
+    if (journey == null ||
         chain == null ||
         !identical(chain.journey, journey)) {
       return const {};
@@ -455,16 +929,20 @@ class _DirectionsPageState extends State<DirectionsPage> {
       for (final (i, leg) in journey.legs.indexed)
         if (chain.forLeg(i) case final choice?
             when choice.made && !choice.suggested)
-          i: switch (_legs!.legOf(choice, access)) {
+          i: switch (_open.legs.legOf(choice, access)) {
             final fetched? => (shape: fetched.shape, route: fetched.route),
             null => (shape: leg.shape, route: choice.route),
           },
     };
   }
 
+  /// The transit journey the map draws: Trip details', while it's open, which may be
+  /// one a newer plan hasn't; otherwise the one selected.
+  Journey? get _drawnJourney => _open.chain?.journey ?? _shownJourney;
+
   /// Makes the transit journey the map's subject.
   void _showJourney() {
-    final points = _shownJourney?.legs.expand((leg) => leg.shape) ?? const [];
+    final points = _drawnJourney?.legs.expand((leg) => leg.shape) ?? const [];
     _fit(points);
   }
 
@@ -497,8 +975,27 @@ class _DirectionsPageState extends State<DirectionsPage> {
     );
   }
 
+  /// Whether [position], in the window, is on the map: not under the sheet or the
+  /// status bar.
+  bool _onMap(Offset position) {
+    final view = SheetScaffold.viewOf(context);
+    final clear =
+        EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
+    return clear
+        .deflateRect(Offset.zero & MediaQuery.sizeOf(context))
+        .contains(position);
+  }
+
+  /// The last finger lifted from the map, or the map moved since: it's done with the
+  /// gesture once it's been still for [_mapSettle].
+  void _settleMap() {
+    _mapSettling?.cancel();
+    _mapSettling = Timer(_mapSettle, () => _mapSettling = null);
+  }
+
   /// The map or the sheet moved: once they're still, the callouts follow.
   void _viewChanged() {
+    if (_mapSettling != null) _settleMap();
     _calloutTimer?.cancel();
     if (_navigating) return;
     _calloutTimer = Timer(_calloutDelay, _placeCallouts);
@@ -512,7 +1009,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
     if (placer == null) {
       callouts = const [];
     } else {
-      final outline = _visibleOutline();
+      final outline = _visibleOutline(_calloutMargin);
       if (outline == null) return;
       callouts = placer.place((lng, lat) => insideOutline(outline, lng, lat));
     }
@@ -532,13 +1029,14 @@ class _DirectionsPageState extends State<DirectionsPage> {
     return true;
   }
 
-  /// The ground showing outside the sheet and the status bar, or null if it can't be
-  /// told: the sheet covers the map, or the view reaches past the horizon.
-  List<({double lng, double lat})>? _visibleOutline() {
+  /// The ground showing outside the sheet and the status bar, [margin] in from its
+  /// edges, or null if it can't be told: the sheet covers the map, or the view reaches
+  /// past the horizon.
+  List<({double lng, double lat})>? _visibleOutline(EdgeInsets margin) {
     final view = SheetScaffold.viewOf(context);
     final clear =
         EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
-    final area = _calloutMargin.deflateRect(
+    final area = margin.deflateRect(
       clear.deflateRect(Offset.zero & MediaQuery.sizeOf(context)),
     );
     if (area.isEmpty) return null;
@@ -551,17 +1049,62 @@ class _DirectionsPageState extends State<DirectionsPage> {
     return corners.length < 4 ? null : corners;
   }
 
+  /// A row's graph is scrubbed: it's selected, but whatever was held stays held until
+  /// the scrub ends, so a row cut off by the buttons stays where it is under the
+  /// finger.
+  void _scrubStarted(Object row, VoidCallback select) {
+    if (_scrubbing == null) _scrubHeld = _held;
+    _scrubbing = row;
+    select();
+  }
+
+  void _scrubMoved(Object row, DirectionsPoint? point) {
+    if (row != _scrubbing || _navigating) return;
+    _marker.move(point);
+  }
+
+  /// The scrub ended: the row it selected is held, rising into the dock if it's cut
+  /// off, and the marker fades a while after.
+  void _scrubEnded(Object row) {
+    if (row != _scrubbing) return;
+    _scrubbing = null;
+    _marker.release();
+    // A row that goes takes its scrub with it, as the tree is being finalized.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrubbing == null) setState(() => _scrubHeld = null);
+      });
+    } else {
+      setState(() => _scrubHeld = null);
+    }
+  }
+
+  /// Pans the map, as little as it can, for [point], where the scrub marker is, to
+  /// be [_scrubMargin] inside what shows of it, if it isn't; not while the map is
+  /// moved by hand. The zoom stays as it is.
+  void _keepInView(DirectionsPoint point) {
+    if (!mounted || _navigating || _mapTouched) return;
+    final outline = _visibleOutline(_scrubMargin);
+    if (outline == null) return;
+    final shift = panInto(outline, point.lng, point.lat);
+    final camera = _map.camera;
+    if (shift == null || camera == null) return;
+    _map.easeTo(
+      lng: camera.lng + shift.lng,
+      lat: camera.lat + shift.lat,
+      zoom: camera.zoom,
+      duration: _scrubPan,
+      curve: EaseCurve.easeOut,
+    );
+  }
+
   void _setMode(TravelMode mode) {
     final directions = _directions!;
     final was = directions.mode;
     directions.setMode(mode);
     if (directions.mode == was) return;
     unawaited(_settings!.set(lastTravelMode, mode));
-    // Into transit the sheet goes full and stays; out of it, it's free again and comes
-    // down to the anchor nearest full.
-    if (mode == TravelMode.transit || was == TravelMode.transit) {
-      _animateAfterFrame(_tripAnchor);
-    }
   }
 
   void _setTransitAccess(TransitAccess access) {
@@ -570,29 +1113,30 @@ class _DirectionsPageState extends State<DirectionsPage> {
     unawaited(_settings!.set(lastTransitAccess, access));
   }
 
-  /// A journey's tapped: show its legs, and it alone on the map, with the sheet low
-  /// enough for the map to show it.
-  void _openJourney(int index) {
-    _directions!.selectJourney(index);
-    setState(() {
-      _journeyOpens++;
-      _journeyOpen = true;
-      _chain = null;
-    });
-    _chainChanged();
-    _animateAfterFrame(_detailsAnchor);
+  /// Opens the selected journey's Trip details over this page, which bring the sheet
+  /// low enough for the map to show it.
+  void _openDetails() {
+    final directions = _directions!;
+    final plan = directions.plan;
+    final journey = directions.journey;
+    if (plan == null || journey == null) return;
+    _openKey = journeyKeys(plan.journeys)[directions.selectedJourney];
+    _openPlan = plan;
+    _openQuestion = directions.transitQuestion;
+    _open.open(journey, now: DirectionsScope.of(context).clock());
+    unawaited(context.push(tripDetailsLocation(widget.to), extra: _open));
   }
 
-  void _closeJourney() {
-    setState(() => _journeyOpen = false);
-    _chainChanged();
-    _animateAfterFrame(_tripAnchor);
-  }
-
-  /// The departures chosen changed: fetch the legs they need, and draw them.
+  /// The journey open in Trip details, or the departures chosen of it, changed: fetch
+  /// the legs they need, and draw them. Once it's closed, the journey selected under it
+  /// is the map's subject again, if that's another.
   void _chainChanged() {
+    final open = _open.isOpen;
+    if (_wasOpen && !open && _shownKey?.$2 != _openKey) _showJourney();
+    _wasOpen = open;
     _followChain();
     _drawRoutes();
+    _scheduleMiss();
   }
 
   /// A field's tapped: edit it, full, with its text ready to be typed over.
@@ -604,21 +1148,52 @@ class _DirectionsPageState extends State<DirectionsPage> {
       text: text,
       selection: TextSelection(baseOffset: 0, extentOffset: text.length),
     );
+    _forgetLeft();
     _search!
       ..update('')
       ..focus = (directions.from ?? directions.to)?.point;
+    // The trip fades out where it is, however far it's scrolled.
+    _tripScrolled = switch (_tripKey.currentContext) {
+      final trip? => Scrollable.maybeOf(trip)?.position.pixels ?? 0,
+      null => 0,
+    };
     setState(() => _editing = field);
+    _chrome.reverse();
     _focus.requestFocus();
     _sheet!.animateTo(const SheetAnchor.full());
+    _scheduleRefresh();
   }
 
-  /// Back to showing the trip. The summary's section isn't laid out while editing, so
-  /// the sheet moves to it once it is.
+  /// Back to showing the trip, with the ends and tabs over the held row, as the search
+  /// fades out where it is, however far it's scrolled.
   void _stopEditing() {
-    if (_editing == null) return;
+    final field = _editing;
+    if (field == null) return;
+    final search = _search!;
+    final scrolled = switch (_inputKey.currentContext) {
+      final input? => Scrollable.maybeOf(input)?.position.pixels ?? 0,
+      null => 0.0,
+    };
+    _forgetLeft();
+    _left = _LeftSearch(
+      field: field,
+      offset: ViewportOffset.fixed(scrolled),
+      choices: _EndChoices(
+        text: search.text,
+        results: List.of(search.results),
+        loading: search.loading,
+        error: search.error,
+        saved: _saved,
+        locating: _directions!.locating,
+        onMyLocation: () {},
+        onPlace: (_) {},
+      ),
+    );
     setState(() => _editing = null);
+    _chrome.forward();
     _focus.unfocus();
-    _animateAfterFrame(_tripAnchor);
+    _sheet!.animateTo(DirectionsPage.headerAnchor);
+    _scheduleRefresh();
   }
 
   Future<void> _choose(Place place) async {
@@ -660,282 +1235,279 @@ class _DirectionsPageState extends State<DirectionsPage> {
     }
   }
 
+  /// Fades the search for an end in as the trip fades out.
+  late final Animation<double> _searching = ReverseAnimation(_chrome);
+
   @override
   Widget build(BuildContext context) {
+    final directions = _directions!;
     final editing = _editing;
-    final journey = _journeyOpen ? _directions!.journey : null;
-    final transit = _directions!.mode == TravelMode.transit;
+    // The trip outlasts itself by as long as it takes to fade when an end is edited.
+    final trip = editing == null || !_chrome.isDismissed
+        ? _trip(directions)
+        : null;
+    final transit = directions.mode == TravelMode.transit;
+    _held = _rowFits(context) ? _scrubHeld ?? trip?.held : null;
     return PopScope(
-      canPop: editing == null && journey == null,
+      canPop: editing == null,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        if (editing != null) {
-          _stopEditing();
-        } else {
-          _closeJourney();
-        }
+        if (!didPop) _stopEditing();
       },
       child: SheetContent(
         anchors: editing != null
             ? const [SheetAnchor.full()]
-            : journey != null
-            ? const [_detailsAnchor]
-            : transit
-            ? const [SheetAnchor.full()]
-            : const [SheetAnchor.section(_modes), _summaryAnchor],
-        freeRanges: editing != null
-            ? const []
-            : journey != null
-            ? const [_detailsRange]
-            : transit
-            ? const []
-            : const [_summaryRange],
+            : const [SheetAnchor.footer(), DirectionsPage.headerAnchor],
+        freeRanges: editing != null ? const [] : const [_tripRange],
         initialAnchor: 1,
-        // The trip, a journey and editing each scroll on their own: a journey opens
-        // at its top whatever the list was scrolled to, and the list is where it was
-        // left on the way back. Each time a journey opens is new content.
-        scrollId: editing != null
-            ? 'editing'
-            : journey != null
-            ? ('journey', _journeyOpens)
-            : 'trip',
-        // Transit's journeys hold the sheet full until one is picked.
-        draggable: editing != null || journey != null || !transit,
+        initialSection: _opening,
+        initialMaxFraction: 0.6,
+        // The trip and editing each scroll on their own: the list is where it was
+        // left on the way back from editing.
+        scrollId: editing != null ? 'editing' : 'trip',
+        held: _held,
+        footer: trip == null
+            ? null
+            : FadeTransition(
+                opacity: _chrome,
+                child: IgnorePointer(
+                  ignoring: editing != null,
+                  // One way's buttons fade into another's, the same height.
+                  child: AnimatedSwitcher(
+                    key: ValueKey(_ready),
+                    duration: const Duration(milliseconds: 200),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeOut,
+                    layoutBuilder: (current, previous) => Stack(
+                      fit: StackFit.passthrough,
+                      children: [...previous, ?current],
+                    ),
+                    child: transit
+                        ? TripButtons.details(
+                            key: const ValueKey(#details),
+                            onDetails:
+                                directions.journey == null ||
+                                    directions.loading ||
+                                    _waiting(directions)
+                                ? null
+                                : _openDetails,
+                          )
+                        : TripButtons(
+                            key: const ValueKey(#street),
+                            onSteps: directions.selectedRoute == null
+                                ? null
+                                : _openSteps,
+                            onStart: directions.selectedRoute == null
+                                ? null
+                                : () => startNavigation(
+                                    context,
+                                    directions,
+                                    to: widget.to,
+                                  ),
+                          ),
+                  ),
+                ),
+              ),
         slivers: editing != null
-            ? _editingSlivers(editing)
-            : journey != null
-            ? _journeySlivers(_directions!, journey)
-            : _tripSlivers(_directions!),
+            ? _editingSlivers(editing, trip: trip?.content)
+            : [
+                if (_left case final left?) _leftSearch(left),
+                if (trip != null) SliverToBoxAdapter(child: trip.content),
+              ],
       ),
     );
   }
 
-  List<Widget> _tripSlivers(Directions directions) {
-    final theme = Theme.of(context);
-    final cupertino = isCupertinoOf(context);
+  /// What shows of the trip, and the slot of it the sheet holds: the ends and tabs,
+  /// and under them the rows of the way that's showing.
+  ///
+  /// One way's rows fade into another's where each is, as transit's start lower,
+  /// under its line; and within transit, its placeholders or its message into its
+  /// journeys. Each of those is a layer that fades itself, inside its slots, as the
+  /// sheet paints a held row apart from the rest.
+  ({Widget content, Object held}) _trip(Directions directions) {
+    final now = DirectionsScope.of(context).clock();
     final units = _units.onDevice;
-    final transit = directions.mode == TravelMode.transit;
-    final route = transit ? null : directions.selectedRoute;
-    final plan = transit && !directions.loading ? directions.plan : null;
-    final journeys = plan?.journeys ?? const <Journey>[];
-    final axis = TimelineAxis.of(journeys);
-    final now = DateTime.now();
-    final bothEnds = directions.from != null && directions.to != null;
-    return [
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _modes,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Directions',
-                        style: theme.textTheme.headlineSmall,
-                      ),
-                    ),
-                    AppCloseButton(
-                      onPressed: () =>
-                          context.canPop() ? context.pop() : context.go('/'),
-                    ),
-                  ],
-                ),
+    final waiting = directions.loading || _waiting(directions);
+    final Object held;
+    final LayerBuilder rows;
+    if (directions.mode != TravelMode.transit) {
+      final routes = directions.routes;
+      final selected = directions.selected;
+      final message = _messageFor(directions);
+      final driving = directions.mode == TravelMode.driving;
+      held = OptionList.slotId(waiting || routes.isEmpty ? 0 : selected);
+      rows = (shown, {required leaving}) => OptionList(
+        routes: routes,
+        selected: selected,
+        loading: waiting,
+        message: message,
+        driving: driving,
+        units: units,
+        now: now,
+        opening: leaving ? null : _opening,
+        reveal: _Product(shown, _chrome),
+        onSelect: directions.select,
+        scrub: leaving ? null : _scrubSink,
+      );
+    } else {
+      final plan = directions.plan;
+      final journeys = waiting
+          ? const <Journey>[]
+          : plan?.journeys ?? const <Journey>[];
+      final keys = journeyKeys(journeys);
+      final selected = directions.selectedJourney;
+      final axis = TimelineAxis.of(journeys);
+      final access = directions.transitAccess;
+      final message = plan != null && directions.problem == null
+          ? noJourneysMessage(plan, access)
+          : _messageFor(directions);
+      final listed = journeys.isNotEmpty;
+      held = listed
+          ? JourneyRows.slotId(keys[selected])
+          : OptionList.slotId(0, group: _transitGroup);
+      rows = (shown, {required leaving}) {
+        final transitLeaving = leaving;
+        final reveal = _Product(shown, _chrome);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FadeTransition(
+              opacity: reveal,
+              child: TransitStrip(
+                plan: listed ? plan : null,
+                axis: listed ? axis : null,
+                access: access,
+                onAccess: _setTransitAccess,
               ),
-              if (cupertino)
-                _CupertinoEnds(
-                  directions: directions,
-                  onEdit: _edit,
-                  bothEnds: bothEnds,
-                )
-              else ...[
-                _EndRow(
-                  label: 'From',
-                  endpoint: directions.from,
-                  onTap: () => _edit(RouteField.from),
-                  onClear: () => directions.setEndpoint(RouteField.from, null),
-                  action: IconButton(
-                    tooltip: 'Recalculate route',
-                    icon: const Icon(Icons.refresh),
-                    onPressed: bothEnds && !directions.loading
-                        ? directions.recalculate
-                        : null,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                _EndRow(
-                  label: 'To',
-                  endpoint: directions.to,
-                  onTap: () => _edit(RouteField.to),
-                  onClear: () => directions.setEndpoint(RouteField.to, null),
-                  action: IconButton(
-                    tooltip: 'Swap start and destination',
-                    icon: const Icon(Icons.swap_vert),
-                    onPressed: bothEnds ? directions.swap : null,
-                  ),
-                ),
-              ],
-              Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, transit ? 6 : 12),
-                child: cupertino
-                    ? _CupertinoModes(
-                        selected: directions.mode,
-                        wheelchair: directions.wheelchair,
-                        onChanged: _setMode,
+            ),
+            FadeLayers(
+              layer: listed ? #journeys : #waiting,
+              builder: (shown, {required leaving}) {
+                final opening = leaving || transitLeaving ? null : _opening;
+                final within = _Product(reveal, shown);
+                return listed
+                    ? JourneyRows(
+                        journeys: journeys,
+                        keys: keys,
+                        selected: selected,
+                        axis: axis,
+                        now: now,
+                        opening: opening,
+                        reveal: within,
+                        onSelect: directions.selectJourney,
+                        scrub: leaving || transitLeaving ? null : _scrubSink,
                       )
-                    : Row(
-                        spacing: 8,
-                        children: [
-                          for (final mode in TravelMode.values)
-                            Expanded(
-                              child: _ModeChip(
-                                mode: mode,
-                                wheelchair: directions.wheelchair,
-                                selected: mode == directions.mode,
-                                onTap: () => _setMode(mode),
-                              ),
-                            ),
-                        ],
-                      ),
-              ),
-              if (transit)
-                TransitAccessRow(
-                  access: directions.transitAccess,
-                  onChanged: _setTransitAccess,
-                ),
-            ],
-          ),
-        ),
-      ),
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _summary,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (!cupertino)
-                SizedBox(
-                  height: 2,
-                  child: directions.loading || directions.locating
-                      ? const LinearProgressIndicator()
-                      : null,
-                )
-              else if (directions.loading || directions.locating)
-                const SizedBox(height: 28, child: CupertinoActivityIndicator()),
-              if (transit) ...[
-                if (plan != null && journeys.isNotEmpty) ...[
-                  RealtimeLine(plan: plan),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                    child: TimelineTicks(axis: axis),
-                  ),
-                ] else
-                  _Message(
-                    plan != null && directions.problem == null
-                        ? noJourneysMessage(plan, directions.transitAccess)
-                        : _messageFor(directions),
-                  ),
-              ] else
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                  child: route == null
-                      ? _Message(_messageFor(directions))
-                      : cupertino
-                      ? _CupertinoSummary(
-                          route: route,
-                          units: units,
-                          onStart: _startNavigation,
-                        )
-                      : _Summary(
-                          route: route,
-                          units: units,
-                          onStart: _startNavigation,
-                        ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      if (journeys.isNotEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.only(bottom: 12),
-          sliver: SliverList.separated(
-            itemCount: journeys.length,
-            itemBuilder: (context, i) => JourneyRow(
-              journey: journeys[i],
-              axis: axis,
-              now: now,
-              onTap: () => _openJourney(i),
+                    : OptionList(
+                        group: _transitGroup,
+                        routes: const [],
+                        selected: 0,
+                        loading: waiting,
+                        message: message,
+                        driving: false,
+                        units: units,
+                        now: now,
+                        opening: opening,
+                        reveal: within,
+                        onSelect: (_) {},
+                      );
+              },
             ),
-            separatorBuilder: (context, i) =>
-                const Divider(height: 1, indent: 16, endIndent: 16),
+          ],
+        );
+      };
+    }
+    return (
+      held: held,
+      content: Column(
+        key: _tripKey,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          FadeTransition(opacity: _chrome, child: _header(directions, now)),
+          FadeLayers(
+            // What was laid out before the way last chosen was read isn't one way
+            // fading into another: it never showed.
+            key: ValueKey(_ready),
+            layer: directions.mode == TravelMode.transit ? #transit : #street,
+            builder: rows,
           ),
-        ),
-      if (route != null && cupertino && route.steps.isNotEmpty)
-        SliverPadding(
-          padding: const EdgeInsets.only(bottom: 12),
-          sliver: SliverToBoxAdapter(
-            child: AppListSection(
-              header: 'Steps',
-              children: [
-                for (final (i, step) in route.steps.indexed)
-                  _CupertinoStep(number: i + 1, step: step, units: units),
-              ],
-            ),
-          ),
-        )
-      else if (route != null && !cupertino)
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-          sliver: SliverList.builder(
-            itemCount: route.steps.length,
-            itemBuilder: (context, i) =>
-                _StepCard(number: i + 1, step: route.steps[i], units: units),
-          ),
-        ),
-    ];
+        ],
+      ),
+    );
   }
 
-  /// A transit journey's legs in detail, under a header to go back to the journeys,
-  /// with the departures chosen of its rides: kept, as far as they can be, when the
-  /// journey is planned again.
-  List<Widget> _journeySlivers(Directions directions, Journey journey) {
-    final units = _units.onDevice;
-    final now = DateTime.now();
-    final chain = _chainOf(journey);
-    return [
-      SliverToBoxAdapter(
-        child: SheetSection(
-          id: _journeySummary,
-          child: JourneyHeader(
-            chain: chain,
-            now: now,
-            units: units,
-            onBack: _closeJourney,
-          ),
-        ),
-      ),
-      JourneyItinerary(
-        chain: chain,
-        fetched: [
-          for (final choice in chain.rides)
-            _legs!.legOf(choice, directions.transitAccess),
-        ],
-        onSelect: (ride, departure) {
-          setState(() => _chain = chain.select(ride, departure));
-          _chainChanged();
-        },
-        start: directions.from?.label ?? 'Start',
-        destination: directions.to?.label ?? 'Destination',
-        units: units,
-        access: directions.transitAccess,
-        now: now,
-      ),
-    ];
+  /// Whether a row can be held under the ends and tabs with all of them showing, the
+  /// sheet as high as it goes: if not, none is, and the selected row is one of the
+  /// list's like any other, as a held row would cover the tabs wherever the sheet is.
+  ///
+  /// It's worked out from the heights the ends, the tabs, a row and the buttons take at
+  /// the text size, and from the window, never from what they say or which way shows,
+  /// so it changes only as the window or the text size does. The keyboard doesn't
+  /// count: it shows only while an end is edited, and the trip comes back without it.
+  bool _rowFits(BuildContext context) {
+    final geometry = SheetScaffold.viewOf(context).geometry;
+    // What the navigation bar covers, which the buttons keep clear of.
+    final navigation = geometry.padding.bottom;
+    final metrics = OptionRowMetrics.of(context);
+    final header =
+        TripCard.heightOf(context) + ModeTabs.heightOf(context) + metrics.top;
+    final buttons =
+        TripButtons.heightOf(context, bottomPadding: navigation) - navigation;
+    final room = geometry.fullContentHeight - navigation - buttons;
+    return header + metrics.height <= room + _tolerance;
   }
+
+  /// How far apart two heights added up in different orders may be and still be the
+  /// same.
+  static const _tolerance = 1e-6;
+
+  /// Whether the trip's start is still being found, before there's a question to
+  /// ask: rows wait as they do for an answer.
+  bool _waiting(Directions directions) => !_resumed || directions.locating;
+
+  /// The time a way's tab shows: how long its best option takes, a dash if it has
+  /// none, and nothing while that's not known.
+  String? _tabTime(Directions directions, TravelMode mode, DateTime now) {
+    final options = directions.options(mode);
+    if (options.best(now) case final best?) {
+      return formatDuration(best.inMilliseconds / 1000);
+    }
+    final asked = directions.from != null && directions.to != null;
+    return options.loading || _waiting(directions) || !asked
+        ? null
+        : noTimeDash;
+  }
+
+  /// The trip's ends and the tabs: what shows above the selected row at the header
+  /// anchor. It's the same height whatever the tabs say and whichever is selected.
+  Widget _header(Directions directions, DateTime now) => SheetSection(
+    id: DirectionsPage._headerSection,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TripCard(
+          from: directions.from,
+          to: directions.to,
+          onEdit: _edit,
+          onClose: () => context.canPop() ? context.pop() : context.go('/'),
+          onSwap: directions.from != null && directions.to != null
+              ? directions.swap
+              : null,
+        ),
+        ModeTabs(
+          // The tab last chosen is selected from the first it shows, not moved to.
+          key: ValueKey(_ready),
+          selected: directions.mode,
+          wheelchair: directions.wheelchair,
+          times: {
+            for (final mode in TravelMode.values)
+              mode: _tabTime(directions, mode, now),
+          },
+          onChanged: _setMode,
+        ),
+        SizedBox(height: OptionRowMetrics.of(context).top),
+      ],
+    ),
+  );
 
   String _messageFor(Directions directions) => switch (directions) {
     Directions(problem: RouteProblem.outsideArea) =>
@@ -946,302 +1518,204 @@ class _DirectionsPageState extends State<DirectionsPage> {
     Directions(problem: RouteProblem.noRoute) => 'No route found',
     Directions(problem: RouteProblem.failed) =>
       "Couldn't get directions. Try again.",
-    Directions(loading: true) => 'Finding routes…',
     _ => 'Enter a start and a destination to get directions',
   };
 
-  List<Widget> _editingSlivers(RouteField field) {
+  /// The search for the end [field], fading in; and over it [trip], what showed of the
+  /// trip, fading out where it was, for as long as that takes.
+  List<Widget> _editingSlivers(RouteField field, {required Widget? trip}) {
     final search = _search!;
+    final input = KeyedSubtree(key: _inputKey, child: _endInput(field, search));
     return [
       SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-          child: isCupertinoOf(context)
-              // With Cancel beside it, as iOS has for a search, doing what back does.
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: CupertinoSearchTextField(
-                        controller: _text,
-                        focusNode: _focus,
-                        placeholder: field == RouteField.from
-                            ? 'Search for a start'
-                            : 'Search for a destination',
-                        onChanged: search.update,
-                        onSubmitted: (_) {
-                          if (search.results case [final first, ...]) {
-                            _choose(first);
-                          }
-                        },
-                        onSuffixTap: () {
-                          _text.clear();
-                          search.update('');
-                          _directions!.setEndpoint(field, null);
-                          _focus.requestFocus();
-                        },
-                      ),
-                    ),
-                    CupertinoButton(
-                      padding: const EdgeInsetsDirectional.only(start: 12),
-                      onPressed: _stopEditing,
-                      child: const Text('Cancel'),
-                    ),
-                  ],
-                )
-              : TextField(
-                  controller: _text,
-                  focusNode: _focus,
-                  onChanged: search.update,
-                  onSubmitted: (_) {
-                    if (search.results case [final first, ...]) _choose(first);
-                  },
-                  decoration: InputDecoration(
-                    labelText: field == RouteField.from ? 'From' : 'To',
-                    hintText: 'Enter a place',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.location_on_outlined),
-                    suffixIcon: IconButton(
-                      tooltip: 'Clear',
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _text.clear();
-                        search.update('');
-                        _directions!.setEndpoint(field, null);
-                        _focus.requestFocus();
-                      },
-                    ),
-                  ),
-                ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            FadeTransition(opacity: _searching, child: input),
+            if (trip != null)
+              Positioned(
+                top: -_tripScrolled,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(child: ExcludeSemantics(child: trip)),
+              ),
+          ],
         ),
       ),
-      ListenableBuilder(
-        listenable: Listenable.merge([search, _directions!]),
-        builder: (context, _) => _EndChoices(
-          search: search,
-          saved: _saved,
-          locating: _directions!.locating,
-          onMyLocation: _useMyLocation,
-          onPlace: _choose,
+      SliverFadeTransition(
+        opacity: _searching,
+        sliver: ListenableBuilder(
+          listenable: Listenable.merge([search, _directions!]),
+          builder: (context, _) => _EndChoices(
+            text: search.text,
+            results: search.results,
+            loading: search.loading,
+            error: search.error,
+            saved: _saved,
+            locating: _directions!.locating,
+            onMyLocation: _useMyLocation,
+            onPlace: _choose,
+          ),
         ),
       ),
     ];
   }
-}
 
-/// A trip's end as a field to tap, and a button beside it.
-class _EndRow extends StatelessWidget {
-  const _EndRow({
-    required this.label,
-    required this.endpoint,
-    required this.onTap,
-    required this.onClear,
-    required this.action,
-  });
+  /// The search [left] holds, as it was when editing ended, fading out over the top of
+  /// what shows of the trip as it fades in: not to be tapped, or reached by moving
+  /// focus, or read.
+  Widget _leftSearch(_LeftSearch left) => _SliverOverTop(
+    child: IgnorePointer(
+      child: ExcludeSemantics(
+        child: FocusTraversalGroup(
+          descendantsAreTraversable: false,
+          child: FadeTransition(
+            opacity: _searching,
+            child: Viewport(
+              offset: left.offset,
+              slivers: [
+                SliverToBoxAdapter(
+                  child: KeyedSubtree(
+                    key: _inputKey,
+                    child: _endInput(left.field, _search!),
+                  ),
+                ),
+                left.choices,
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
-  final String label;
-  final RouteEndpoint? endpoint;
-  final VoidCallback onTap;
-  final VoidCallback onClear;
-  final Widget action;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(left: 16, right: 8),
-    child: Row(
-      children: [
-        Expanded(
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(4),
-            child: InputDecorator(
-              isEmpty: endpoint == null,
+  /// The field the end [field] is typed in.
+  Widget _endInput(RouteField field, PlaceSearch search) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+      child: isCupertinoOf(context)
+          // With Cancel beside it, as iOS has for a search, doing what back does.
+          ? Row(
+              children: [
+                Expanded(
+                  child: CupertinoSearchTextField(
+                    controller: _text,
+                    focusNode: _focus,
+                    placeholder: field == RouteField.from
+                        ? 'Search for a start'
+                        : 'Search for a destination',
+                    onChanged: search.update,
+                    onSubmitted: (_) {
+                      if (search.results case [final first, ...]) {
+                        _choose(first);
+                      }
+                    },
+                    onSuffixTap: () {
+                      _text.clear();
+                      search.update('');
+                      _directions!.setEndpoint(field, null);
+                      _focus.requestFocus();
+                    },
+                  ),
+                ),
+                CupertinoButton(
+                  padding: const EdgeInsetsDirectional.only(start: 12),
+                  onPressed: _stopEditing,
+                  child: const Text('Cancel'),
+                ),
+              ],
+            )
+          : TextField(
+              controller: _text,
+              focusNode: _focus,
+              onChanged: search.update,
+              onSubmitted: (_) {
+                if (search.results case [final first, ...]) _choose(first);
+              },
               decoration: InputDecoration(
-                labelText: label,
+                labelText: field == RouteField.from ? 'From' : 'To',
+                hintText: 'Enter a place',
                 border: const OutlineInputBorder(),
                 isDense: true,
                 prefixIcon: const Icon(Icons.location_on_outlined),
-                suffixIcon: endpoint == null
-                    ? null
-                    : IconButton(
-                        tooltip: 'Clear ${label.toLowerCase()}',
-                        icon: const Icon(Icons.close),
-                        onPressed: onClear,
-                      ),
-              ),
-              child: Text(
-                endpoint?.label ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                suffixIcon: IconButton(
+                  tooltip: 'Clear',
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    _text.clear();
+                    search.update('');
+                    _directions!.setEndpoint(field, null);
+                    _focus.requestFocus();
+                  },
+                ),
               ),
             ),
-          ),
-        ),
-        action,
-      ],
-    ),
-  );
-}
-
-/// A chip for a way of traveling.
-class _ModeChip extends StatelessWidget {
-  const _ModeChip({
-    required this.mode,
-    required this.wheelchair,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final TravelMode mode;
-
-  /// Whether walking is by wheelchair, which the walking chip then says.
-  final bool wheelchair;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final enabled = mode.available;
-    final radius = BorderRadius.circular(12);
-    final label = mode.labelFor(wheelchair: wheelchair);
-    return Semantics(
-      button: true,
-      enabled: enabled,
-      selected: selected,
-      label: label,
-      excludeSemantics: true,
-      onTap: enabled ? onTap : null,
-      child: Tooltip(
-        message: label,
-        child: Material(
-          color: selected ? scheme.primary : scheme.surfaceContainerHighest,
-          borderRadius: radius,
-          child: InkWell(
-            borderRadius: radius,
-            onTap: enabled ? onTap : null,
-            child: SizedBox(
-              height: 40,
-              child: Icon(
-                mode.iconFor(wheelchair: wheelchair),
-                size: 22,
-                color: selected
-                    ? scheme.onPrimary
-                    : enabled
-                    ? scheme.onSurfaceVariant
-                    : scheme.onSurface.withValues(alpha: 0.38),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
 
-/// A route's distance and travel time, with the button that starts navigation.
-class _Summary extends StatelessWidget {
-  const _Summary({
-    required this.route,
-    required this.units,
-    required this.onStart,
+/// The search for an end as it was when editing ended, to fade out: which end, how
+/// far it was scrolled, and what it offered.
+class _LeftSearch {
+  _LeftSearch({
+    required this.field,
+    required this.offset,
+    required this.choices,
   });
 
-  final DirectionsRoute route;
-  final UnitSystem units;
-  final VoidCallback onStart;
-
-  @override
-  Widget build(BuildContext context) => Card.filled(
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _SummaryRow('Distance', formatDistance(route.distance, units: units)),
-          const SizedBox(height: 4),
-          _SummaryRow('Duration', formatDuration(route.duration)),
-          const SizedBox(height: 8),
-          FilledButton(
-            onPressed: onStart,
-            child: const Text('Start Navigation'),
-          ),
-        ],
-      ),
-    ),
-  );
+  final RouteField field;
+  final ViewportOffset offset;
+  final _EndChoices choices;
 }
 
-class _SummaryRow extends StatelessWidget {
-  const _SummaryRow(this.label, this.value);
-
-  final String label;
-  final String value;
+/// Paints [child] as tall as the viewport, over the top of what it shows wherever
+/// it's scrolled to, and over the slivers after it, taking no room in the scroll and
+/// never hit: for what fades out over content as that fades in.
+class _SliverOverTop extends SingleChildRenderObjectWidget {
+  const _SliverOverTop({required Widget super.child});
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: theme.textTheme.bodyLarge),
-        Text(
-          value,
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.primary,
-          ),
-        ),
-      ],
-    );
-  }
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSliverOverTop();
 }
 
-/// A numbered step of a route.
-class _StepCard extends StatelessWidget {
-  const _StepCard({
-    required this.number,
-    required this.step,
-    required this.units,
-  });
-
-  final int number;
-  final DirectionsStep step;
-  final UnitSystem units;
+class _RenderSliverOverTop extends RenderSliverSingleBoxAdapter {
+  @override
+  void performLayout() {
+    final child = this.child;
+    if (child == null) {
+      geometry = SliverGeometry.zero;
+      return;
+    }
+    final height = constraints.viewportMainAxisExtent;
+    child.layout(
+      constraints.asBoxConstraints(minExtent: height, maxExtent: height),
+    );
+    final painted = math.min(height, constraints.remainingPaintExtent);
+    geometry = SliverGeometry(
+      paintExtent: painted,
+      layoutExtent: 0,
+      maxPaintExtent: height,
+      hasVisualOverflow: painted < height,
+    );
+    (child.parentData! as SliverPhysicalParentData).paintOffset = Offset.zero;
+  }
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card.filled(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 28,
-              child: Text(
-                '$number',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.labelLarge,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(step.instruction, style: theme.textTheme.bodyMedium),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              formatDistance(step.distance, units: units),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  bool hitTestChildren(
+    SliverHitTestResult result, {
+    required double mainAxisPosition,
+    required double crossAxisPosition,
+  }) => false;
+}
+
+/// Two animations' values multiplied: how much shows of what fades for two reasons.
+class _Product extends CompoundAnimation<double> {
+  _Product(Animation<double> first, Animation<double> next)
+    : super(first: first, next: next);
+
+  @override
+  double get value => first.value * next.value;
 }
 
 class _Message extends StatelessWidget {
@@ -1269,14 +1743,21 @@ class _Message extends StatelessWidget {
 /// and then what the text finds.
 class _EndChoices extends StatelessWidget {
   const _EndChoices({
-    required this.search,
+    required this.text,
+    required this.results,
+    required this.loading,
+    required this.error,
     required this.saved,
     required this.locating,
     required this.onMyLocation,
     required this.onPlace,
   });
 
-  final PlaceSearch search;
+  /// What's typed, what it finds, whether it's still looking, and why it couldn't.
+  final String text;
+  final List<Place> results;
+  final bool loading;
+  final Object? error;
   final List<SavedPlace> saved;
   final bool locating;
   final VoidCallback onMyLocation;
@@ -1284,10 +1765,10 @@ class _EndChoices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final searching = search.text.trim().isNotEmpty;
-    final message = switch (search) {
-      PlaceSearch(error: final error?) => 'Search failed: $error',
-      PlaceSearch(loading: false, results: []) when searching => 'No results',
+    final searching = text.trim().isNotEmpty;
+    final message = switch (error) {
+      final error? => 'Search failed: $error',
+      null when searching && !loading && results.isEmpty => 'No results',
       _ => null,
     };
     if (isCupertinoOf(context)) {
@@ -1302,7 +1783,7 @@ class _EndChoices extends StatelessWidget {
           );
       return SliverMainAxisGroup(
         slivers: [
-          if (search.loading)
+          if (loading)
             const SliverToBoxAdapter(
               child: SizedBox(height: 28, child: CupertinoActivityIndicator()),
             ),
@@ -1311,7 +1792,7 @@ class _EndChoices extends StatelessWidget {
             child: AppListSection(
               children: searching
                   ? [
-                      for (final place in search.results)
+                      for (final place in results)
                         row(
                           placeTitle(place),
                           placeSubtitle(place),
@@ -1346,7 +1827,7 @@ class _EndChoices extends StatelessWidget {
         SliverToBoxAdapter(
           child: SizedBox(
             height: 2,
-            child: search.loading ? const LinearProgressIndicator() : null,
+            child: loading ? const LinearProgressIndicator() : null,
           ),
         ),
         if (message != null) SliverToBoxAdapter(child: _Message(message)),
@@ -1354,11 +1835,11 @@ class _EndChoices extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
           sliver: searching
               ? SliverList.builder(
-                  itemCount: search.results.length,
+                  itemCount: results.length,
                   itemBuilder: (context, i) => _ChoiceCard(
-                    title: placeTitle(search.results[i]),
-                    subtitle: placeSubtitle(search.results[i]),
-                    onTap: () => onPlace(search.results[i]),
+                    title: placeTitle(results[i]),
+                    subtitle: placeSubtitle(results[i]),
+                    onTap: () => onPlace(results[i]),
                   ),
                 )
               : SliverList.builder(
@@ -1428,240 +1909,4 @@ class _ChoiceCard extends StatelessWidget {
       onTap: onTap,
     ),
   );
-}
-
-/// iOS's trip ends: From and To together in one grouped card, each with its marker and
-/// its action beside the card: Recalculate by From, Swap by To.
-class _CupertinoEnds extends StatelessWidget {
-  const _CupertinoEnds({
-    required this.directions,
-    required this.onEdit,
-    required this.bothEnds,
-  });
-
-  final Directions directions;
-  final void Function(RouteField field) onEdit;
-  final bool bothEnds;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    Widget end(RouteField field) {
-      final from = field == RouteField.from;
-      final endpoint = from ? directions.from : directions.to;
-      final label = from ? 'From' : 'To';
-      return AppListTile(
-        leading: Icon(
-          from ? CupertinoIcons.circle_fill : CupertinoIcons.location_solid,
-          size: from ? 14 : 20,
-          color: from ? const Color(0xFF34C759) : const Color(0xFFFF3B30),
-        ),
-        title: Text(
-          endpoint?.label ?? label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: endpoint == null
-              ? TextStyle(color: theme.colorScheme.onSurfaceVariant)
-              : null,
-        ),
-        trailing: endpoint == null
-            ? null
-            : Semantics(
-                button: true,
-                label: 'Clear ${label.toLowerCase()}',
-                excludeSemantics: true,
-                child: CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  minimumSize: const Size.square(32),
-                  onPressed: () => directions.setEndpoint(field, null),
-                  child: Icon(
-                    CupertinoIcons.xmark_circle_fill,
-                    size: 18,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-        onTap: () => onEdit(field),
-      );
-    }
-
-    Widget action(String label, IconData icon, VoidCallback? onPressed) =>
-        Semantics(
-          button: true,
-          label: label,
-          excludeSemantics: true,
-          child: CupertinoButton(
-            padding: EdgeInsets.zero,
-            minimumSize: const Size.square(44),
-            onPressed: onPressed,
-            child: Icon(icon, size: 20),
-          ),
-        );
-
-    return Row(
-      children: [
-        Expanded(
-          child: AppListSection(
-            children: [end(RouteField.from), end(RouteField.to)],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(right: 8, top: 8),
-          child: Column(
-            children: [
-              action(
-                'Recalculate route',
-                CupertinoIcons.arrow_clockwise,
-                bothEnds && !directions.loading ? directions.recalculate : null,
-              ),
-              action(
-                'Swap start and destination',
-                CupertinoIcons.arrow_up_arrow_down,
-                bothEnds ? directions.swap : null,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// iOS's ways of traveling: a segmented control, with those that can't be routed yet
-/// disabled.
-class _CupertinoModes extends StatelessWidget {
-  const _CupertinoModes({
-    required this.selected,
-    required this.wheelchair,
-    required this.onChanged,
-  });
-
-  final TravelMode selected;
-
-  /// Whether walking is by wheelchair, which its segment then says.
-  final bool wheelchair;
-  final ValueChanged<TravelMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) =>
-      CupertinoSlidingSegmentedControl<TravelMode>(
-        groupValue: selected,
-        disabledChildren: {
-          for (final mode in TravelMode.values)
-            if (!mode.available) mode,
-        },
-        children: {
-          for (final mode in TravelMode.values)
-            mode: Semantics(
-              label: mode.labelFor(wheelchair: wheelchair),
-              excludeSemantics: true,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Icon(mode.iconFor(wheelchair: wheelchair), size: 20),
-              ),
-            ),
-        },
-        onValueChanged: (mode) {
-          if (mode == null || mode == selected) return;
-          Haptics.selection();
-          onChanged(mode);
-        },
-      );
-}
-
-/// iOS's route summary: the time large, the distance under it, and Go, which starts
-/// navigation, as Apple shows a route.
-class _CupertinoSummary extends StatelessWidget {
-  const _CupertinoSummary({
-    required this.route,
-    required this.units,
-    required this.onStart,
-  });
-
-  final DirectionsRoute route;
-  final UnitSystem units;
-  final VoidCallback onStart;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return DecoratedBox(
-      decoration: ShapeDecoration(
-        color: groupedRowColor(context),
-        shape: RoundedSuperellipseBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    formatDuration(route.duration),
-                    style: theme.textTheme.headlineSmall,
-                  ),
-                  Text(
-                    formatDistance(route.distance, units: units),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Read out as what it does; "Go" alone says little.
-            Semantics(
-              button: true,
-              label: 'Start Navigation',
-              onTap: onStart,
-              excludeSemantics: true,
-              child: CupertinoButton.filled(
-                color: const Color(0xFF34C759),
-                sizeStyle: CupertinoButtonSize.large,
-                onPressed: onStart,
-                child: const Text('Go'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// A numbered step of a route, in iOS's grouped list.
-class _CupertinoStep extends StatelessWidget {
-  const _CupertinoStep({
-    required this.number,
-    required this.step,
-    required this.units,
-  });
-
-  final int number;
-  final DirectionsStep step;
-  final UnitSystem units;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return AppListTile(
-      leading: Text(
-        '$number',
-        style: theme.textTheme.titleSmall?.copyWith(
-          color: theme.colorScheme.primary,
-        ),
-      ),
-      title: Text(step.instruction, maxLines: 3),
-      trailing: Text(
-        formatDistance(step.distance, units: units),
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
 }

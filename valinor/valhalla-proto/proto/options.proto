@@ -552,4 +552,7 @@ message Options {
   TileOptions tile_options = 64;                                   // additional /tile specific options
   repeated Levels exclude_levels = 65;                             // Levels to exclude within the exclude_polygon at the same index
   uint32 expansion_max_distance = 66;                              // Maximum path distance in meters for expansion. 0 = disabled.
+
+  // Valinor's own (not in mainline; see this directory's README). Numbered from 1000, clear of mainline's.
+  bool valinor_leg_details = 1000;                                 // Whether OSRM route legs carry valinor_details (see docs/osrm-leg-details.md)
 }

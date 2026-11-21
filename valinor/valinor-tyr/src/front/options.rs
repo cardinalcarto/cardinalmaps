@@ -670,6 +670,9 @@ impl Parser<'_> {
             doc.get_or("/banner_instructions", options.banner_instructions);
         options.voice_instructions = doc.get_or("/voice_instructions", options.voice_instructions);
         options.turn_lanes = doc.get_or("/turn_lanes", options.turn_lanes);
+        // Valinor's own option (see `docs/osrm-leg-details.md`); mainline has no such key.
+        options.valinor_leg_details =
+            doc.get_or("/valinor_leg_details", options.valinor_leg_details);
         let roundabout_exits = match options.has_roundabout_exits {
             Some(HasRoundaboutExits::RoundaboutExits(exits)) => exits,
             None => true,

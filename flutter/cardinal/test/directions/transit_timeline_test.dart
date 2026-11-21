@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:cardinal/directions/connections.dart';
+import 'package:cardinal/directions/journey_list.dart';
 import 'package:cardinal/directions/transit_timeline.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cardinal/directions/transit_plan.dart';
@@ -251,18 +252,17 @@ void main() {
       );
     });
 
-    testWidgets('an overview row makes room for them above its timeline', (
-      tester,
-    ) async {
+    testWidgets('a timeline asked to keeps room for them under it, with or '
+        'without any', (tester) async {
       Future<double> height(Journey journey) async {
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
-              body: JourneyRow(
+              body: JourneyTimeline(
                 journey: journey,
                 axis: TimelineAxis.of([journey]),
-                now: at(0),
-                onTap: () {},
+                others: otherRoutes(journey),
+                reserveOthers: true,
               ),
             ),
           ),
@@ -270,14 +270,17 @@ void main() {
         return tester.getSize(find.byType(JourneyTimeline)).height;
       }
 
-      expect(await height(fakePlan().journeys.single), 26);
+      expect(
+        await height(fakePlan().journeys.single),
+        26 + JourneyTimeline.orGap + JourneyTimeline.orHeight,
+      );
       expect(
         await height(connectionsJourney()),
-        26 + JourneyTimeline.orHeight + JourneyTimeline.orGap,
+        26 + JourneyTimeline.orGap + JourneyTimeline.orHeight,
       );
       expect(
         tester.getSemantics(find.byType(JourneyTimeline)).label,
-        startsWith('40 or 7, then 1 Line, then 8 or 48 or 9, then 2'),
+        contains('40 or 7, then 1 Line, then 8 or 48 or 9, then 2'),
       );
     });
   });
