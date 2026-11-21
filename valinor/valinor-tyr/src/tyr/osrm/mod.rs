@@ -14,6 +14,7 @@
 mod annotations;
 mod banner;
 mod countries;
+mod details;
 mod geo;
 mod geometry;
 mod intersections;

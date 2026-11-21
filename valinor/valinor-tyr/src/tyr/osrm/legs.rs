@@ -3,6 +3,7 @@
 use super::annotations::{add_closures, add_incidents, annotations, via_waypoints};
 use super::banner::{BannerInput, banner_instructions};
 use super::countries::{iso_3166_1_alpha3, speed_limit_info};
+use super::details::leg_details;
 use super::geo::units_to_meters;
 use super::geometry::{decode_shape, maneuver_geometry};
 use super::intersections::{Attributes, drive_on_right, intersections};
@@ -524,5 +525,12 @@ fn serialize_leg(
     output_leg.emplace("via_waypoints", via_waypoints(path_leg));
     add_incidents(path_leg, &mut output_leg)?;
     add_closures(path_leg, &mut output_leg);
+    // Valinor's own, and only when asked for: mainline's legs end here.
+    if leg_options.options.valinor_leg_details {
+        output_leg.emplace(
+            "valinor_details",
+            leg_details(path_leg, leg_options.options),
+        );
+    }
     Ok(output_leg.into())
 }

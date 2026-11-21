@@ -921,7 +921,7 @@ fn sidewalk_name(value: i32) -> &'static str {
     }
 }
 
-fn cycle_lane_name(value: i32) -> &'static str {
+pub(super) fn cycle_lane_name(value: i32) -> &'static str {
     match value {
         0 => "none",
         1 => "shared",
@@ -945,7 +945,7 @@ fn surface_name(value: i32) -> &'static str {
     }
 }
 
-fn use_name(value: i32) -> &'static str {
+pub(super) fn use_name(value: i32) -> &'static str {
     match value {
         0 => "road",
         1 => "ramp",
@@ -996,7 +996,7 @@ fn traversability_name(value: i32) -> &'static str {
     }
 }
 
-fn road_class_name(value: i32) -> &'static str {
+pub(super) fn road_class_name(value: i32) -> &'static str {
     match value {
         0 => "motorway",
         1 => "trunk",
@@ -1047,7 +1047,7 @@ fn node_type_name(value: i32) -> &'static str {
     }
 }
 
-fn travel_mode_name(value: i32) -> &'static str {
+pub(super) fn travel_mode_name(value: i32) -> &'static str {
     match TravelMode::try_from(value) {
         Ok(TravelMode::KDrive) => "drive",
         Ok(TravelMode::KPedestrian) => "pedestrian",

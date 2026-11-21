@@ -447,6 +447,16 @@ given the same input message at that boundary.
 When a difference is a mainline bug, document it next to the test that covers it,
 and match mainline's behavior only if a client could depend on it.
 
+## Extensions
+
+Things Valinor answers that mainline doesn't.
+Each is asked for by an option of its own, named `valinor_…` so that it can't be one of
+mainline's or OSRM's, and changes nothing in a response that doesn't ask for it.
+
+| Option | Adds | Where |
+|---|---|---|
+| `valinor_leg_details` | `valinor_details` on each leg of an OSRM-format response: what the road is like along the leg, edge by edge (road class, use, cycle lane, toll, tunnel, bridge), and with `elevation_interval`, the leg's elevation | [osrm-leg-details.md](osrm-leg-details.md) |
+
 ## Known divergences from mainline
 
 Deliberate differences, each documented next to the test that covers it.

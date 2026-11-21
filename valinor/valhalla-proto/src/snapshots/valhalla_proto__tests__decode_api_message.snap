@@ -1,6 +1,5 @@
 ---
 source: valhalla-proto/src/lib.rs
-assertion_line: 36
 expression: result
 ---
 Api {
@@ -165,6 +164,7 @@ Api {
             tile_options: None,
             exclude_levels: [],
             expansion_max_distance: 0,
+            valinor_leg_details: false,
             has_language: Some(
                 Language(
                     "en-US",
