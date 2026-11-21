@@ -9,7 +9,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `answer_at`, `answer`, `device_config`, `error_response`, `feed_kind`, `response`, `unix_now`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Query`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `nearby_at`, `plan_at`, `route_at`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `nearby_at`, `plan_at`, `ride_at`, `route_at`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<OfflineTransit>>
 abstract class OfflineTransit implements RustOpaqueInterface {
@@ -71,6 +71,16 @@ abstract class OfflineTransit implements RustOpaqueInterface {
   /// It is cheap and safe while plans run; each search worker forgets the tiles it found
   /// missing the next time it plans.
   Future<void> refreshTiles();
+
+  /// One of a plan ride's departures, as the plan's leg on it would be, from JSON request
+  /// bytes (the server's `/transit/ride` body), applying `feeds` first as [`Self::plan`] does.
+  ///
+  /// It answers 504 past a 30-second deadline, or 499 once `cancel` is cancelled.
+  Future<TransitResponse> ride({
+    required List<int> request,
+    required List<TransitFeed> feeds,
+    required TransitCancel cancel,
+  });
 
   /// One route and direction from one stop, for a detail view, from JSON request bytes
   /// (the server's `/transit/route` body), applying `feeds` first as [`Self::plan`] does.
