@@ -17,23 +17,30 @@ import 'saved_names.dart';
 
 /// Saved: one list's nested lists and places, the top level if [listId] is null.
 ///
-/// Browsing, or editing the page's items, a mode of the page itself:
+/// Browsing, or selecting the page's items, a mode of the page itself. The sheet stays
+/// at the height it's at, either way.
 ///
 /// | In | When | Then |
 /// |---|---|---|
 /// | browsing | a place's tapped | its card opens |
-/// | browsing | a list's tapped | it opens as a page over this one |
+/// | browsing | a list's tapped | it opens as a page over this one, at the same height |
 /// | browsing | a crumb's tapped | back to that list |
-/// | browsing | back | up a list; from the top level, to search |
-/// | browsing | Edit | editing, with nothing selected |
-/// | editing | a row's tapped | it's selected, or not |
-/// | editing | a handle's dragged | the row moves among the lists, or the places |
-/// | editing | Move | a picker; once chosen, the selection moves, with Undo |
-/// | editing | Copy, only places selected | a picker; once chosen, they're there too, with Undo |
-/// | editing | a place's pin | that copy's pinned, or unpinned |
-/// | editing | a row's pencil | its name, note and emoji |
-/// | editing | Delete | the selection goes, with its contents, with Undo |
-/// | editing | Done, or back | browsing |
+/// | browsing | back, or the back arrow | up a list; from the top level, to search |
+/// | browsing | ⋮ → Select (Android), Edit (iOS) | selecting, with nothing selected |
+/// | browsing | a row's long-pressed (Android) | selecting, with that row selected |
+/// | browsing | a row's ⋮ → Edit (Android) | its name, note and emoji |
+/// | browsing | a place's ⋮ → Pin or Unpin (Android) | that copy's pinned, or unpinned |
+/// | browsing | a row's ⋮ → Move, or a place's → Copy (Android) | a picker, then Undo |
+/// | browsing | a row's ⋮ → Delete (Android) | selecting, with that row selected |
+/// | selecting | a row's tapped, or long-pressed (Android) | it's selected, or not |
+/// | selecting | a row's swiped (Android) | it goes, with its contents, with Undo |
+/// | selecting | a handle's dragged | the row moves among the lists, or the places |
+/// | selecting | Move | a picker; once chosen, the selection moves, with Undo |
+/// | selecting | Copy, only places selected | a picker; once chosen, they're there too, with Undo |
+/// | selecting | Edit, one selected (Android) | its name, note and emoji |
+/// | selecting | a place's pin, or a row's pencil (iOS) | as ⋮'s Pin and Edit |
+/// | selecting | Delete | the selection goes, with its contents, with Undo |
+/// | selecting | Done, ✕ (Android), or back | browsing |
 ///
 /// Selected items that go away (moved, deleted) leave the selection.
 class SavedPage extends StatefulWidget {
@@ -89,7 +96,11 @@ class _SavedPageState extends State<SavedPage> {
       if (_selected.contains(item.key)) item,
   ];
 
-  void _edit() => setState(() => _editing = true);
+  /// Selecting, with [item] selected if there is one.
+  void _select([SavedItem? item]) => setState(() {
+    _editing = true;
+    if (item != null) _selected.add(item.key);
+  });
 
   void _stopEditing() => setState(() {
     _editing = false;
@@ -146,8 +157,9 @@ class _SavedPageState extends State<SavedPage> {
     if (name != null) await _store.createList(name, parent: widget.listId);
   }
 
-  Future<void> _move() async {
-    final items = _selection;
+  /// Moves [these], or else the selection, to a list the picker asks for.
+  Future<void> _move([List<SavedItem>? these]) async {
+    final items = these ?? _selection;
     final picked = await showDestinationPicker(
       context,
       items: items,
@@ -161,8 +173,10 @@ class _SavedPageState extends State<SavedPage> {
     }
   }
 
-  Future<void> _copy() async {
-    final items = _selection.cast<SavedPlace>();
+  /// Copies [these], or else the selection, all places, to a list the picker asks
+  /// for.
+  Future<void> _copy([List<SavedPlace>? these]) async {
+    final items = these ?? _selection.cast<SavedPlace>();
     final picked = await showDestinationPicker(
       context,
       items: items,
@@ -209,13 +223,48 @@ class _SavedPageState extends State<SavedPage> {
     }
   }
 
-  Future<void> _delete() async {
-    final items = _selection;
+  /// Deletes [these], or else the selection.
+  Future<void> _delete([List<SavedItem>? these]) async {
+    final items = these ?? _selection;
     final undo = await _store.delete(items);
     _message(
       'Deleted ${items.length} ${items.length == 1 ? 'item' : 'items'}',
       undo: undo,
     );
+  }
+
+  /// A row's swiped away while selecting: its row goes at once, as the swipe has it,
+  /// and the item after it, with Undo.
+  void _swipedAway(SavedItem item) {
+    setState(() {
+      _selected.remove(item.key);
+      _lists = [
+        for (final list in _lists)
+          if (list.key != item.key) list,
+      ];
+      _places = [
+        for (final place in _places)
+          if (place.key != item.key) place,
+      ];
+    });
+    unawaited(_delete([item]));
+  }
+
+  /// One of a row's ⋮ actions, on Android.
+  void _rowAction(SavedItem item, _RowAction action) {
+    switch (action) {
+      case _RowAction.edit:
+        unawaited(_editDetails(item));
+      case _RowAction.pin:
+        if (item is SavedPlace) unawaited(_togglePinned(item));
+      case _RowAction.move:
+        unawaited(_move([item]));
+      case _RowAction.copy:
+        if (item is SavedPlace) unawaited(_copy([item]));
+      case _RowAction.delete:
+        // Deleting goes by way of selecting, rare as it is.
+        _select(item);
+    }
   }
 
   void _reorderLists(int from, int to) {
@@ -244,6 +293,10 @@ class _SavedPageState extends State<SavedPage> {
         view.geometry.padding.bottom + SheetScaffold.bottomBarHeightOf(context);
     final selection = _selection;
     final places = selection.whereType<SavedPlace>().toList();
+    final cupertino = isCupertinoOf(context);
+    final onCopy = selection.isEmpty || places.length != selection.length
+        ? null
+        : _copy;
     return PopScope(
       canPop: widget.listId != null && !_editing,
       onPopInvokedWithResult: _onPop,
@@ -275,6 +328,12 @@ class _SavedPageState extends State<SavedPage> {
                           }),
                           onClear: () => setState(_selected.clear),
                           onDone: _stopEditing,
+                          onMove: selection.isEmpty ? null : _move,
+                          onCopy: onCopy,
+                          onEdit: selection.length == 1
+                              ? () => _editDetails(selection.single)
+                              : null,
+                          onDelete: selection.isEmpty ? null : _delete,
                         )
                       : _BrowsingHeader(
                           title: widget.listId == null
@@ -289,8 +348,9 @@ class _SavedPageState extends State<SavedPage> {
                                       .map((list) => list.name),
                                 ],
                           onCrumb: _goUp,
+                          onBack: widget.listId == null ? null : () => _goUp(1),
                           onNewList: _newList,
-                          onEdit: _items.isEmpty ? null : _edit,
+                          onSelect: _items.isEmpty ? null : _select,
                         ),
                 ),
               ),
@@ -308,13 +368,14 @@ class _SavedPageState extends State<SavedPage> {
                 proxyDecorator: _lifted,
                 itemBuilder: (context, index) => _row(_places[index], index),
               ),
-              if (_editing)
+              if (_editing && cupertino)
                 const SliverToBoxAdapter(
                   child: SizedBox(height: _actionBarHeight + 16),
                 ),
             ],
           ),
-          if (_editing)
+          // Android's actions are along the top, in the selection's header.
+          if (_editing && cupertino)
             PositionedDirectional(
               start: 8,
               end: 8,
@@ -322,9 +383,7 @@ class _SavedPageState extends State<SavedPage> {
               height: _actionBarHeight,
               child: _ActionBar(
                 onMove: selection.isEmpty ? null : _move,
-                onCopy: selection.isEmpty || places.length != selection.length
-                    ? null
-                    : _copy,
+                onCopy: onCopy,
                 onDelete: selection.isEmpty ? null : _delete,
               ),
             ),
@@ -333,17 +392,38 @@ class _SavedPageState extends State<SavedPage> {
     );
   }
 
-  Widget _row(SavedItem item, int index) => _Row(
-    key: ValueKey(item.key),
-    item: item,
-    index: index,
-    editing: _editing,
-    selected: _selected.contains(item.key),
-    count: item is SavedList ? _tree?.count(item.id) ?? 0 : 0,
-    onTap: () => _editing ? _toggle(item) : _openItem(item),
-    onEdit: () => _editDetails(item),
-    onPin: item is SavedPlace ? () => _togglePinned(item) : null,
-  );
+  Widget _row(SavedItem item, int index) {
+    final cupertino = isCupertinoOf(context);
+    final row = _Row(
+      item: item,
+      index: index,
+      editing: _editing,
+      selected: _selected.contains(item.key),
+      count: item is SavedList ? _tree?.count(item.id) ?? 0 : 0,
+      onTap: () => _editing ? _toggle(item) : _openItem(item),
+      onLongPress: cupertino
+          ? null
+          : () => _editing ? _toggle(item) : _select(item),
+      onAction: cupertino || _editing ? null : (a) => _rowAction(item, a),
+      onEdit: () => _editDetails(item),
+      onPin: item is SavedPlace ? () => _togglePinned(item) : null,
+    );
+    if (!_editing || cupertino) {
+      return KeyedSubtree(key: ValueKey(item.key), child: row);
+    }
+    // Swiped away only while selecting: browsing, a swipe's too easily made.
+    return Dismissible(
+      key: ValueKey(item.key),
+      background: const _SwipeToDelete(
+        alignment: AlignmentDirectional.centerStart,
+      ),
+      secondaryBackground: const _SwipeToDelete(
+        alignment: AlignmentDirectional.centerEnd,
+      ),
+      onDismissed: (_) => _swipedAway(item),
+      child: row,
+    );
+  }
 
   Widget _lifted(Widget child, int index, Animation<double> animation) =>
       Material(
@@ -358,8 +438,9 @@ class _BrowsingHeader extends StatelessWidget {
     required this.title,
     required this.crumbs,
     required this.onCrumb,
+    required this.onBack,
     required this.onNewList,
-    required this.onEdit,
+    required this.onSelect,
   });
 
   final String title;
@@ -369,8 +450,13 @@ class _BrowsingHeader extends StatelessWidget {
 
   /// A crumb's tapped: how many levels up it is.
   final void Function(int levels) onCrumb;
+
+  /// Up a list, from a nested one; null at the top level.
+  final VoidCallback? onBack;
   final VoidCallback onNewList;
-  final VoidCallback? onEdit;
+
+  /// Selecting, null with nothing to select.
+  final VoidCallback? onSelect;
 
   @override
   Widget build(BuildContext context) {
@@ -378,15 +464,23 @@ class _BrowsingHeader extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
+    final cupertino = isCupertinoOf(context);
+    final back = cupertino ? null : onBack;
     return Padding(
-      padding: const EdgeInsetsDirectional.only(
-        start: 20,
+      padding: EdgeInsetsDirectional.only(
+        start: back == null ? 20 : 4,
         end: 8,
         top: 8,
         bottom: 8,
       ),
       child: Row(
         children: [
+          if (back != null)
+            IconButton(
+              tooltip: 'Back',
+              icon: const BackButtonIcon(),
+              onPressed: back,
+            ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -439,13 +533,27 @@ class _BrowsingHeader extends StatelessWidget {
             ),
             onPressed: onNewList,
           ),
-          TextButton(onPressed: onEdit, child: const Text('Edit')),
+          if (cupertino)
+            TextButton(onPressed: onSelect, child: const Text('Edit'))
+          else
+            PopupMenuButton<void>(
+              tooltip: 'More options',
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  enabled: onSelect != null,
+                  onTap: onSelect,
+                  child: const Text('Select'),
+                ),
+              ],
+            ),
         ],
       ),
     );
   }
 }
 
+/// The header while selecting: on Android, a contextual bar with the selection's
+/// actions; on iOS, the count and Done, the actions being along the bottom.
 class _EditingHeader extends StatelessWidget {
   const _EditingHeader({
     required this.count,
@@ -453,6 +561,10 @@ class _EditingHeader extends StatelessWidget {
     required this.onSelectAll,
     required this.onClear,
     required this.onDone,
+    required this.onMove,
+    required this.onCopy,
+    required this.onEdit,
+    required this.onDelete,
   });
 
   final int count;
@@ -461,18 +573,80 @@ class _EditingHeader extends StatelessWidget {
   final VoidCallback onClear;
   final VoidCallback onDone;
 
+  /// The selection's actions, null where they don't apply to it.
+  final VoidCallback? onMove;
+  final VoidCallback? onCopy;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
+  String get _title => count == 0 ? 'Select items' : '$count selected';
+
   @override
-  Widget build(BuildContext context) => SizedBox(
+  Widget build(BuildContext context) =>
+      isCupertinoOf(context) ? _cupertino(context) : _material(context);
+
+  Widget _material(BuildContext context) => SizedBox(
+    height: 64,
+    child: Padding(
+      padding: const EdgeInsetsDirectional.only(start: 4, end: 8),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Done',
+            icon: const Icon(Icons.close),
+            onPressed: onDone,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Move',
+            icon: const Icon(Icons.drive_file_move_outlined),
+            onPressed: onMove,
+          ),
+          IconButton(
+            tooltip: 'Delete',
+            icon: const Icon(Icons.delete_outline),
+            onPressed: onDelete,
+          ),
+          PopupMenuButton<void>(
+            tooltip: 'More options',
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                enabled: onCopy != null,
+                onTap: onCopy,
+                child: const Text('Copy'),
+              ),
+              PopupMenuItem(
+                enabled: onEdit != null,
+                onTap: onEdit,
+                child: const Text('Edit'),
+              ),
+              PopupMenuItem(
+                onTap: allSelected ? onClear : onSelectAll,
+                child: Text(allSelected ? 'Deselect all' : 'Select all'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _cupertino(BuildContext context) => SizedBox(
     height: 64,
     child: Padding(
       padding: const EdgeInsetsDirectional.only(start: 20, end: 8),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              count == 0 ? 'Select items' : '$count selected',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            child: Text(_title, style: Theme.of(context).textTheme.titleMedium),
           ),
           TextButton(
             onPressed: allSelected ? onClear : onSelectAll,
@@ -504,15 +678,19 @@ class _Empty extends StatelessWidget {
   }
 }
 
+/// What a row's ⋮ menu offers, on Android.
+enum _RowAction { edit, pin, move, copy, delete }
+
 class _Row extends StatelessWidget {
   const _Row({
-    super.key,
     required this.item,
     required this.index,
     required this.editing,
     required this.selected,
     required this.count,
     required this.onTap,
+    required this.onLongPress,
+    required this.onAction,
     required this.onEdit,
     required this.onPin,
   });
@@ -523,6 +701,12 @@ class _Row extends StatelessWidget {
   final bool selected;
   final int count;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  /// One of the row's ⋮ actions; null for no ⋮ (iOS, or selecting).
+  final ValueChanged<_RowAction>? onAction;
+
+  /// The pencil and pin while selecting, on iOS.
   final VoidCallback onEdit;
 
   /// Null for a list: only places have pins.
@@ -595,7 +779,10 @@ class _Row extends StatelessWidget {
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
-      trailing: editing
+      trailing: editing && !cupertino
+          // Android's other actions are the selection's, in the header.
+          ? _handle(context)
+          : editing
           ? Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -629,19 +816,18 @@ class _Row extends StatelessWidget {
                   ),
                   onPressed: onEdit,
                 ),
-                ReorderableDragStartListener(
-                  index: index,
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      _icon(
-                        context,
-                        Icons.drag_handle,
-                        CupertinoIcons.line_horizontal_3,
-                      ),
-                    ),
-                  ),
-                ),
+                _handle(context),
+              ],
+            )
+          : onAction != null
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (item is SavedPlace && item.pinned && item.emoji != null)
+                  const Icon(Icons.push_pin, size: 16),
+                if (item is SavedList)
+                  Text('$count', style: theme.textTheme.bodySmall),
+                _menu(item),
               ],
             )
           // The emoji has taken the pin's place at the start of the row.
@@ -669,6 +855,56 @@ class _Row extends StatelessWidget {
             )
           : null,
       onTap: onTap,
+      onLongPress: onLongPress,
+    );
+  }
+
+  Widget _handle(BuildContext context) => ReorderableDragStartListener(
+    index: index,
+    child: Padding(
+      padding: const EdgeInsets.all(8),
+      child: Icon(
+        _icon(context, Icons.drag_handle, CupertinoIcons.line_horizontal_3),
+      ),
+    ),
+  );
+
+  Widget _menu(SavedItem item) => PopupMenuButton<_RowAction>(
+    tooltip: 'More options',
+    onSelected: onAction,
+    itemBuilder: (context) => [
+      const PopupMenuItem(value: _RowAction.edit, child: Text('Edit')),
+      if (item case SavedPlace(:final pinned))
+        PopupMenuItem(
+          value: _RowAction.pin,
+          child: Text(pinned ? 'Unpin' : 'Pin'),
+        ),
+      const PopupMenuItem(value: _RowAction.move, child: Text('Move')),
+      if (item is SavedPlace)
+        const PopupMenuItem(value: _RowAction.copy, child: Text('Copy')),
+      const PopupMenuItem(value: _RowAction.delete, child: Text('Delete')),
+    ],
+  );
+}
+
+/// What a row swiped away while selecting shows behind it.
+class _SwipeToDelete extends StatelessWidget {
+  const _SwipeToDelete({required this.alignment});
+
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: colors.errorContainer,
+      child: Align(
+        alignment: alignment,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Icon(Icons.delete_outline, color: colors.onErrorContainer),
+        ),
+      ),
     );
   }
 }
