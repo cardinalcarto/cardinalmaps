@@ -538,6 +538,26 @@ impl<'a> RideDescriber<'a> {
         }
     }
 
+    /// A stop by its `stop_id` in `feed`, which `part` is the file of: one of the file's own,
+    /// or one real-time data added to the feed.
+    pub(super) fn feed_stop(
+        &self,
+        part: TimetablePart<'_>,
+        feed: &str,
+        stop_id: &str,
+    ) -> Option<StopId> {
+        part.compiled()
+            .stop_by_gtfs_id(feed, stop_id)
+            .map(|stop| part.global_stop(stop))
+            .or_else(|| {
+                self.snapshot
+                    .new_stops
+                    .iter()
+                    .find(|new| new.id.feed.as_str() == feed && *new.id.id == *stop_id)
+                    .map(|new| new.stop)
+            })
+    }
+
     /// Where a stop is: the timetable's coordinate, or an added stop's; `None` when neither
     /// says.
     pub(super) fn stop_coordinate(&self, stop: StopId) -> Option<LatLon> {

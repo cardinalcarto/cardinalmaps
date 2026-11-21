@@ -423,6 +423,32 @@ after a ride to the same stop, it is the stop's change time. A client that re-ti
 another departure of an earlier ride marks as missed the later ride's departures that leave before
 that departure's `arrival` plus `transfer_seconds`.
 
+`POST /transit/ride` describes one of a leg's departures as a leg of its own, for a client that
+lets the rider pick another to draw its shape and list its stops (`OfflineTransit::ride` on the
+device answers with the same bytes). The request names it by what the plan gave: `feed`, the feed
+of the leg's stops; `board_stop_id` and `alight_stop_id`, the leg's first and last stops'
+`stop_id`; the departure's `trip_id` and `start_date` (the leg's trip's when the departure leaves
+it out; required); optionally its `departure`, which tells the runs of a frequency trip apart (the
+run leaving the boarding stop nearest it, the earlier of two as near; the trip's first run on the
+date when absent); and the plan's `mode`, whose rules the departures are read with. The answer has
+`generated_at`, `realtime` as a plan's, and `ride`: a plan's transit leg on the departure, cut at
+the alighting stop, in exactly a plan leg's shape (every stop with its times, the shape as
+polyline6, `segments` for a stay-seated ride, the vehicle, alerts, and accessibility), less what
+only a plan knows: `wait_seconds` is 0, and it has no `transfer_seconds`, `departures`, or
+`departure_alerts`. The departure is found as the leg's list found it, between the same two stops
+by the same patterns, lanes, and rules, from a snapshot pinned as a plan's is (the current one when
+its window has the start date's trips, else a window around that date with the same feeds), so the
+leg agrees with what the list said of it, and the journey's own departure looks up as the plan's
+leg itself.
+
+A feed that isn't loaded, or a stop or trip that isn't there between the two stops on that date,
+is a 404 (`unknown_feed`, `unknown_stop`, or `unknown_trip`), as is a date no timetable has
+(`date_not_covered`); a `start_date` that isn't `YYYYMMDD` is a 400. A departure the list has as
+canceled or skipped is a 409, `departure_canceled` or `departure_skipped`, rather than a leg: a leg
+is a ride the rider can take, and a leg has no status to say otherwise, so a leg at the schedule's
+times would read as one that runs. Clients don't let a rider pick such a departure, so this only
+happens when real-time data took it away after the plan.
+
 False flags, empty lists, and absent values are left out to keep the JSON small.
 Departures added about 11% to a Washington plan's JSON, and finding and describing them cost 0.3 to
 1.2 ms a plan on the schedule and 0.8 to 2.5 ms with King County Metro's real-time data,

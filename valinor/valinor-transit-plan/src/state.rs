@@ -44,14 +44,16 @@ use valinor_gtfs_rt::{
     DecodeError, FeedId, FeedInput, FeedKind, FeedStatus, NewStop, OverlayOptions, OverlayStats,
     RiderData, build_overlay,
 };
-use valinor_transit::{RouteId, Snapshot, StopId};
+use valinor_transit::{RouteId, ServiceDate, Snapshot, StopId};
 use valinor_walk::{SnappedStop, StopSnaps, TransferTable, WalkError};
 
 use crate::error::StateError;
 use crate::lookup::CompiledLookup;
 use crate::plan::TravelMode;
 use crate::response::{VehicleUpdate, vehicle_update};
-use crate::window::{WindowData, dates_around, required_dates};
+use crate::window::{
+    WindowData, calendar_date, dates_around, dates_of_service_day, required_dates,
+};
 
 /// Materialized windows kept for reuse: the current one, its predecessor, and an on-demand one.
 ///
@@ -673,6 +675,43 @@ impl TransitState {
             Ok(_) | Err(StateError::DateNotCovered(_)) => {}
             Err(error) => return Err(error),
         }
+        self.pin_on_demand(now, needed)
+    }
+
+    /// The snapshot for a query about the trips of one service date.
+    ///
+    /// Usually this is the current snapshot, whose window has yesterday's, today's, and
+    /// tomorrow's trips. Another date gets a window around it of its own, as a departure on
+    /// that date would in [`Self::pin_for_departure`], with the same feeds applied.
+    ///
+    /// # Errors
+    ///
+    /// If no compiled timetable has the date, or building fails.
+    pub fn pin_for_service_date(
+        &self,
+        now: i64,
+        date: ServiceDate,
+    ) -> Result<Arc<TransitSnapshot>, StateError> {
+        match self.pin(now) {
+            Ok(current) if current.window.covers(&[date]) => return Ok(current),
+            Ok(_) | Err(StateError::DateNotCovered(_)) => {}
+            Err(error) => return Err(error),
+        }
+        let needed = dates_of_service_day(&self.data.set, date);
+        if !needed.contains(&date) {
+            let named = calendar_date(date).map_or_else(|| date.to_string(), |d| d.to_string());
+            return Err(StateError::ServiceDateNotCovered(named));
+        }
+        self.pin_on_demand(now, needed)
+    }
+
+    /// A snapshot of a window of `needed` dates other than the current one: a cached one with
+    /// the current feeds, or a new one.
+    fn pin_on_demand(
+        &self,
+        now: i64,
+        needed: Vec<ServiceDate>,
+    ) -> Result<Arc<TransitSnapshot>, StateError> {
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
         // Under the lock, so this can't be newer than the feeds the build reads.
         let generation = self.feed_generation.load(Ordering::Acquire);

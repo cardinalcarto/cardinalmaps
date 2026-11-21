@@ -10,6 +10,7 @@ mod alerts;
 mod build;
 mod departures;
 mod nearby;
+mod ride;
 mod vehicle;
 
 use serde::Serialize;
@@ -21,6 +22,7 @@ pub use nearby::{
     StopDeparture,
 };
 pub(crate) use nearby::{RouteLookupError, build_nearby, build_route_detail, empty_nearby};
+pub(crate) use ride::{RideLookupError, build_ride};
 pub(crate) use vehicle::lower;
 pub(crate) use vehicle::vehicle_update;
 
@@ -40,6 +42,20 @@ pub struct PlanResponse {
     pub no_journeys_reason: Option<NoJourneysReason>,
     /// How a direct trip without transit fared.
     pub direct: DirectResponse,
+}
+
+/// One of a ride's departures, described as a leg of its own.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RideResponse {
+    /// When the response was generated, in POSIX seconds.
+    pub generated_at: i64,
+    /// What real-time data this answer used, and how old it was.
+    pub realtime: RealtimeStatus,
+    /// A plan's transit leg on the departure, from the boarding stop to the alighting stop.
+    ///
+    /// What only a plan knows is left out: `wait_seconds` is 0, and it has no
+    /// `transfer_seconds`, `departures`, or `departure_alerts`.
+    pub ride: TransitLeg,
 }
 
 /// What is known about whether a stop or leg is accessible to a rider in a wheelchair.

@@ -201,6 +201,17 @@ fn dates_between(
         .collect()
 }
 
+/// The service days a query about one service date's trips needs materialized:
+/// the day before and after it as well, in each file that has any of them, as a query departing
+/// on that date has.
+pub(crate) fn dates_of_service_day(set: &TimetableSet, date: ServiceDate) -> Vec<ServiceDate> {
+    let mut dates = BTreeSet::new();
+    for part in set.parts() {
+        dates.extend(dates_between(part.compiled(), date, date));
+    }
+    dates.into_iter().collect()
+}
+
 /// The service days a query departing between two POSIX times needs materialized.
 ///
 /// # Errors

@@ -12,6 +12,7 @@
 //!   [`AccessEgressSearch`] for stop tables and a [`valinor_transit::TransferSearch`] for walks.
 //! - [`nearby()`] answers which routes a rider can catch near a place, a page per headsign,
 //!   and [`route_detail()`] one page of them from one stop, over a pinned snapshot alike.
+//! - [`ride()`] describes one of a plan ride's departures as the plan's leg on it would be.
 //! - [`PlanResponse`] is the rider-facing JSON answer, with its own endpoint's schema
 //!   rather than Valhalla's.
 //! - [`CompiledLookup`] is the bridge that lets the GTFS-RT overlay builder see compiled GTFS.
@@ -23,6 +24,7 @@ mod lookup;
 mod nearby;
 mod plan;
 pub mod response;
+mod ride;
 mod state;
 mod street;
 mod window;
@@ -51,9 +53,10 @@ mod street_tests;
 mod testing;
 
 pub use build::{BuildLoadError, BuildLoadReport, TransitBuild, default_decode_limits};
-pub use error::{Missing, PlanError, StateError};
+pub use error::{Missing, NotRunning, PlanError, StateError};
 pub use json::{
-    JsonCoordinate, JsonResponse, NearbyRequestBody, PlanRequestBody, RouteRequestBody,
+    JsonCoordinate, JsonResponse, NearbyRequestBody, PlanRequestBody, RideRequestBody,
+    RouteRequestBody,
 };
 pub use lookup::CompiledLookup;
 pub use nearby::{
@@ -66,9 +69,10 @@ pub use plan::{
     TransitRequest, TravelMode, plan, plan_pinned,
 };
 pub use response::{
-    Accessibility, DepartureStatus, NearbyResponse, PlanResponse, RideDeparture,
+    Accessibility, DepartureStatus, NearbyResponse, PlanResponse, RideDeparture, RideResponse,
     RouteDetailResponse, StopMovedNotice, Vehicle, VehicleUpdate, WalkManeuver, WalkPath,
 };
+pub use ride::{RideRequest, ride, ride_pinned};
 pub use state::{
     FeedUpdate, IngestAndRefresh, IngestOutcome, ModeSnaps, StateConfig, StopLocation, StopSnapper,
     TransitSnapshot, TransitState,

@@ -12,11 +12,12 @@ use valinor_gtfs::{TimetableSet, compile};
 use valinor_gtfs_rt::{FeedKind, proto};
 use valinor_transit::Router;
 
-use crate::error::PlanError;
+use crate::error::{Missing, NotRunning, PlanError, StateError};
 use crate::plan::{DepartureRange, TransitOptions, TransitRequest, TravelMode, plan};
 use crate::response::{
     Accessibility, DepartureStatus, JourneyLeg, PlanResponse, RideDeparture, TransitLeg,
 };
+use crate::ride::{RideRequest, ride};
 use crate::state::{FeedUpdate, StateConfig, TransitState};
 use crate::testing::{
     StraightLineAccess, StraightLineTransfers, alert_entity, delay_update, descriptor,
@@ -1312,4 +1313,291 @@ fn a_ride_after_a_walk_counts_its_transfer_from_the_previous_arrival() {
             expected("R9-2150", june_15(21, 50), SCHEDULED, "L"),
         ]
     );
+}
+
+// A ride lookup describes one departure of a ride as the plan's leg on it would be.
+
+fn ride_request(feed: &str, (board, alight): (&str, &str), trip: &str) -> RideRequest {
+    RideRequest {
+        feed: feed.to_owned(),
+        board_stop_id: board.to_owned(),
+        alight_stop_id: alight.to_owned(),
+        trip_id: trip.to_owned(),
+        start_date: JUNE_15.to_owned(),
+        departure: None,
+        mode: TravelMode::Walking,
+        now: FEED_TIME + 15,
+    }
+}
+
+type LookupError = PlanError<core::convert::Infallible, core::convert::Infallible>;
+
+fn try_lookup(state: &TransitState, request: &RideRequest) -> Result<TransitLeg, LookupError> {
+    ride(state, request, &|| false).map(|response| response.ride)
+}
+
+fn lookup(state: &TransitState, request: &RideRequest) -> TransitLeg {
+    try_lookup(state, request).expect("the lookup succeeds")
+}
+
+fn stop_ids(leg: &TransitLeg) -> Vec<&str> {
+    leg.stops
+        .iter()
+        .map(|visit| visit.stop.stop_id.as_str())
+        .collect()
+}
+
+/// A plan's leg less what only a plan knows: when the rider gets there, and the other departures.
+fn as_looked_up(leg: &TransitLeg) -> TransitLeg {
+    TransitLeg {
+        wait_seconds: 0,
+        transfer_seconds: None,
+        departures: Vec::new(),
+        departure_alerts: Vec::new(),
+        ..leg.clone()
+    }
+}
+
+#[test]
+fn a_rides_own_departure_looks_up_as_the_plans_leg() {
+    let state = main_state();
+    // Live, with a delay and an alert on the route, so every part of the leg is compared.
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![delay_update("R1-0800", JUNE_15, 1, 120)],
+    );
+    ingest(
+        &state,
+        FEED,
+        FeedKind::Alerts,
+        vec![alert_entity(
+            "detour",
+            proto::alert::Effect::Detour,
+            vec![route_selector("R1")],
+        )],
+    );
+    let response = run(&state, &request(near_a(), near_c(), june_15(7, 55), 1800));
+    let leg = leg_on(&response, "R1-0800");
+    assert!(leg.realtime && !leg.alerts.is_empty(), "{leg:?}");
+    let looked_up = lookup(&state, &ride_request(FEED, ("A", "C"), "R1-0800"));
+    assert_eq!(looked_up, as_looked_up(leg));
+
+    // A plan's ride after a change, which waits and has a transfer, looks up the same way.
+    let response = run(&state, &request(near_a(), near_d(), june_15(7, 55), 1800));
+    let second = transit_legs(&response)
+        .find(|leg| leg.trip.trip_id.starts_with("R2"))
+        .expect("a ride on route 2");
+    assert!(second.transfer_seconds.is_some());
+    let looked_up = lookup(
+        &state,
+        &ride_request(FEED, ("B", "D"), &second.trip.trip_id),
+    );
+    assert_eq!(looked_up, as_looked_up(second));
+}
+
+#[test]
+fn another_routes_departure_looks_up_as_a_leg_on_its_route() {
+    let state = connection_state();
+    let response = run(&state, &request(near_p(), near_q(), june_15(20, 55), 600));
+    let leg = leg_on(&response, "R7-2100");
+    let other = &leg.departures[1];
+    assert_eq!(other.trip_id, "R14-2110");
+    let looked_up = lookup(&state, &ride_request(CONNECTION, ("P", "Q"), "R14-2110"));
+    assert_eq!(looked_up.trip.trip_id, "R14-2110");
+    assert_eq!(looked_up.trip.start_date.as_deref(), Some(JUNE_15));
+    assert_eq!(looked_up.trip.headsign.as_deref(), Some("Mount Baker"));
+    assert_eq!(
+        looked_up
+            .route
+            .as_ref()
+            .map(|route| route.route_id.as_str()),
+        Some("R14")
+    );
+    assert_eq!(stop_ids(&looked_up), ["P", "Q"]);
+    // It agrees with what the ride's list said of it.
+    assert_eq!(
+        (looked_up.departure, looked_up.arrival),
+        (other.departure, other.arrival)
+    );
+    assert_eq!(looked_up.accessibility, other.accessibility);
+    assert_eq!(looked_up.wait_seconds, 0);
+
+    // As a plan would have it, had it ridden route 14.
+    let response = run(&state, &request(near_p(), near_q(), june_15(21, 5), 300));
+    assert_eq!(looked_up, as_looked_up(leg_on(&response, "R14-2110")));
+}
+
+#[test]
+fn a_stay_seated_departure_looks_up_as_one_ride_in_segments() {
+    let state = seated_state();
+    let response = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 35), 600),
+    );
+    let direct = leg_on(&response, "T7");
+    let seated = &direct.departures[0];
+    assert_eq!(seated.trip_id, "T1");
+    let looked_up = lookup(&state, &ride_request("seated", ("ORG", "DST"), "T1"));
+    assert_eq!(stop_ids(&looked_up), ["ORG", "MID", "DST"]);
+    let segments: Vec<(&str, usize, usize)> = looked_up
+        .segments
+        .iter()
+        .map(|s| (s.trip_id.as_str(), s.first_stop_index, s.last_stop_index))
+        .collect();
+    assert_eq!(segments, [("T1", 0, 1), ("T2", 1, 2)]);
+    assert_eq!(looked_up.trip.trip_id, "T1");
+    assert_eq!(
+        looked_up
+            .route
+            .as_ref()
+            .map(|route| route.route_id.as_str()),
+        Some("R1"),
+        "the route it boards"
+    );
+    assert_eq!(
+        (looked_up.departure, looked_up.arrival),
+        (seated.departure, seated.arrival)
+    );
+
+    // The plan that rides it has the same leg.
+    let response = run(
+        &state,
+        &request(at(47.5990), at(47.6410), june_15(8, 0), 3600),
+    );
+    let planned = transit_legs(&response)
+        .find(|leg| leg.trip.trip_id == "T1" && !leg.segments.is_empty())
+        .expect("the ride stays seated from T1 into T2");
+    assert_eq!(looked_up, as_looked_up(planned));
+}
+
+#[test]
+fn a_frequency_trips_run_is_the_one_leaving_nearest_the_departure() {
+    let state = main_state();
+    let mut request = ride_request(FEED, ("A", "C"), "F1");
+    assert_eq!(
+        lookup(&state, &request).departure,
+        june_15(10, 0),
+        "the first"
+    );
+    request.departure = Some(june_15(10, 20));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 20));
+    request.departure = Some(june_15(10, 31));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 40));
+    // Halfway between two runs, the earlier.
+    request.departure = Some(june_15(10, 30));
+    assert_eq!(lookup(&state, &request).departure, june_15(10, 20));
+}
+
+#[test]
+fn a_departure_real_time_data_took_away_is_refused() {
+    let state = main_state();
+    ingest(
+        &state,
+        FEED,
+        FeedKind::TripUpdates,
+        vec![canceled("R1-2420")],
+    );
+    // Listed as canceled by a ride from `A` to `C`, but not one a rider can take.
+    let error = try_lookup(&state, &ride_request(FEED, ("A", "C"), "R1-2420")).unwrap_err();
+    assert!(
+        matches!(error, PlanError::NotRunning(NotRunning::Canceled)),
+        "{error:?}"
+    );
+    // Its trip still runs on the other days.
+    let mut tomorrow = ride_request(FEED, ("A", "C"), "R1-2420");
+    tomorrow.start_date = "20260616".to_owned();
+    assert_eq!(lookup(&state, &tomorrow).departure, june_15(24 + 24, 20));
+
+    let mut skip = entity("tu-skip");
+    skip.trip_update = Some(proto::TripUpdate {
+        trip: descriptor("R1-0900", JUNE_15, None),
+        stop_time_update: vec![proto::trip_update::StopTimeUpdate {
+            stop_sequence: Some(1),
+            schedule_relationship: Some(
+                proto::trip_update::stop_time_update::ScheduleRelationship::Skipped as i32,
+            ),
+            ..proto::trip_update::StopTimeUpdate::default()
+        }],
+        ..proto::TripUpdate::default()
+    });
+    ingest(&state, FEED, FeedKind::TripUpdates, vec![skip]);
+    let error = try_lookup(&state, &ride_request(FEED, ("A", "C"), "R1-0900")).unwrap_err();
+    assert!(
+        matches!(error, PlanError::NotRunning(NotRunning::Skipped)),
+        "{error:?}"
+    );
+    // From `B` it still runs.
+    let from_b = lookup(&state, &ride_request(FEED, ("B", "C"), "R1-0900"));
+    assert_eq!(stop_ids(&from_b), ["B", "C"]);
+}
+
+#[test]
+fn a_lookup_names_what_isnt_there() {
+    let state = main_state();
+    let missing = |request: &RideRequest| match try_lookup(&state, request) {
+        Err(PlanError::NotFound(missing)) => Some(missing),
+        _ => None,
+    };
+    // Route 2 doesn't run from `A` to `C`, and no trip runs from `C` back to `A`.
+    assert_eq!(
+        missing(&ride_request(FEED, ("A", "C"), "R2-0815")),
+        Some(Missing::Trip)
+    );
+    assert_eq!(
+        missing(&ride_request(FEED, ("C", "A"), "R1-0800")),
+        Some(Missing::Trip)
+    );
+    // A weekday trip on a Saturday.
+    let mut saturday = ride_request(FEED, ("A", "C"), "R1-0800");
+    saturday.start_date = "20260613".to_owned();
+    assert_eq!(missing(&saturday), Some(Missing::Trip));
+    assert_eq!(
+        missing(&ride_request(FEED, ("A", "Z"), "R1-0800")),
+        Some(Missing::Stop)
+    );
+    assert!(matches!(
+        try_lookup(&state, &ride_request("other", ("A", "C"), "R1-0800")),
+        Err(PlanError::State(StateError::UnknownFeed(_)))
+    ));
+    let mut undated = ride_request(FEED, ("A", "C"), "R1-0800");
+    undated.start_date = "2026-06-15".to_owned();
+    assert!(matches!(
+        try_lookup(&state, &undated),
+        Err(PlanError::InvalidRequest(_))
+    ));
+    // A date the timetable doesn't cover at all.
+    undated.start_date = "20300101".to_owned();
+    assert!(matches!(
+        try_lookup(&state, &undated),
+        Err(PlanError::State(StateError::ServiceDateNotCovered(_)))
+    ));
+}
+
+#[test]
+fn a_wheelchair_lookup_reads_the_rules_a_wheelchair_plan_does() {
+    let state = main_state();
+    // The 09:30 is marked inaccessible, so a wheelchair ride's list doesn't have it.
+    let mut request = ride_request(FEED, ("A", "C"), "R1-0930");
+    assert_eq!(lookup(&state, &request).departure, june_15(9, 30));
+    request.mode = TravelMode::Wheelchair;
+    assert!(matches!(
+        try_lookup(&state, &request),
+        Err(PlanError::NotFound(Missing::Trip))
+    ));
+}
+
+#[test]
+fn a_lookup_on_a_date_outside_the_current_window_pins_one_of_its_own() {
+    let state = main_state();
+    let current = state.pin(FEED_TIME + 15).expect("pin");
+    let mut friday = ride_request(FEED, ("A", "C"), "R1-0800");
+    friday.start_date = "20260619".to_owned();
+    let leg = lookup(&state, &friday);
+    assert_eq!(leg.departure, june_15(4 * 24 + 8, 0));
+    assert_eq!(leg.trip.start_date.as_deref(), Some("20260619"));
+    // The current snapshot stays as it was.
+    let after = state.pin(FEED_TIME + 15).expect("pin");
+    assert!(std::sync::Arc::ptr_eq(&current, &after));
 }

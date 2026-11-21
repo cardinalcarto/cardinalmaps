@@ -683,7 +683,7 @@ fn own_departure(leg: &TransitLeg) -> RideDeparture {
 ///
 /// From each visit to the boarding stop, the first later visit to the alighting stop pairs
 /// with it, unless the pattern visits the boarding stop again first: a rider boards there instead.
-fn pairs_for(
+pub(super) fn pairs_for(
     snapshot: &Snapshot,
     filter: RouteFilter,
     (board_stop, alight_stop): (StopId, StopId),
