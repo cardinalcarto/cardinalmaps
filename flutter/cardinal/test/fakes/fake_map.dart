@@ -95,6 +95,39 @@ class FakeMap extends SparkleMapController {
     required double zoom,
   }) => flownTo = (lng: lng, lat: lat, zoom: zoom);
 
+  /// Where the camera is, if the test says: [easeTo] moves it there at once.
+  CameraState? cameraState;
+
+  @override
+  CameraState? get camera => cameraState;
+
+  /// Where [easeTo] was asked to take the camera, in order.
+  final eases = <({double lng, double lat, double zoom})>[];
+
+  @override
+  void easeTo({
+    required double lng,
+    required double lat,
+    required double zoom,
+    double? bearing,
+    double? pitch,
+    Duration duration = const Duration(milliseconds: 500),
+    EaseCurve curve = EaseCurve.ease,
+  }) {
+    eases.add((lng: lng, lat: lat, zoom: zoom));
+    subject = false;
+    final was = cameraState;
+    if (was != null) {
+      cameraState = CameraState(
+        lng: lng,
+        lat: lat,
+        zoom: zoom,
+        bearing: bearing ?? was.bearing,
+        pitch: pitch ?? was.pitch,
+      );
+    }
+  }
+
   /// Where [setPuck] put the puck, in order, with how long each glide took.
   final pucks =
       <({double lng, double lat, double bearing, Duration duration})>[];

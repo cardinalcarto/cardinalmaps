@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:flutter/scheduler.dart';
+
 import 'package:flutter/foundation.dart' show listEquals;
 
 import 'package:cupertino_ui/cupertino_ui.dart'
@@ -40,6 +42,9 @@ import 'journey_list.dart';
 import 'mode_tabs.dart';
 import 'option_row.dart';
 import 'route_source.dart';
+import 'scrub.dart';
+import 'scrub_marker.dart';
+import 'scrub_track.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
@@ -110,7 +115,7 @@ class DirectionsPage extends StatefulWidget {
 }
 
 class _DirectionsPageState extends State<DirectionsPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   /// The trip's ends and the tabs.
   static const _headerSection = #directionsHeader;
 
@@ -151,6 +156,17 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// How far a callout's point stays from the edge of what's showing, in logical pixels:
   /// enough for the bubble, which sits above the point.
   static const _calloutMargin = EdgeInsets.fromLTRB(44, 40, 44, 4);
+
+  /// How far the scrub marker is kept from the edge of what's showing of the map, in
+  /// logical pixels, before the map pans to keep it in view.
+  static const _scrubMargin = EdgeInsets.all(32);
+
+  /// How long the map pans for to bring the scrub marker back into view.
+  static const _scrubPan = Duration(milliseconds: 300);
+
+  /// How long after the last finger lifts from the map, and the map stops moving, it's
+  /// taken to be done with the gesture.
+  static const _mapSettle = Duration(milliseconds: 300);
 
   Directions? _directions;
   late SparkleMapController _map;
@@ -214,6 +230,35 @@ class _DirectionsPageState extends State<DirectionsPage>
 
   /// The fingers down anywhere in the window.
   final _pointers = <int>{};
+
+  /// The fingers that went down on the map, out from under the sheet, and the time
+  /// after the last lifted until the map is still.
+  final _mapPointers = <int>{};
+  Timer? _mapSettling;
+
+  /// Whether the map is being moved by hand, or still moving from it.
+  bool get _mapTouched => _mapPointers.isNotEmpty || _mapSettling != null;
+
+  /// The row being scrubbed, and the slot that was held when the scrub started, which
+  /// stays held until it ends: a row selected by a scrub rises into the dock only once
+  /// the finger lifts, as one that's tapped does.
+  Object? _scrubbing;
+  Object? _scrubHeld;
+
+  /// The slot held as the page was last built.
+  Object? _held;
+
+  late final _scrubSink = ScrubSink(
+    onStart: _scrubStarted,
+    onMove: _scrubMoved,
+    onEnd: _scrubEnded,
+  );
+
+  late final _marker = ScrubMarker(
+    map: _map,
+    vsync: this,
+    onPlaced: _keepInView,
+  );
 
   /// Runs for [structureSettle] after the last of them lifts.
   Timer? _settling;
@@ -392,6 +437,8 @@ class _DirectionsPageState extends State<DirectionsPage>
     _clock?.cancel();
     _refreshTimer?.cancel();
     _settling?.cancel();
+    _mapSettling?.cancel();
+    _marker.dispose();
     if (_directions != null) {
       _lifecycle.dispose();
       WidgetsBinding.instance.pointerRouter.removeGlobalRoute(_pointer);
@@ -402,7 +449,8 @@ class _DirectionsPageState extends State<DirectionsPage>
     _map
       ..setGeoJson(routeSource, empty)
       ..setGeoJson(routeCalloutSource, empty)
-      ..setGeoJson(transitSource, empty);
+      ..setGeoJson(transitSource, empty)
+      ..setGeoJson(scrubSource, empty);
     _directions?.dispose();
     _open.dispose();
     _search?.dispose();
@@ -421,6 +469,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     if (!mounted) return;
     if (_navigating) {
       _calloutTimer?.cancel();
+      _marker.hide();
       _callouts = const [];
       _drawRoutes();
       _map.setGeoJson(routeCalloutSource, empty);
@@ -465,8 +514,9 @@ class _DirectionsPageState extends State<DirectionsPage>
         ),
         _ => null,
       };
-      // The same journey planned again is drawn again, where the map is.
-      if (key != _shownKey) _showJourney();
+      // The same journey planned again is drawn again, where the map is; one a scrub
+      // selects is drawn where the map is too, which pans only to follow the marker.
+      if (key != _shownKey && _scrubbing == null) _showJourney();
       _shownKey = key;
     }
     _followChain();
@@ -577,13 +627,24 @@ class _DirectionsPageState extends State<DirectionsPage>
 
   /// A finger went down or lifted, anywhere: a newer plan that would move rows waits
   /// until none is down, and a little longer.
+  ///
+  /// It notes too which fingers are on the map, for the scrub marker not to pan it
+  /// while it's moved by hand.
   void _pointer(PointerEvent event) {
     if (event is PointerDownEvent) {
       _pointers.add(event.pointer);
       _settling?.cancel();
       _settling = null;
+      if (mounted && _onMap(event.position)) {
+        _mapPointers.add(event.pointer);
+        _mapSettling?.cancel();
+        _mapSettling = null;
+      }
     } else if (event is PointerUpEvent || event is PointerCancelEvent) {
       _pointers.remove(event.pointer);
+      if (_mapPointers.remove(event.pointer) && _mapPointers.isEmpty) {
+        _settleMap();
+      }
       if (_pointers.isNotEmpty) return;
       _settling?.cancel();
       _settling = Timer(structureSettle, () {
@@ -688,8 +749,27 @@ class _DirectionsPageState extends State<DirectionsPage>
     );
   }
 
+  /// Whether [position], in the window, is on the map: not under the sheet or the
+  /// status bar.
+  bool _onMap(Offset position) {
+    final view = SheetScaffold.viewOf(context);
+    final clear =
+        EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
+    return clear
+        .deflateRect(Offset.zero & MediaQuery.sizeOf(context))
+        .contains(position);
+  }
+
+  /// The last finger lifted from the map, or the map moved since: it's done with the
+  /// gesture once it's been still for [_mapSettle].
+  void _settleMap() {
+    _mapSettling?.cancel();
+    _mapSettling = Timer(_mapSettle, () => _mapSettling = null);
+  }
+
   /// The map or the sheet moved: once they're still, the callouts follow.
   void _viewChanged() {
+    if (_mapSettling != null) _settleMap();
     _calloutTimer?.cancel();
     if (_navigating) return;
     _calloutTimer = Timer(_calloutDelay, _placeCallouts);
@@ -703,7 +783,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     if (placer == null) {
       callouts = const [];
     } else {
-      final outline = _visibleOutline();
+      final outline = _visibleOutline(_calloutMargin);
       if (outline == null) return;
       callouts = placer.place((lng, lat) => insideOutline(outline, lng, lat));
     }
@@ -723,13 +803,14 @@ class _DirectionsPageState extends State<DirectionsPage>
     return true;
   }
 
-  /// The ground showing outside the sheet and the status bar, or null if it can't be
-  /// told: the sheet covers the map, or the view reaches past the horizon.
-  List<({double lng, double lat})>? _visibleOutline() {
+  /// The ground showing outside the sheet and the status bar, [margin] in from its
+  /// edges, or null if it can't be told: the sheet covers the map, or the view reaches
+  /// past the horizon.
+  List<({double lng, double lat})>? _visibleOutline(EdgeInsets margin) {
     final view = SheetScaffold.viewOf(context);
     final clear =
         EdgeInsets.only(top: MediaQuery.paddingOf(context).top) + view.obscured;
-    final area = _calloutMargin.deflateRect(
+    final area = margin.deflateRect(
       clear.deflateRect(Offset.zero & MediaQuery.sizeOf(context)),
     );
     if (area.isEmpty) return null;
@@ -740,6 +821,56 @@ class _DirectionsPageState extends State<DirectionsPage>
       area.bottomLeft,
     ].map(_map.screenToLngLat).nonNulls.toList();
     return corners.length < 4 ? null : corners;
+  }
+
+  /// A row's graph is scrubbed: it's selected, but whatever was held stays held until
+  /// the scrub ends, so a row cut off by the buttons stays where it is under the
+  /// finger.
+  void _scrubStarted(Object row, VoidCallback select) {
+    if (_scrubbing == null) _scrubHeld = _held;
+    _scrubbing = row;
+    select();
+  }
+
+  void _scrubMoved(Object row, DirectionsPoint? point) {
+    if (row != _scrubbing || _navigating) return;
+    _marker.move(point);
+  }
+
+  /// The scrub ended: the row it selected is held, rising into the dock if it's cut
+  /// off, and the marker fades a while after.
+  void _scrubEnded(Object row) {
+    if (row != _scrubbing) return;
+    _scrubbing = null;
+    _marker.release();
+    // A row that goes takes its scrub with it, as the tree is being finalized.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrubbing == null) setState(() => _scrubHeld = null);
+      });
+    } else {
+      setState(() => _scrubHeld = null);
+    }
+  }
+
+  /// Pans the map, as little as it can, for [point], where the scrub marker is, to
+  /// be [_scrubMargin] inside what shows of it, if it isn't; not while the map is
+  /// moved by hand. The zoom stays as it is.
+  void _keepInView(DirectionsPoint point) {
+    if (!mounted || _navigating || _mapTouched) return;
+    final outline = _visibleOutline(_scrubMargin);
+    if (outline == null) return;
+    final shift = panInto(outline, point.lng, point.lat);
+    final camera = _map.camera;
+    if (shift == null || camera == null) return;
+    _map.easeTo(
+      lng: camera.lng + shift.lng,
+      lat: camera.lat + shift.lat,
+      zoom: camera.zoom,
+      duration: _scrubPan,
+      curve: EaseCurve.easeOut,
+    );
   }
 
   void _setMode(TravelMode mode) {
@@ -862,6 +993,7 @@ class _DirectionsPageState extends State<DirectionsPage>
         ? _trip(directions)
         : null;
     final transit = directions.mode == TravelMode.transit;
+    _held = _scrubHeld ?? trip?.held;
     return PopScope(
       canPop: editing == null,
       onPopInvokedWithResult: (didPop, _) {
@@ -878,7 +1010,7 @@ class _DirectionsPageState extends State<DirectionsPage>
         // The trip and editing each scroll on their own: the list is where it was
         // left on the way back from editing.
         scrollId: editing != null ? 'editing' : 'trip',
-        held: trip?.held,
+        held: _held,
         footer: trip == null
             ? null
             : FadeTransition(
@@ -958,6 +1090,7 @@ class _DirectionsPageState extends State<DirectionsPage>
         opening: leaving ? null : _opening,
         reveal: _Product(shown, _chrome),
         onSelect: directions.select,
+        scrub: leaving ? null : _scrubSink,
       );
     } else {
       final plan = directions.plan;
@@ -1005,6 +1138,7 @@ class _DirectionsPageState extends State<DirectionsPage>
                         opening: opening,
                         reveal: within,
                         onSelect: directions.selectJourney,
+                        scrub: leaving || transitLeaving ? null : _scrubSink,
                       )
                     : OptionList(
                         group: _transitGroup,

@@ -16,6 +16,7 @@ import '../units.dart';
 import 'elevation_profile.dart';
 import 'format.dart';
 import 'route_tones.dart';
+import 'scrub.dart';
 import 'speed_profile.dart';
 import 'transit_sheet.dart' show clock;
 
@@ -399,6 +400,9 @@ String routeArrival(BuildContext context, DirectionsRoute route, DateTime now) {
 ///
 /// The selected row has a tonal fill and its time in the primary color; nothing else
 /// about it changes, so selecting one moves nothing.
+///
+/// Given a [scrub], its graph scrubs (see [ScrubGraph]): the readout takes the place of
+/// when it arrives.
 class OptionRow extends StatelessWidget {
   const OptionRow({
     super.key,
@@ -411,6 +415,7 @@ class OptionRow extends StatelessWidget {
     required this.now,
     required this.metrics,
     required this.onTap,
+    this.scrub,
   });
 
   /// The routes of the list, and which of them this row is.
@@ -430,6 +435,9 @@ class OptionRow extends StatelessWidget {
   final DateTime now;
   final OptionRowMetrics metrics;
   final VoidCallback onTap;
+
+  /// What the page does as the row's graph is scrubbed, or null if it isn't.
+  final ScrubSink? scrub;
 
   /// Between the time a route takes and when it arrives, on the one line.
   static const _headlineGap = 8.0;
@@ -462,120 +470,159 @@ class OptionRow extends StatelessWidget {
       ),
       child: whole(duration, height: metrics.headlineHeight),
     );
-    return Semantics(
-      button: true,
-      selected: selected,
-      // All of it, whatever the row has room to show.
-      label: [duration, arrival, ?name, ...facts].join(', '),
-      excludeSemantics: true,
-      onTap: onTap,
-      child: OptionRowFrame(
-        metrics: metrics,
+    final readout = metrics.arrival.copyWith(
+      color: scheme.primary,
+      fontWeight: FontWeight.w500,
+    );
+    return RowScrubber(
+      track: StreetScrubTrack(
+        route: route,
+        share: scale.share(route),
+        driving: driving,
+        units: units,
+      ),
+      sink: scrub,
+      onSelect: onTap,
+      builder: (context, scrubbing) => Semantics(
+        container: true,
+        button: true,
         selected: selected,
+        // All of it, whatever the row has room to show; its graph is a slider of its
+        // own when it scrubs.
+        label: [duration, arrival, ?name, ...facts].join(', '),
+        excludeSemantics: scrubbing == null,
         onTap: onTap,
-        // By the row's width, for how wide its graph is: whether "Toll" fits on the
-        // profile decides whether the caption says it.
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final graph = Size(
-              constraints.maxWidth * scale.share(route),
-              routeGraphHeight,
-            );
-            final tolls = driving
-                ? tollLabels(
-                    route.runs,
-                    topSpeed: scale.topSpeed,
-                    size: graph,
-                    label: tollLabelSize(context),
-                  )
-                : const <TollLabel>[];
-            final caption = routeCaption(
-              routes,
-              index,
-              driving: driving,
-              units: units,
-              tollOnProfile: tolls.isNotEmpty,
-            );
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (metrics.roomy) ...[
-                  headline,
-                  DefaultTextStyle.merge(
-                    style: metrics.arrival,
-                    child: whole(arrival, height: metrics.arrivalHeight),
-                  ),
-                ] else
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      // All of it, in as much of the line as it needs: it shrinks
-                      // only if the whole line is too little.
-                      ConstrainedBox(
-                        constraints: BoxConstraints(
-                          maxWidth: constraints.maxWidth - _headlineGap,
-                        ),
-                        child: headline,
-                      ),
-                      const SizedBox(width: _headlineGap),
-                      // The one that gives way if the two can't share the line.
-                      Expanded(
-                        child: Text(
-                          arrival,
+        child: OptionRowFrame(
+          metrics: metrics,
+          selected: selected,
+          onTap: onTap,
+          // By the row's width, for how wide its graph is: whether "Toll" fits on the
+          // profile decides whether the caption says it.
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final graph = Size(
+                constraints.maxWidth * scale.share(route),
+                routeGraphHeight,
+              );
+              final tolls = driving
+                  ? tollLabels(
+                      route.runs,
+                      topSpeed: scale.topSpeed,
+                      size: graph,
+                      label: tollLabelSize(context),
+                    )
+                  : const <TollLabel>[];
+              final caption = routeCaption(
+                routes,
+                index,
+                driving: driving,
+                units: units,
+                tollOnProfile: tolls.isNotEmpty,
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (metrics.roomy) ...[
+                    ExcludeSemantics(child: headline),
+                    ExcludeSemantics(
+                      child: ScrubReadout(
+                        scrub: scrubbing,
+                        style: readout,
+                        child: DefaultTextStyle.merge(
                           style: metrics.arrival,
-                          textAlign: TextAlign.end,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          child: whole(arrival, height: metrics.arrivalHeight),
                         ),
                       ),
-                    ],
+                    ),
+                  ] else
+                    ExcludeSemantics(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          // All of it, in as much of the line as it needs: it shrinks
+                          // only if the whole line is too little.
+                          ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: constraints.maxWidth - _headlineGap,
+                            ),
+                            child: headline,
+                          ),
+                          const SizedBox(width: _headlineGap),
+                          // The one that gives way if the two can't share the line.
+                          Expanded(
+                            child: ScrubReadout(
+                              scrub: scrubbing,
+                              style: readout,
+                              alignment: TextAlign.end,
+                              child: Text(
+                                arrival,
+                                style: metrics.arrival,
+                                textAlign: TextAlign.end,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: OptionRowMetrics.gap),
+                  // A route with no named roads keeps the line's room.
+                  ExcludeSemantics(
+                    child: SizedBox(
+                      height: metrics.nameHeight,
+                      child: name == null
+                          ? null
+                          : Text(
+                              name,
+                              style: metrics.name,
+                              maxLines: metrics.textLines,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                    ),
                   ),
-                const SizedBox(height: OptionRowMetrics.gap),
-                // A route with no named roads keeps the line's room.
-                SizedBox(
-                  height: metrics.nameHeight,
-                  child: name == null
-                      ? null
-                      : Text(
-                          name,
-                          style: metrics.name,
-                          maxLines: metrics.textLines,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                ),
-                const SizedBox(height: OptionRowMetrics.gap),
-                FractionallySizedBox(
-                  alignment: AlignmentDirectional.centerStart,
-                  widthFactor: scale.share(route),
-                  child: driving
-                      ? SpeedProfile(
-                          runs: route.runs,
-                          topSpeed: scale.topSpeed,
-                          tones: tones,
-                          tollLabels: tolls,
-                        )
-                      : ElevationProfile(
-                          runs: route.runs,
-                          elevation: route.elevation,
-                          distance: route.distance,
-                          range: scale.elevation,
-                          tones: tones,
-                        ),
-                ),
-                const SizedBox(height: OptionRowMetrics.gap),
-                SizedBox(
-                  height: metrics.captionHeight,
-                  child: Text(
-                    caption,
-                    style: metrics.caption,
-                    maxLines: metrics.textLines,
-                    overflow: TextOverflow.ellipsis,
+                  // Its zone takes the gaps either side, to be tall enough to touch.
+                  ScrubGraph(
+                    scrub: scrubbing,
+                    label: 'Along the route',
+                    padding: const EdgeInsets.symmetric(
+                      vertical: OptionRowMetrics.gap,
+                    ),
+                    child: FractionallySizedBox(
+                      alignment: AlignmentDirectional.centerStart,
+                      widthFactor: scale.share(route),
+                      child: driving
+                          ? SpeedProfile(
+                              runs: route.runs,
+                              topSpeed: scale.topSpeed,
+                              tones: tones,
+                              tollLabels: tolls,
+                            )
+                          : ElevationProfile(
+                              runs: route.runs,
+                              elevation: route.elevation,
+                              distance: route.distance,
+                              range: scale.elevation,
+                              tones: tones,
+                            ),
+                    ),
                   ),
-                ),
-              ],
-            );
-          },
+                  ExcludeSemantics(
+                    child: SizedBox(
+                      height: metrics.captionHeight,
+                      child: Text(
+                        caption,
+                        style: metrics.caption,
+                        maxLines: metrics.textLines,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -696,6 +743,7 @@ class OptionList extends StatefulWidget {
     required this.reveal,
     required this.onSelect,
     this.group,
+    this.scrub,
   });
 
   /// How many rows stand for routes on their way.
@@ -733,6 +781,9 @@ class OptionList extends StatefulWidget {
   /// content.
   final Animation<double> reveal;
   final ValueChanged<int> onSelect;
+
+  /// What the page does as a row's graph is scrubbed, or null if they aren't.
+  final ScrubSink? scrub;
 
   /// How many rows there are: the routes, the placeholders, or the message.
   int get count => loading
@@ -812,6 +863,7 @@ class _OptionListState extends State<OptionList>
       now: widget.now,
       metrics: metrics,
       onTap: () => widget.onSelect(index),
+      scrub: widget.scrub,
     );
   }
 

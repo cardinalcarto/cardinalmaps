@@ -696,15 +696,18 @@ void main() {
       // Both ways' rows, each in its slot, one fading into the other.
       expect(rows, findsNWidgets(7));
       expect(slotRects(tester), places);
-      final fades = tester.widgetList<FadeTransition>(
-        find.descendant(
-          of: slots.at(0),
-          matching: find.descendant(
-            of: find.byType(AnimatedSwitcher),
-            matching: find.byType(FadeTransition),
-          ),
-        ),
-      );
+      // The switcher's own fades, of what it switches between, not the rows' own.
+      final fades = tester
+          .widgetList<FadeTransition>(
+            find.descendant(
+              of: slots.at(0),
+              matching: find.descendant(
+                of: find.byType(AnimatedSwitcher),
+                matching: find.byType(FadeTransition),
+              ),
+            ),
+          )
+          .where((fade) => fade.child is OptionRow);
       expect(fades.map((fade) => fade.opacity.value), [
         inExclusiveRange(0, 1),
         inExclusiveRange(0, 1),

@@ -19,6 +19,7 @@ import 'animated_rows.dart';
 import 'connections.dart';
 import 'format.dart';
 import 'option_row.dart';
+import 'scrub.dart';
 import 'transit_plan.dart';
 import 'transit_sheet.dart';
 import 'transit_timeline.dart';
@@ -35,6 +36,9 @@ import 'transit_timeline.dart';
 ///
 /// Given the same journey as a newer plan has it, its timeline eases to the new
 /// times, and to a new [axis].
+///
+/// Given a [scrub], its timeline scrubs (see [ScrubGraph]): the readout takes the place
+/// of when it leaves and arrives.
 class JourneyRow extends StatelessWidget {
   const JourneyRow({
     super.key,
@@ -44,6 +48,7 @@ class JourneyRow extends StatelessWidget {
     required this.onTap,
     this.selected = false,
     this.metrics,
+    this.scrub,
   });
 
   final Journey journey;
@@ -57,7 +62,29 @@ class JourneyRow extends StatelessWidget {
   /// How rows are laid out, if the list has worked it out.
   final OptionRowMetrics? metrics;
 
+  /// What the page does as the row's timeline is scrubbed, or null if it isn't.
+  final ScrubSink? scrub;
+
   static const _gap = 8.0;
+
+  /// Between when to go and the times.
+  static const _rangeGap = 10.0;
+
+  /// How wide the mark of a stop that has moved is.
+  static const _warningWidth = 16.0;
+
+  /// How wide [text] is in [style] at [context]'s text size, on one line.
+  static double _textWidth(BuildContext context, String text, TextStyle style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -93,93 +120,145 @@ class JourneyRow extends StatelessWidget {
       if (moved) ...[
         Icon(
           Icons.wrong_location,
-          size: 16,
+          size: _warningWidth,
           color: scheme.error,
           semanticLabel: 'A stop has moved',
         ),
         const SizedBox(width: _gap),
       ],
     ];
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: [
-        goIn.toPlainText(),
-        range,
-        took,
-        timelineLabel(timelinePieces(journey), others: others),
-        if (moved) 'A stop has moved',
-      ].join(', '),
-      excludeSemantics: true,
-      onTap: onTap,
-      child: OptionRowFrame(
-        metrics: metrics,
+    final readout = muted.copyWith(
+      color: scheme.primary,
+      fontWeight: FontWeight.w500,
+    );
+    return RowScrubber(
+      track: JourneyScrubTrack(
+        journey: journey,
+        axis: axis,
+        clock: (time) => clock(context, time, utcOffset: offset),
+      ),
+      sink: scrub,
+      onSelect: onTap,
+      builder: (context, scrubbing) => Semantics(
+        container: true,
+        button: true,
         selected: selected,
+        label: [
+          goIn.toPlainText(),
+          range,
+          took,
+          timelineLabel(timelinePieces(journey), others: others),
+          if (moved) 'A stop has moved',
+        ].join(', '),
+        excludeSemantics: scrubbing == null,
         onTap: onTap,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            JourneyTimeline(
-              journey: journey,
-              axis: axis,
-              others: others,
-              reserveOthers: true,
-              eases: true,
-            ),
-            const SizedBox(height: OptionRowMetrics.gap),
-            if (metrics.roomy) ...[
-              // Each in its share of the line, shrunk if that's too little.
-              Row(
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: FittedLine(
-                      style: strong,
-                      child: Text.rich(goIn, style: strong, maxLines: 1),
-                    ),
+        child: OptionRowFrame(
+          metrics: metrics,
+          selected: selected,
+          onTap: onTap,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ScrubGraph(
+                scrub: scrubbing,
+                label: 'Along the journey',
+                child: ExcludeSemantics(
+                  excluding: scrubbing != null,
+                  child: JourneyTimeline(
+                    journey: journey,
+                    axis: axis,
+                    others: others,
+                    reserveOthers: true,
+                    eases: true,
                   ),
-                  const SizedBox(width: _gap),
-                  ...warning,
-                  Flexible(
-                    flex: 2,
-                    child: FittedLine(
-                      style: strong,
-                      alignment: AlignmentDirectional.centerEnd,
-                      child: duration,
-                    ),
-                  ),
-                ],
+                ),
               ),
-              FittedLine(
-                style: muted,
-                child: Text(range, style: muted, maxLines: 1, softWrap: false),
-              ),
-            ] else
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  // The times give way, after when to go, if the line is short.
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          goIn,
-                          TextSpan(text: '   $range', style: muted),
-                        ],
+              const SizedBox(height: OptionRowMetrics.gap),
+              if (metrics.roomy) ...[
+                // Each in its share of the line, shrunk if that's too little.
+                Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: FittedLine(
+                        style: strong,
+                        child: Text.rich(goIn, style: strong, maxLines: 1),
                       ),
-                      style: strong,
+                    ),
+                    const SizedBox(width: _gap),
+                    ...warning,
+                    Flexible(
+                      flex: 2,
+                      child: FittedLine(
+                        style: strong,
+                        alignment: AlignmentDirectional.centerEnd,
+                        child: duration,
+                      ),
+                    ),
+                  ],
+                ),
+                ScrubReadout(
+                  scrub: scrubbing,
+                  style: readout,
+                  child: FittedLine(
+                    style: muted,
+                    child: Text(
+                      range,
+                      style: muted,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
                     ),
                   ),
-                  const SizedBox(width: _gap),
-                  ...warning,
-                  duration,
-                ],
-              ),
-          ],
+                ),
+              ] else
+                LayoutBuilder(
+                  builder: (context, constraints) => Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      // All of it, unless the line can't hold it with the duration.
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: math.max(
+                            0,
+                            constraints.maxWidth -
+                                _rangeGap -
+                                _gap -
+                                (moved ? _warningWidth + _gap : 0) -
+                                _textWidth(context, took, strong),
+                          ),
+                        ),
+                        child: Text.rich(
+                          goIn,
+                          style: strong,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: _rangeGap),
+                      // The times give way, after when to go, if the line is short; a
+                      // scrub's readout takes their place.
+                      Expanded(
+                        child: ScrubReadout(
+                          scrub: scrubbing,
+                          style: readout,
+                          child: Text(
+                            range,
+                            style: muted,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: _gap),
+                      ...warning,
+                      duration,
+                    ],
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -206,6 +285,7 @@ class JourneyRows extends StatefulWidget {
     required this.opening,
     required this.reveal,
     required this.onSelect,
+    this.scrub,
   }) : assert(journeys.length == keys.length);
 
   /// The ID of the slot of the row of the journey with [key], for
@@ -231,6 +311,9 @@ class JourneyRows extends StatefulWidget {
 
   /// Called with the index in [journeys] of a row that's tapped.
   final ValueChanged<int> onSelect;
+
+  /// What the page does as a row's timeline is scrubbed, or null if they aren't.
+  final ScrubSink? scrub;
 
   /// The slot the sheet holds: the selected journey's.
   Object get held => slotId(keys[selected]);
@@ -401,6 +484,7 @@ class _JourneyRowsState extends State<JourneyRows> {
             selected: entry.selected && !entry.leaving,
             metrics: metrics,
             onTap: at == null ? null : () => widget.onSelect(at),
+            scrub: entry.leaving ? null : widget.scrub,
           ),
         ),
       );
