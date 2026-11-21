@@ -13,7 +13,9 @@ import '../l10n/app_localizations.dart';
 import '../sheet/sheet.dart';
 import '../ui/adaptive.dart';
 import '../units.dart';
+import 'elevation_profile.dart';
 import 'format.dart';
+import 'route_tones.dart';
 import 'speed_profile.dart';
 import 'transit_sheet.dart' show clock;
 
@@ -326,21 +328,30 @@ class _HeldShadowPainter extends CustomPainter {
 }
 
 /// What a list of routes shares, for their rows to compare: how long the slowest
-/// takes, which is as wide as a graph gets, and the fastest any of them goes, which is
-/// as tall.
+/// takes, which is as wide as a graph gets; the fastest any of them goes, which is as
+/// tall as a speed profile gets; and the heights their elevation profiles span.
 @immutable
 class RouteScale {
-  const RouteScale({required this.slowest, required this.topSpeed});
+  const RouteScale({
+    required this.slowest,
+    required this.topSpeed,
+    this.elevation,
+  });
 
   factory RouteScale.of(List<DirectionsRoute> routes) => RouteScale(
     slowest: routes.fold(0, (most, route) => math.max(most, route.duration)),
     topSpeed: routes
         .expand((route) => route.runs)
         .fold(0, (most, run) => math.max(most, run.speed)),
+    elevation: elevationRangeOf(routes),
   );
 
   final double slowest;
   final double topSpeed;
+
+  /// The heights the routes' elevation profiles are drawn to, or null if none of the
+  /// routes has an elevation.
+  final ElevationRange? elevation;
 
   /// How much of the graph's room [route] takes: its share of the slowest's time.
   double share(DirectionsRoute route) =>
@@ -403,6 +414,7 @@ class OptionRow extends StatelessWidget {
     final duration = formatDuration(route.duration);
     final arrival = routeArrival(context, route, now);
     final name = routeName(AppLocalizations.of(context), route);
+    // All of them, for screen readers, which aren't shown the profile's "Toll".
     final facts = routeFacts(routes, index, driving: driving, units: units);
     final tones = profileTones(scheme);
     // One line of its own width, shrunk to fit rather than cut off.
@@ -434,79 +446,109 @@ class OptionRow extends StatelessWidget {
         metrics: metrics,
         selected: selected,
         onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (metrics.roomy) ...[
-              headline,
-              DefaultTextStyle.merge(
-                style: metrics.arrival,
-                child: whole(arrival, height: metrics.arrivalHeight),
-              ),
-            ] else
-              LayoutBuilder(
-                builder: (context, constraints) => Row(
-                  crossAxisAlignment: CrossAxisAlignment.baseline,
-                  textBaseline: TextBaseline.alphabetic,
-                  children: [
-                    // All of it, in as much of the line as it needs: it shrinks
-                    // only if the whole line is too little.
-                    ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: constraints.maxWidth - _headlineGap,
+        // By the row's width, for how wide its graph is: whether "Toll" fits on the
+        // profile decides whether the caption says it.
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final graph = Size(
+              constraints.maxWidth * scale.share(route),
+              routeGraphHeight,
+            );
+            final tolls = driving
+                ? tollLabels(
+                    route.runs,
+                    topSpeed: scale.topSpeed,
+                    size: graph,
+                    label: tollLabelSize(context),
+                  )
+                : const <TollLabel>[];
+            final caption = routeCaption(
+              routes,
+              index,
+              driving: driving,
+              units: units,
+              tollOnProfile: tolls.isNotEmpty,
+            );
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (metrics.roomy) ...[
+                  headline,
+                  DefaultTextStyle.merge(
+                    style: metrics.arrival,
+                    child: whole(arrival, height: metrics.arrivalHeight),
+                  ),
+                ] else
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      // All of it, in as much of the line as it needs: it shrinks
+                      // only if the whole line is too little.
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: constraints.maxWidth - _headlineGap,
+                        ),
+                        child: headline,
                       ),
-                      child: headline,
-                    ),
-                    const SizedBox(width: _headlineGap),
-                    // The one that gives way if the two can't share the line.
-                    Expanded(
-                      child: Text(
-                        arrival,
-                        style: metrics.arrival,
-                        textAlign: TextAlign.end,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: _headlineGap),
+                      // The one that gives way if the two can't share the line.
+                      Expanded(
+                        child: Text(
+                          arrival,
+                          style: metrics.arrival,
+                          textAlign: TextAlign.end,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
+                const SizedBox(height: OptionRowMetrics.gap),
+                // A route with no named roads keeps the line's room.
+                SizedBox(
+                  height: metrics.nameHeight,
+                  child: name == null
+                      ? null
+                      : Text(
+                          name,
+                          style: metrics.name,
+                          maxLines: metrics.textLines,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                 ),
-              ),
-            const SizedBox(height: OptionRowMetrics.gap),
-            // A route with no named roads keeps the line's room.
-            SizedBox(
-              height: metrics.nameHeight,
-              child: name == null
-                  ? null
-                  : Text(
-                      name,
-                      style: metrics.name,
-                      maxLines: metrics.textLines,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-            ),
-            const SizedBox(height: OptionRowMetrics.gap),
-            FractionallySizedBox(
-              alignment: AlignmentDirectional.centerStart,
-              widthFactor: scale.share(route),
-              child: driving
-                  ? SpeedProfile(
-                      runs: route.runs,
-                      topSpeed: scale.topSpeed,
-                      tones: tones,
-                    )
-                  : RouteBar(color: tones.other),
-            ),
-            const SizedBox(height: OptionRowMetrics.gap),
-            SizedBox(
-              height: metrics.captionHeight,
-              child: Text(
-                facts.join(' · '),
-                style: metrics.caption,
-                maxLines: metrics.textLines,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+                const SizedBox(height: OptionRowMetrics.gap),
+                FractionallySizedBox(
+                  alignment: AlignmentDirectional.centerStart,
+                  widthFactor: scale.share(route),
+                  child: driving
+                      ? SpeedProfile(
+                          runs: route.runs,
+                          topSpeed: scale.topSpeed,
+                          tones: tones,
+                          tollLabels: tolls,
+                        )
+                      : ElevationProfile(
+                          runs: route.runs,
+                          elevation: route.elevation,
+                          distance: route.distance,
+                          range: scale.elevation,
+                          tones: tones,
+                        ),
+                ),
+                const SizedBox(height: OptionRowMetrics.gap),
+                SizedBox(
+                  height: metrics.captionHeight,
+                  child: Text(
+                    caption,
+                    style: metrics.caption,
+                    maxLines: metrics.textLines,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -742,6 +784,9 @@ class _OptionListState extends State<OptionList>
     final metrics = OptionRowMetrics.of(context);
     final scale = RouteScale.of(widget.routes);
     final opening = math.min(widget.count, OptionList.shownAtFirst);
+    final legend = widget.loading || _slots != widget.count
+        ? null
+        : WayKinds.ofAll(widget.routes);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -770,7 +815,82 @@ class _OptionListState extends State<OptionList>
               child: const SizedBox(width: double.infinity),
             ),
         ],
+        // Under the last row, so it moves no row. Only once the rows no longer
+        // needed have gone, so it never jumps up into their place.
+        FadeTransition(
+          opacity: widget.reveal,
+          child: AnimatedSwitcher(
+            duration: _fade,
+            switchInCurve: Curves.easeOut,
+            switchOutCurve: Curves.easeOut,
+            layoutBuilder: (current, previous) => Stack(
+              alignment: AlignmentDirectional.topStart,
+              children: [...previous, ?current],
+            ),
+            child: legend == null
+                ? const SizedBox.shrink(key: ValueKey(#noLegend))
+                : WayLegend(
+                    key: ValueKey(legend),
+                    kinds: legend,
+                    metrics: metrics,
+                  ),
+          ),
+        ),
       ],
+    );
+  }
+}
+
+/// One quiet line under a list's last row naming its graphs' three tones, best
+/// first: "Freeway", "Main roads", "Streets" for a drive. It wraps as the text grows.
+///
+/// It names what only the graphs show, which screen readers aren't given, so they
+/// aren't given this either.
+class WayLegend extends StatelessWidget {
+  const WayLegend({super.key, required this.kinds, required this.metrics});
+
+  final WayKinds kinds;
+  final OptionRowMetrics metrics;
+
+  /// How wide each tone's swatch is; it's as tall as the bar.
+  static const swatchWidth = 16.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final tones = profileTones(Theme.of(context).colorScheme);
+    return ExcludeSemantics(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          metrics.margin + metrics.padding.left,
+          4,
+          metrics.margin + metrics.padding.right,
+          12,
+        ),
+        child: Wrap(
+          spacing: 14,
+          runSpacing: 4,
+          children: [
+            for (var rank = 0; rank < kinds.names.length; rank++)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: swatchWidth,
+                    height: routeBarHeight,
+                    decoration: BoxDecoration(
+                      color: tones.ofRank(rank),
+                      borderRadius: BorderRadius.circular(routeBarHeight / 2),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(kinds.names[rank], style: metrics.caption),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

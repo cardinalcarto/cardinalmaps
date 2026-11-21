@@ -1,3 +1,4 @@
+import 'package:cardinal/directions/elevation_profile.dart';
 import 'package:cardinal/directions/mode_tabs.dart';
 import 'package:cardinal/directions/option_row.dart';
 import 'package:cardinal/directions/route_source.dart';
@@ -220,9 +221,9 @@ void main() {
       await moveTo(tester, const SheetAnchor.full());
       expect(find.text('14 mi · 3 min slower'), findsOneWidget);
       expect(find.text('13 mi · 12 min slower · Shortest'), findsOneWidget);
-      // And a plain bar where a drive has its speed profile.
+      // And its ground over a bar where a drive has its speed profile.
       expect(find.byType(SpeedProfile), findsNothing);
-      expect(find.byType(RouteBar), findsNWidgets(4));
+      expect(find.byType(ElevationProfile), findsNWidgets(4));
     });
 
     testWidgets('has a graph as wide as its share of the slowest\'s time', (
