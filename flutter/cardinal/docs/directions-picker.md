@@ -93,6 +93,32 @@ with two changes.
 A route with no named roads (a walk across a park) has no name line; the row keeps its
 height.
 
+### Large text
+
+Text is never cut vertically. A row's height comes from the system text size, not a
+fixed number of pixels: what the design needs is that every row, placeholder and message
+box in every mode is the same height, and that still holds at any one text size. A
+change of text size moves the anchors once, as a rotation does.
+
+- Each line reserves one line at the current text size. The graph stays 32 px.
+- At 1.5× and above every row takes a taller layout: the arrival time moves to its own
+  line under the duration, and the name and the caption get two lines each. The switch
+  depends only on the text size, never on what a row holds.
+- Truncation is horizontal only. The duration and arrival never truncate. The name and
+  caption end in an ellipsis only after their lines, and the caption's order is its
+  priority, so the least important fact goes first.
+- Whatever is cut is still reachable: the Steps page wraps without limit, and screen
+  readers get the full text.
+- Tab labels stop growing at 1.3×, as the platforms' own bars do. A long press shows
+  the enlarged label on iOS and the tooltip on Android.
+- The buttons and the trip card's rows grow with the text. Place names stay one line.
+
+At the largest sizes the docked row is tall, so the lowest height covers more of the
+map and on a small phone the header anchor may reach full height.
+
+A test builds the page at 1×, 1.3×, 1.5×, 2× and 3.1× in every mode, on a regular and a
+small window, and fails on any overflow or any text taller than its box.
+
 ## Mode tabs and loading
 
 - All four modes are requested when the trip is set, in parallel. The screen never waits
@@ -378,11 +404,9 @@ canvas linked above), drawn to settle these points before it's built:
 
 The docking and scrubbing rules are the same as Android's.
 
-Not designed yet: large text sizes (the fixed row height will clip at the biggest
-accessibility sizes), transit and cycling rows on iOS, and right-to-left layout.
+Not designed yet: transit and cycling rows on iOS, and right-to-left layout.
 
 ## Still open
 
-1. **Large text sizes**: how rows grow, on both platforms.
-2. **The third driving tone** waits on the route runs from Valinor; until then the
+1. **The third driving tone** waits on the route runs from Valinor; until then the
    profile has two.
