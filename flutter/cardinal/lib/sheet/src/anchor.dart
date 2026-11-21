@@ -23,6 +23,11 @@ sealed class SheetAnchor {
   /// Rests as far up as the sheet goes: the full screen, or the top of a docked column.
   const factory SheetAnchor.full({double? gravity}) = _FullAnchor;
 
+  /// Rests out of sight below the bottom of the window, on a [SheetContent.collapsible]
+  /// page, until [SheetController.expand] brings it back. It can't be placed while the
+  /// keyboard shows, as the sheet can't go behind the keyboard.
+  const factory SheetAnchor.collapsed({double? gravity}) = _CollapsedAnchor;
+
   /// The speed, in logical pixels per second, below which a fling passing over this
   /// anchor stops here. Null takes [SheetPhysics.gravity].
   final double? gravity;
@@ -92,6 +97,24 @@ final class _FullAnchor extends SheetAnchor {
 
   @override
   String toString() => 'SheetAnchor.full()';
+}
+
+final class _CollapsedAnchor extends SheetAnchor {
+  const _CollapsedAnchor({super.gravity});
+
+  @override
+  double? _resolve(SheetGeometry geometry, Map<Object, _Span> sections) =>
+      geometry.keyboard > 0 ? null : 0;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _CollapsedAnchor && other.gravity == gravity;
+
+  @override
+  int get hashCode => Object.hash(_CollapsedAnchor, gravity);
+
+  @override
+  String toString() => 'SheetAnchor.collapsed()';
 }
 
 /// An anchor placed for the current layout.
@@ -269,6 +292,9 @@ sealed class _Rest {
   /// The extent this rest is at among [anchors] and [ranges], or null if they don't
   /// have it.
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges);
+
+  /// Whether a page with [anchors] and [ranges], placed or not, can rest here.
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges);
 }
 
 final class _AtAnchor extends _Rest {
@@ -279,6 +305,10 @@ final class _AtAnchor extends _Rest {
   @override
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
       anchors.firstWhereOrNull((a) => a.anchor == anchor)?.extent;
+
+  @override
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges) =>
+      anchors.contains(anchor);
 
   @override
   bool operator ==(Object other) =>
@@ -300,6 +330,10 @@ final class _InRange extends _Rest {
   @override
   double? extentIn(List<ResolvedAnchor> anchors, List<ResolvedRange> ranges) =>
       ranges.firstWhereOrNull((r) => r.range == range)?.extentAt(fraction);
+
+  @override
+  bool isAmong(List<SheetAnchor> anchors, List<SheetRange> ranges) =>
+      ranges.contains(range);
 
   @override
   bool operator ==(Object other) =>

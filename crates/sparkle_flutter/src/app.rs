@@ -105,7 +105,7 @@ struct Follow {
 
 /// The most a subject zooms out for padding that leaves little of the view, in zoom
 /// levels below how it shows with none.
-const SUBJECT_ZOOM_GIVE: f64 = 3.0;
+const SUBJECT_ZOOM_GIVE: f64 = 2.0;
 
 /// Bounds for the camera to keep in view, as [`MapView::set_subject`] takes them.
 #[derive(Clone, Copy)]

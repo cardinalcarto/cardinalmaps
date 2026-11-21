@@ -74,13 +74,18 @@ void main() {
       );
     });
 
-    testWidgets('is solid at full height, with no glass to draw', (
-      tester,
-    ) async {
+    testWidgets('has glass at 40%, and none at full height', (tester) async {
       final router = await pumpFakeApp(tester, platform: _ios);
       expect(find.byKey(sheetGlassKey), findsOneWidget);
       router.go('/saved');
       await tester.pumpAndSettle();
+      // Glass while it's at 40%...
+      expect(find.byKey(sheetGlassKey), findsOneWidget);
+      SheetScaffold.controllerOf(
+        tester.element(find.text('Saved places').first),
+      ).animateTo(const SheetAnchor.full());
+      await tester.pumpAndSettle();
+      // ...and none once it's full.
       expect(find.byKey(sheetGlassKey), findsNothing);
     });
 

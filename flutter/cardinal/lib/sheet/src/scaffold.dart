@@ -86,6 +86,7 @@ class SheetScaffold extends StatefulWidget {
       entry,
       color: scope.color,
       translucent: scope.translucent,
+      bottomBarCover: scope.bottomBarCover,
     );
   }
 
@@ -259,12 +260,24 @@ class _SheetScaffoldState extends State<SheetScaffold>
       // pushed may already be active (an update can come before its transition starts),
       // but the sheet is still where the page below left it.
       final arriving = _active == top && top.memory == null;
+      // Where the sheet rests on the page it's leaving.
+      _Rest? leaving;
       if (!controller.isTransitioning) {
         if (!arriving) {
-          _active?.memory = controller._currentRest;
+          leaving = controller._currentRest;
+          _active?.memory = leaving;
         } else if (under != null) {
-          under.memory =
+          leaving =
               controller._restFor(under.resolved, under.ranges) ?? under.memory;
+          under.memory = leaving;
+        }
+      }
+      // A page that keeps the sheet's height rests where it does now, if it can.
+      for (final entry in [top, ?under]) {
+        if (leaving != null &&
+            entry.keepsHeight &&
+            leaving.isAmong(entry.anchors, entry.freeRanges)) {
+          entry.memory = leaving;
         }
       }
       top.memory ??= top.resting;
@@ -307,6 +320,7 @@ class _SheetScaffoldState extends State<SheetScaffold>
       ranges: entry.ranges,
       floor: geometry.keyboard,
       draggable: entry.draggable,
+      initial: entry.initial,
     );
     final rest = entry.resting;
     final at = entry.restingExtent;
@@ -520,6 +534,11 @@ class _SheetScope extends InheritedWidget {
 
   /// How tall the scaffold's bottom bar is, 0 if it hasn't one.
   final double bottomBarHeight;
+
+  /// How much of the bottom of the window the bottom bar covers now, with the
+  /// navigation bar under it: 0 while it's away.
+  double get bottomBarCover =>
+      state._barShown.value * (bottomBarHeight + geometry.padding.bottom);
 
   /// The sheet's color, which pages paint behind themselves to cover the page below.
   final Color color;

@@ -197,7 +197,7 @@ class LongTestPage extends StatelessWidget {
       anchors: const [
         SheetAnchor.section(_title, gravity: 0),
         SheetAnchor.fraction(0.4),
-        SheetAnchor.fraction(0.7, gravity: 4000),
+        SheetAnchor.fraction(0.7, gravity: 16000),
         SheetAnchor.full(),
       ],
       initialAnchor: 1,

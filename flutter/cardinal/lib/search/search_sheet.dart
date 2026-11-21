@@ -163,7 +163,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _searchFull();
   }
 
-  /// Back while searching, or Cancel on iOS: browsing, the query and results cleared,
+  /// Back while searching, or Cancel (the bar's back arrow on Android): browsing, the query and results cleared,
   /// as iOS's own search fields do.
   void _stopSearching() {
     if (!_searching) return;
@@ -290,6 +290,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         listenable: search,
         builder: (context, _) => SheetContent(
           showsBottomBar: true,
+          collapsible: true,
           // Just the bar, until searching.
           anchors: _searching
               ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
@@ -331,10 +332,20 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
                                 onTap: _searchFull,
                                 hintText: 'Search',
                                 elevation: const WidgetStatePropertyAll(0),
-                                leading: const Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 8),
-                                  child: Icon(Icons.search),
-                                ),
+                                // While searching, Material's back arrow in place of
+                                // the magnifying glass: Cancel, as on iOS.
+                                leading: _searching
+                                    ? IconButton(
+                                        tooltip: 'Cancel',
+                                        icon: const BackButtonIcon(),
+                                        onPressed: _stopSearching,
+                                      )
+                                    : const Padding(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                        ),
+                                        child: Icon(Icons.search),
+                                      ),
                                 trailing: [
                                   ListenableBuilder(
                                     listenable: _text,

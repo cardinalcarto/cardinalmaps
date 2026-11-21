@@ -43,7 +43,8 @@ class MapButtons extends StatelessWidget {
           children: [
             PositionedDirectional(
               end: 16 + padding.right,
-              bottom: 16 + (docked ? padding.bottom : sheet.extent),
+              // Over the sheet, or the bottom bar while the sheet's below it.
+              bottom: 16 + (docked ? padding.bottom : sheet.obscured.bottom),
               child: IgnorePointer(
                 ignoring: opacity == 0,
                 child: Opacity(opacity: opacity, child: child),

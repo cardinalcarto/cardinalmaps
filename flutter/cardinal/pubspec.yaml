@@ -20,6 +20,7 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  flutter_slidable: ^5.2.0
   flutter_tts: ^4.2.5
   geocoder:
     path: ../geocoder

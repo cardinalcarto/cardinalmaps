@@ -49,7 +49,7 @@ void main() {
     });
 
     test('a hard fling skips anchors', () {
-      expect(physics.target(anchors, 100, 5000), 2);
+      expect(physics.target(anchors, 100, 8000), 2);
     });
 
     test('gravity catches a fling', () {

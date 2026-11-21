@@ -1,8 +1,12 @@
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/routes.dart';
 import 'package:cardinal/saved/saved_names.dart';
+import 'package:cardinal/saved/saved_page.dart';
 import 'package:cardinal/search/search_sheet.dart';
+import 'package:cardinal/sheet/sheet.dart';
 import 'package:cardinal/store/store.dart';
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoIcons, CupertinoMenuItem;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -26,6 +30,14 @@ void main() {
   Future<GoRouter> open(WidgetTester tester, [String at = '/saved']) =>
       pumpFakeApp(tester, store: store, location: at);
 
+  SheetController sheetOf(WidgetTester tester) =>
+      SheetScaffold.controllerOf(tester.element(find.byType(SavedPage).last));
+
+  Future<void> expand(WidgetTester tester) async {
+    sheetOf(tester).animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
+  }
+
   Future<void> tapAndSettle(WidgetTester tester, Finder finder) async {
     await tester.tap(finder);
     await tester.pumpAndSettle();
@@ -37,9 +49,12 @@ void main() {
     testWidgets('an empty level says so, with nothing to edit', (tester) async {
       await open(tester);
       expect(text('No saved places yet'), findsOneWidget);
+      await tapAndSettle(tester, find.byTooltip('More options'));
       expect(
         tester
-            .widget<TextButton>(find.widgetWithText(TextButton, 'Edit'))
+            .widget<PopupMenuItem<void>>(
+              find.widgetWithText(PopupMenuItem<void>, 'Select'),
+            )
             .enabled,
         isFalse,
       );
@@ -83,22 +98,57 @@ void main() {
       await tapAndSettle(tester, text('Italian'));
       await tapAndSettle(tester, text('Saved').first);
       expect(router.state.uri.path, '/saved');
+      // No back arrow at the top level; the arrow goes up a list.
+      expect(find.byTooltip('Back'), findsNothing);
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, find.byTooltip('Back'));
+      expect(router.state.uri.path, '/saved');
     });
 
-    testWidgets('dragging down leaves the page where it is', (tester) async {
+    testWidgets('opens at 40%, and snaps to it, full or collapsed', (
+      tester,
+    ) async {
       await place('poi:1', name: 'Cafe');
       await open(tester);
-      final top = tester.getTopLeft(text('Saved places').first).dy;
-      final gesture = await tester.startGesture(tester.getCenter(text('Cafe')));
-      await tester.pump();
-      for (var i = 0; i < 6; i++) {
-        await gesture.moveBy(const Offset(0, 25));
-        await tester.pump(const Duration(milliseconds: 16));
-        expect(tester.getTopLeft(text('Saved places').first).dy, top);
-      }
-      await gesture.up();
+      final sheet = sheetOf(tester);
+      expect(sheet.extent, appScreen.height * 0.4);
+      // A little way up, it snaps back...
+      await tester.drag(text('Saved places').first, const Offset(0, -100));
       await tester.pumpAndSettle();
-      expect(tester.getTopLeft(text('Saved places').first).dy, top);
+      expect(sheet.extent, appScreen.height * 0.4);
+      // ...most of the way, it's full...
+      await tester.drag(text('Saved places').first, const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(sheet.extent, appScreen.height);
+      // ...and from 40%, most of the way down, it collapses.
+      sheet.animateTo(const SheetAnchor.fraction(0.4));
+      await tester.pumpAndSettle();
+      await tester.drag(text('Saved places').first, const Offset(0, 250));
+      await tester.pumpAndSettle();
+      expect(sheet.isCollapsed, isTrue);
+    });
+
+    testWidgets('a list opens at the height it was opened from, and back', (
+      tester,
+    ) async {
+      final id = await store.saved.createList('Trips');
+      await place('poi:1', name: 'Cafe');
+      await open(tester);
+      final sheet = sheetOf(tester);
+      sheet.animateTo(const SheetAnchor.full());
+      await tester.pumpAndSettle();
+      await tapAndSettle(tester, text('Trips'));
+      expect(
+        find.byWidgetPredicate((w) => w is SavedPage && w.listId == id),
+        findsOneWidget,
+      );
+      expect(sheet.extent, appScreen.height);
+      sheet.animateTo(const SheetAnchor.fraction(0.4));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(text('Trips'), findsOneWidget);
+      expect(sheet.extent, appScreen.height * 0.4);
     });
 
     testWidgets('back from the top level goes to search', (tester) async {
@@ -129,6 +179,7 @@ void main() {
         await place('poi:$i');
       }
       await open(tester);
+      await expand(tester);
       await tester.drag(find.byType(Scrollable).first, const Offset(0, -5000));
       await tester.pumpAndSettle();
       expect(
@@ -139,15 +190,74 @@ void main() {
   });
 
   group('editing', () {
-    Future<void> startEditing(WidgetTester tester) async {
-      await tapAndSettle(tester, find.widgetWithText(TextButton, 'Edit'));
+    /// Saved, full, with room for every row.
+    Future<GoRouter> openFull(
+      WidgetTester tester, [
+      String at = '/saved',
+    ]) async {
+      final router = await open(tester, at);
+      await expand(tester);
+      return router;
     }
+
+    /// Selecting, by the header's ⋮.
+    Future<void> startEditing(WidgetTester tester) async {
+      await tapAndSettle(tester, find.byTooltip('More options').first);
+      await tapAndSettle(tester, text('Select'));
+    }
+
+    /// One of the selection's actions: in the contextual bar, or its ⋮.
+    Future<void> act(WidgetTester tester, String action) async {
+      if (const {'Move', 'Delete', 'Done'}.contains(action)) {
+        await tapAndSettle(tester, find.byTooltip(action));
+      } else {
+        await tapAndSettle(tester, find.byTooltip('More options'));
+        await tapAndSettle(tester, text(action));
+      }
+    }
+
+    /// One of [row]'s ⋮ actions, while browsing.
+    Future<void> rowAction(
+      WidgetTester tester,
+      String row,
+      String action,
+    ) async {
+      await tapAndSettle(
+        tester,
+        find.descendant(
+          of: find.widgetWithText(ListTile, row),
+          matching: find.byTooltip('More options'),
+        ),
+      );
+      await tapAndSettle(tester, text(action));
+    }
+
+    bool buttonEnabled(WidgetTester tester, String tooltip) =>
+        tester
+            .widget<IconButton>(
+              find.ancestor(
+                of: find.byTooltip(tooltip),
+                matching: find.byType(IconButton),
+              ),
+            )
+            .onPressed !=
+        null;
+
+    /// Whether the open menu's [label] is enabled.
+    bool menuEnabled(WidgetTester tester, String label) => tester
+        .widget<PopupMenuItem<Object?>>(
+          find.ancestor(
+            of: text(label),
+            matching: find.byWidgetPredicate((w) => w is PopupMenuItem),
+          ),
+        )
+        .enabled;
 
     testWidgets('selects rows instead of opening them, until Done', (
       tester,
     ) async {
       await place('poi:1', name: 'Cafe');
-      final router = await open(tester);
+      final router = await openFull(tester);
       await startEditing(tester);
       expect(find.byIcon(Icons.drag_handle), findsOneWidget);
 
@@ -155,14 +265,72 @@ void main() {
       expect(text('1 selected'), findsOneWidget);
       expect(router.state.uri.path, '/saved');
 
-      await tapAndSettle(tester, text('Done'));
+      await act(tester, 'Done');
       expect(find.byIcon(Icons.drag_handle), findsNothing);
       expect(find.byType(Checkbox), findsNothing);
     });
 
+    testWidgets('a long press selects, and toggles while selecting', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      final router = await openFull(tester);
+      await tester.longPress(text('Cafe'));
+      await tester.pumpAndSettle();
+      expect(text('1 selected'), findsOneWidget);
+      expect(router.state.uri.path, '/saved');
+      await tester.longPress(text('Bar'));
+      await tester.pumpAndSettle();
+      expect(text('2 selected'), findsOneWidget);
+      await tester.longPress(text('Cafe'));
+      await tester.pumpAndSettle();
+      expect(text('1 selected'), findsOneWidget);
+    });
+
+    testWidgets('selecting, at whatever height the sheet is at', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await open(tester);
+      final before = sheetOf(tester).extent;
+      await startEditing(tester);
+      expect(sheetOf(tester).extent, before);
+      await tapAndSettle(tester, text('Cafe'));
+      // The selection's actions show at 40%, along the top.
+      expect(buttonEnabled(tester, 'Move'), isTrue);
+    });
+
+    testWidgets('a row swiped while selecting goes, with Undo', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openFull(tester);
+      await startEditing(tester);
+      await tapAndSettle(tester, text('Cafe'));
+      await tester.drag(text('Cafe'), const Offset(-300, 0));
+      await tester.pumpAndSettle();
+      expect(text('Cafe'), findsNothing);
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      // Out of the selection, and still selecting.
+      expect(text('Select items'), findsOneWidget);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+      expect(text('Cafe'), findsOneWidget);
+    });
+
+    testWidgets('browsing, a swipe deletes nothing', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await openFull(tester);
+      await tester.drag(text('Cafe'), const Offset(-300, 0));
+      await tester.pumpAndSettle();
+      expect(text('Cafe'), findsOneWidget);
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+      expect(find.byType(Dismissible), findsNothing);
+    });
+
     testWidgets('back stops editing before it leaves the page', (tester) async {
       await place('poi:1');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
 
       await tester.binding.handlePopRoute();
@@ -175,32 +343,25 @@ void main() {
       tester,
     ) async {
       await store.saved.createList('Food');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
 
-      bool enabled(String label) => tester
-          .widget<TextButton>(
-            find.ancestor(
-              of: text(label),
-              matching: find.byWidgetPredicate((w) => w is TextButton),
-            ),
-          )
-          .enabled;
-      expect(enabled('Move'), isFalse);
-      expect(enabled('Delete'), isFalse);
+      expect(buttonEnabled(tester, 'Move'), isFalse);
+      expect(buttonEnabled(tester, 'Delete'), isFalse);
 
       await tapAndSettle(tester, text('Food'));
-      expect(enabled('Move'), isTrue);
+      expect(buttonEnabled(tester, 'Move'), isTrue);
+      expect(buttonEnabled(tester, 'Delete'), isTrue);
     });
 
     testWidgets('Move to a nested list, and Undo', (tester) async {
       final food = await store.saved.createList('Food');
       final italian = await store.saved.createList('Italian', parent: food);
       await place('poi:1', name: 'Cafe');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Cafe'));
-      await tapAndSettle(tester, text('Move'));
+      await act(tester, 'Move');
 
       final move = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Move here'),
@@ -224,10 +385,10 @@ void main() {
     ) async {
       final food = await store.saved.createList('Food');
       await place('poi:1', name: 'Cafe');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Cafe'));
-      await tapAndSettle(tester, text('Copy'));
+      await act(tester, 'Copy');
       expect(text('Copy 1 item to'), findsOneWidget);
       await tapAndSettle(tester, text('Food').last);
       await tapAndSettle(tester, text('Copy here'));
@@ -243,14 +404,11 @@ void main() {
     testWidgets('lists can\'t be copied', (tester) async {
       await store.saved.createList('Food');
       await place('poi:1', name: 'Cafe');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Food'));
-      final copy = find.ancestor(
-        of: text('Copy'),
-        matching: find.byWidgetPredicate((w) => w is TextButton),
-      );
-      expect(tester.widget<TextButton>(copy).enabled, isFalse);
+      await tapAndSettle(tester, find.byTooltip('More options'));
+      expect(menuEnabled(tester, 'Copy'), isFalse);
     });
 
     testWidgets('where a place already is, is disabled', (tester) async {
@@ -258,10 +416,10 @@ void main() {
       await store.saved.createList('Bars');
       await place('poi:1', name: 'Cafe');
       await store.saved.copy([(await tree()).copiesOf('poi:1').single], food);
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Cafe'));
-      await tapAndSettle(tester, text('Copy'));
+      await act(tester, 'Copy');
 
       bool enabled(String label) => tester
           .widget<ListTile>(find.widgetWithText(ListTile, label).last)
@@ -274,10 +432,10 @@ void main() {
     testWidgets('a list can\'t be moved into itself or below', (tester) async {
       final food = await store.saved.createList('Food');
       await store.saved.createList('Italian', parent: food);
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Food'));
-      await tapAndSettle(tester, text('Move'));
+      await act(tester, 'Move');
       await tapAndSettle(tester, find.byTooltip('Expand'));
 
       bool enabled(String label) => tester
@@ -303,13 +461,13 @@ void main() {
 
       Future<void> openPicker(WidgetTester tester, String at) async {
         await place('poi:1', name: 'Cafe');
-        await open(tester, at);
+        await openFull(tester, at);
         await startEditing(tester);
       }
 
       Future<void> pickCafe(WidgetTester tester) async {
         await tapAndSettle(tester, text('Cafe'));
-        await tapAndSettle(tester, text('Move'));
+        await act(tester, 'Move');
       }
 
       testWidgets('nested lists stay folded until expanded', (tester) async {
@@ -381,10 +539,10 @@ void main() {
         await store.saved.move([
           (await tree()).copiesOf('poi:2').single,
         ], pizza);
-        await open(tester, '/saved/$pizza');
+        await openFull(tester, '/saved/$pizza');
         await startEditing(tester);
         await tapAndSettle(tester, text('Slice'));
-        await tapAndSettle(tester, text('Move'));
+        await act(tester, 'Move');
         expect(find.byTooltip('Collapse'), findsNWidgets(2));
       });
 
@@ -405,10 +563,10 @@ void main() {
       tester,
     ) async {
       await place('poi:1', name: 'Cafe');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
       await tapAndSettle(tester, text('Cafe'));
-      await tapAndSettle(tester, text('Move'));
+      await act(tester, 'Move');
       await tapAndSettle(tester, text('New list here'));
       await tester.enterText(find.byType(TextField).last, 'Coffee');
       await tester.pump();
@@ -419,21 +577,17 @@ void main() {
       expect(t.copiesOf('poi:1').single.parent, t.listsIn(null).single.id);
     });
 
-    testWidgets('a place\'s pin toggles without selecting it', (tester) async {
+    testWidgets('a place\'s ⋮ pins it, and unpins it, without selecting', (
+      tester,
+    ) async {
       await place('poi:1', name: 'Cafe');
-      await open(tester);
-      await startEditing(tester);
-      expect(text('Select items'), findsOneWidget);
-
-      await tapAndSettle(tester, find.byTooltip('Pin'));
+      await openFull(tester);
+      await rowAction(tester, 'Cafe', 'Pin');
       expect((await tree()).pinned, hasLength(1));
-      expect(text('Select items'), findsOneWidget);
-      IconButton pin() => tester.widget<IconButton>(
-        find.widgetWithIcon(IconButton, Icons.push_pin),
-      );
-      expect(pin().isSelected, isTrue);
+      expect(text('Select items'), findsNothing);
+      expect(find.byIcon(Icons.push_pin), findsOneWidget);
 
-      await tapAndSettle(tester, find.byTooltip('Unpin'));
+      await rowAction(tester, 'Cafe', 'Unpin');
       expect((await tree()).pinned, isEmpty);
     });
 
@@ -441,53 +595,89 @@ void main() {
       await store.saved.createList('Food');
       await place('poi:1', name: 'Cafe');
       await place('poi:2', name: 'Bar');
-      await open(tester);
-      await startEditing(tester);
-      expect(find.byTooltip('Pin'), findsNWidgets(2));
-      expect(find.byTooltip('Edit'), findsNWidgets(3));
+      await openFull(tester);
+      await tapAndSettle(
+        tester,
+        find.descendant(
+          of: find.widgetWithText(ListTile, 'Food'),
+          matching: find.byTooltip('More options'),
+        ),
+      );
+      expect(text('Pin'), findsNothing);
+      expect(text('Copy'), findsNothing);
+      expect(text('Edit'), findsOneWidget);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
 
-      await tapAndSettle(tester, find.byTooltip('Pin').last);
+      await rowAction(tester, 'Cafe', 'Pin');
       final pinned = (await tree()).pinned.single;
       expect(savedName(pinned), 'Cafe');
     });
 
-    testWidgets('the pencil edits its own row, whatever is selected', (
+    testWidgets('Edit in the bar is for one selected item, and edits it', (
       tester,
     ) async {
       await place('poi:1', name: 'Cafe');
       await place('poi:2', name: 'Bar');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
-      await tapAndSettle(tester, text('Select all'));
+      await act(tester, 'Select all');
+      await tapAndSettle(tester, find.byTooltip('More options'));
+      expect(menuEnabled(tester, 'Edit'), isFalse);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
 
-      await tapAndSettle(tester, find.byTooltip('Edit').last);
+      await tapAndSettle(tester, text('Bar'));
+      expect(text('1 selected'), findsOneWidget);
+      await act(tester, 'Edit');
       await tester.enterText(find.byType(TextField).first, 'Work');
       await tester.pump();
       await tapAndSettle(tester, text('Save'));
       expect((await tree()).copiesOf('poi:1').single.customName, 'Work');
       expect((await tree()).copiesOf('poi:2').single.customName, isNull);
-      expect(text('2 selected'), findsOneWidget);
+      expect(text('1 selected'), findsOneWidget);
+    });
+
+    testWidgets('Pin pins the places selected, then unpins them', (
+      tester,
+    ) async {
+      await store.saved.createList('Food');
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openFull(tester);
+      await startEditing(tester);
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, find.byTooltip('More options'));
+      // Not with a list selected.
+      expect(menuEnabled(tester, 'Pin'), isFalse);
+      await tester.tapAt(Offset.zero);
+      await tester.pumpAndSettle();
+
+      await tapAndSettle(tester, text('Food'));
+      await tapAndSettle(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Bar'));
+      await act(tester, 'Pin');
+      expect((await tree()).pinned, hasLength(2));
+      await act(tester, 'Unpin');
+      expect((await tree()).pinned, isEmpty);
     });
 
     testWidgets('the bar has only what acts on the selection', (tester) async {
       await place('poi:1', name: 'Cafe');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
-      Finder inBar(String label) => find.ancestor(
-        of: text(label),
-        matching: find.byWidgetPredicate((w) => w is TextButton),
-      );
-      expect(inBar('Move'), findsOneWidget);
-      expect(inBar('Copy'), findsOneWidget);
-      expect(inBar('Delete'), findsOneWidget);
-      expect(inBar('Pin'), findsNothing);
+      expect(find.byTooltip('Move'), findsOneWidget);
+      expect(find.byTooltip('Delete'), findsOneWidget);
+      await tapAndSettle(tester, find.byTooltip('More options'));
+      expect(text('Copy'), findsOneWidget);
+      expect(text('Edit'), findsOneWidget);
+      expect(text('Select all'), findsOneWidget);
     });
 
     testWidgets('Edit renames, and Delete with Undo', (tester) async {
       await place('poi:1', name: 'Cafe');
-      await open(tester);
-      await startEditing(tester);
-      await tapAndSettle(tester, find.byTooltip('Edit'));
+      await openFull(tester);
+      await rowAction(tester, 'Cafe', 'Edit');
       await tester.enterText(find.byType(TextField).first, 'Work');
       await tester.enterText(find.byType(TextField).at(1), 'Quiet');
       await tester.pump();
@@ -495,8 +685,11 @@ void main() {
       expect(text('Work'), findsOneWidget);
       expect(text('Quiet'), findsOneWidget);
 
-      await tapAndSettle(tester, text('Work'));
-      await tapAndSettle(tester, text('Delete'));
+      // Deleting goes by way of selecting, with the row selected.
+      await rowAction(tester, 'Work', 'Delete');
+      expect(text('1 selected'), findsOneWidget);
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+      await act(tester, 'Delete');
       expect((await tree()).copiesOf('poi:1'), isEmpty);
       expect(text('Work'), findsNothing);
       await tapAndSettle(tester, text('Undo'));
@@ -506,9 +699,8 @@ void main() {
     group('emoji', () {
       Future<void> editCafe(WidgetTester tester) async {
         await place('poi:1', name: 'Cafe');
-        await open(tester);
-        await startEditing(tester);
-        await tapAndSettle(tester, find.byTooltip('Edit'));
+        await openFull(tester);
+        await rowAction(tester, 'Cafe', 'Edit');
       }
 
       Finder anyEmoji() => find.widgetWithText(TextField, 'Any emoji');
@@ -520,7 +712,6 @@ void main() {
         await tapAndSettle(tester, text('🍕'));
         await tapAndSettle(tester, text('Save'));
         expect((await tree()).copiesOf('poi:1').single.emoji, '🍕');
-        await tapAndSettle(tester, text('Done'));
         expect(text('🍕'), findsOneWidget);
       });
 
@@ -558,9 +749,8 @@ void main() {
           name: '',
           emoji: '🦄',
         );
-        await open(tester);
-        await startEditing(tester);
-        await tapAndSettle(tester, find.byTooltip('Edit'));
+        await openFull(tester);
+        await rowAction(tester, 'Cafe', 'Edit');
         expect(tester.widget<TextField>(anyEmoji()).controller!.text, '🦄');
 
         // And emptying the field takes it away.
@@ -588,9 +778,8 @@ void main() {
           name: '',
           emoji: '🍕',
         );
-        await open(tester);
-        await startEditing(tester);
-        await tapAndSettle(tester, find.byTooltip('Edit'));
+        await openFull(tester);
+        await rowAction(tester, 'Cafe', 'Edit');
         await tapAndSettle(tester, text('None'));
         await tapAndSettle(tester, text('Save'));
         expect((await tree()).copiesOf('poi:1').single.emoji, isNull);
@@ -598,9 +787,8 @@ void main() {
 
       testWidgets('lists don\'t have one', (tester) async {
         await store.saved.createList('Food');
-        await open(tester);
-        await startEditing(tester);
-        await tapAndSettle(tester, find.byTooltip('Edit'));
+        await openFull(tester);
+        await rowAction(tester, 'Food', 'Edit');
         expect(text('Emoji'), findsNothing);
       });
     });
@@ -609,7 +797,7 @@ void main() {
       await place('poi:1');
       await place('poi:2');
       await place('poi:3');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
 
       final handle = find.byIcon(Icons.drag_handle).first;
@@ -630,12 +818,243 @@ void main() {
     testWidgets('selecting everything, then clearing', (tester) async {
       await place('poi:1');
       await place('poi:2');
-      await open(tester);
+      await openFull(tester);
       await startEditing(tester);
-      await tapAndSettle(tester, text('Select all'));
+      await act(tester, 'Select all');
       expect(text('2 selected'), findsOneWidget);
-      await tapAndSettle(tester, text('Clear'));
+      await act(tester, 'Deselect all');
       expect(text('Select items'), findsOneWidget);
+    });
+  });
+
+  group('iOS', () {
+    /// Saved on iOS, full, with room for every row.
+    Future<GoRouter> openIos(
+      WidgetTester tester, [
+      String at = '/saved',
+    ]) async {
+      final router = await pumpFakeApp(
+        tester,
+        store: store,
+        location: at,
+        platform: TargetPlatform.iOS,
+      );
+      await expand(tester);
+      return router;
+    }
+
+    /// A long press frame by frame, as a finger's: the context menu opens as it goes.
+    Future<void> hold(WidgetTester tester, Finder finder) async {
+      final gesture = await tester.startGesture(tester.getCenter(finder));
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    /// A swipe by [dx], step by step as a finger's, and let go.
+    Future<void> swipe(WidgetTester tester, Finder finder, double dx) async {
+      final gesture = await tester.startGesture(tester.getCenter(finder));
+      const steps = 20;
+      for (var i = 0; i < steps; i++) {
+        await gesture.moveBy(Offset(dx / steps, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> moreMenu(WidgetTester tester, String item) async {
+      await tapAndSettle(tester, find.byIcon(CupertinoIcons.ellipsis_circle));
+      await tapAndSettle(tester, text(item));
+    }
+
+    bool barShown(WidgetTester tester) =>
+        find.byType(AppNavigationBar).hitTestable().evaluate().isNotEmpty;
+
+    testWidgets('⋯ selects, the toolbar taking the bar\'s place, until Done', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      final router = await openIos(tester);
+      expect(barShown(tester), isTrue);
+      await moreMenu(tester, 'Select');
+      expect(text('Select items'), findsOneWidget);
+      expect(barShown(tester), isFalse);
+      expect(text('Move'), findsOneWidget);
+      expect(text('Pin'), findsOneWidget);
+
+      await tapAndSettle(tester, text('Cafe'));
+      expect(text('1 selected'), findsOneWidget);
+      expect(router.state.uri.path, '/saved');
+      // All there is, so it's Deselect All.
+      await tapAndSettle(tester, text('Deselect All'));
+      expect(text('Select items'), findsOneWidget);
+      await tapAndSettle(tester, text('Select All'));
+      expect(text('1 selected'), findsOneWidget);
+
+      await tapAndSettle(tester, text('Done'));
+      expect(text('Select items'), findsNothing);
+      expect(barShown(tester), isTrue);
+    });
+
+    testWidgets('⋯ makes a new list here', (tester) async {
+      await openIos(tester);
+      await moreMenu(tester, 'New List');
+      await tester.enterText(find.byType(EditableText), 'Trips');
+      await tester.pump();
+      await tapAndSettle(tester, text('Create'));
+      expect((await tree()).listsIn(null).single.name, 'Trips');
+    });
+
+    testWidgets('a row\'s long press menu pins, and unpins', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      final router = await openIos(tester);
+      await hold(tester, text('Cafe'));
+      expect(router.state.uri.path, '/saved');
+      for (final choice in [
+        'Pin',
+        'Edit',
+        'Move',
+        'Copy',
+        'Select',
+        'Delete',
+      ]) {
+        expect(text(choice), findsOneWidget, reason: choice);
+      }
+      await tapAndSettle(tester, text('Pin'));
+      expect((await tree()).pinned, hasLength(1));
+
+      await hold(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Unpin'));
+      expect((await tree()).pinned, isEmpty);
+    });
+
+    testWidgets('a list\'s menu has no Pin or Copy', (tester) async {
+      await store.saved.createList('Food');
+      await openIos(tester);
+      await hold(tester, text('Food'));
+      expect(text('Edit'), findsOneWidget);
+      expect(text('Pin'), findsNothing);
+      expect(text('Copy'), findsNothing);
+    });
+
+    testWidgets('the menu\'s Delete deletes at once, with Undo', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await hold(tester, text('Cafe'));
+      await tapAndSettle(tester, text('Delete'));
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('the menu\'s Select selects that row', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await hold(tester, text('Bar'));
+      await tapAndSettle(tester, text('Select'));
+      expect(text('1 selected'), findsOneWidget);
+    });
+
+    testWidgets('swiped left all the way, a row goes, with Undo', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), -380);
+      expect(text('Cafe'), findsNothing);
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('swiped left a little, More has the menu as a sheet', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), -150);
+      expect(find.bySemanticsLabel('Delete'), findsOneWidget);
+      await tapAndSettle(tester, find.bySemanticsLabel('More'));
+      expect(text('Cancel'), findsOneWidget);
+      await tapAndSettle(tester, text('Edit'));
+      expect(text('Edit place'), findsOneWidget);
+    });
+
+    testWidgets('a place swiped right all the way is pinned, and stays', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      await swipe(tester, text('Cafe'), 380);
+      expect((await tree()).pinned, hasLength(1));
+      expect(text('Cafe'), findsOneWidget);
+    });
+
+    testWidgets('a list swiped right pins nothing', (tester) async {
+      await store.saved.createList('Food');
+      await openIos(tester);
+      await swipe(tester, text('Food'), 150);
+      expect(find.bySemanticsLabel('Pin'), findsNothing);
+    });
+
+    testWidgets('selecting, a row swiped away goes, with Undo', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await moreMenu(tester, 'Select');
+      await swipe(tester, text('Cafe'), -380);
+      expect((await tree()).copiesOf('poi:1'), isEmpty);
+      expect(text('Select items'), findsOneWidget);
+      await tapAndSettle(tester, text('Undo'));
+      expect((await tree()).copiesOf('poi:1'), isNotEmpty);
+    });
+
+    testWidgets('the toolbar pins the places selected, then unpins them', (
+      tester,
+    ) async {
+      await place('poi:1', name: 'Cafe');
+      await place('poi:2', name: 'Bar');
+      await openIos(tester);
+      await moreMenu(tester, 'Select');
+      await tapAndSettle(tester, text('Select All'));
+      await tapAndSettle(tester, text('Pin'));
+      expect((await tree()).pinned, hasLength(2));
+      await tapAndSettle(tester, text('Unpin'));
+      expect((await tree()).pinned, isEmpty);
+    });
+
+    testWidgets('the back button goes up, and its menu further', (
+      tester,
+    ) async {
+      final food = await store.saved.createList('Food');
+      final italian = await store.saved.createList('Italian', parent: food);
+      final router = await openIos(tester, '/saved/$food');
+      await tapAndSettle(tester, text('Italian'));
+      expect(router.state.uri.path, '/saved/$italian');
+      // Named for the list above.
+      await tapAndSettle(tester, text('Food'));
+      expect(router.state.uri.path, '/saved/$food');
+
+      await tapAndSettle(tester, text('Italian'));
+      await hold(tester, text('Food'));
+      final saved = find.widgetWithText(CupertinoMenuItem, 'Saved');
+      expect(saved, findsOneWidget);
+      await tapAndSettle(tester, saved);
+      expect(router.state.uri.path, '/saved');
+    });
+
+    testWidgets('selecting, the sheet can\'t be collapsed', (tester) async {
+      await place('poi:1', name: 'Cafe');
+      await openIos(tester);
+      expect(sheetOf(tester).anchors.first.extent, 0);
+      await moreMenu(tester, 'Select');
+      expect(sheetOf(tester).anchors.first.extent, greaterThan(0));
     });
   });
 

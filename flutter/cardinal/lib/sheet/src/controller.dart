@@ -83,7 +83,32 @@ class SheetController extends ChangeNotifier
   /// Whether the sheet is at rest, at an anchor or within a range.
   bool get isResting => _rest != null;
 
-  _Rest? _rest;
+  _Rest? get _rest => _resting;
+  _Rest? _resting;
+  set _rest(_Rest? value) {
+    _resting = value;
+    _collapsed.value = value is _AtAnchor && value.anchor is _CollapsedAnchor;
+  }
+
+  /// Whether the sheet is resting out of sight at [SheetAnchor.collapsed]. It stops
+  /// being collapsed as soon as it starts moving again.
+  bool get isCollapsed => _collapsed.value;
+
+  /// [isCollapsed], to listen to.
+  ValueListenable<bool> get collapsed => _collapsed;
+  final _collapsed = ValueNotifier<bool>(false);
+
+  /// The anchor the current page's sheet first moves to (see
+  /// [SheetContent.initialAnchor]), for [expand].
+  SheetAnchor? _initial;
+
+  /// Brings a collapsed sheet back up to the current page's initial anchor. Does
+  /// nothing unless it's collapsed.
+  void expand() {
+    if (!isCollapsed) return;
+    final initial = _initial;
+    if (initial != null) animateTo(initial);
+  }
 
   /// The furthest the sheet can be pulled up at all.
   double _maxExtent = double.infinity;
@@ -162,8 +187,10 @@ class SheetController extends ChangeNotifier
   /// the lowest from the highest.
   void cycle() {
     if (isTransitioning || _anchors.isEmpty || !_draggable) return;
+    // Never down out of sight: that's for a drag.
     final stops = <(_Rest, double)>[
-      for (final a in _anchors) (_AtAnchor(a.anchor), a.extent),
+      for (final a in _anchors)
+        if (a.anchor is! _CollapsedAnchor) (_AtAnchor(a.anchor), a.extent),
       for (final r in _ranges)
         if (!_anchors.any((a) => (a.extent - r.upper).abs() < _epsilon))
           (_InRange(r.range, 1), r.upper),
@@ -290,12 +317,29 @@ class SheetController extends ChangeNotifier
       _phase = _Phase.idle;
       return;
     }
-    // Pulled down past the bottom of a range below the lowest anchor: back up to it.
+    // Pulled down past the bottom of a range, with no anchor from here up to it: back
+    // up to it, as to an anchor there, unless an anchor below it (collapsed, say) is
+    // nearer or catches the fling.
     final bottom = _ranges.firstOrNull;
     if (bottom != null &&
         extent < bottom.lower - _epsilon &&
-        bottom.lower < _anchors.first.extent - _epsilon) {
-      _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
+        !_anchors.any(
+          (a) =>
+              a.extent > extent + _epsilon &&
+              a.extent < bottom.lower + _epsilon,
+        )) {
+      final end = bottom.fromIsUpper ? bottom.range.to : bottom.range.from;
+      final stops = [
+        for (final a in _anchors)
+          if (a.extent < bottom.lower - _epsilon) a,
+        ResolvedAnchor(end, bottom.lower, end.gravity ?? _physics.gravity),
+      ];
+      final i = _physics.target(stops, extent, velocity);
+      if (i == stops.length - 1) {
+        _springTo(_InRange(bottom.range, 0), bottom.lower, velocity);
+      } else {
+        _catchOn(stops[i], velocity);
+      }
       return;
     }
     if (_physics.glide(_anchors, _ranges, extent, velocity)
@@ -541,8 +585,10 @@ class SheetController extends ChangeNotifier
     List<ResolvedRange> ranges = const [],
     double floor = 0,
     bool draggable = true,
+    SheetAnchor? initial,
   }) {
     _draggable = draggable;
+    _initial = initial;
     _anchors = anchors;
     _ranges = ranges;
     _maxExtent = maxExtent;
@@ -668,6 +714,7 @@ class SheetController extends ChangeNotifier
   void dispose() {
     _wheelSettle?.cancel();
     _spring.dispose();
+    _collapsed.dispose();
     super.dispose();
   }
 }

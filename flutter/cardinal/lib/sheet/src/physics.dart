@@ -5,7 +5,7 @@ part of '../sheet.dart';
 class SheetPhysics {
   const SheetPhysics({
     this.platform,
-    this.gravity = 1200,
+    this.gravity = 4800,
     this.minFlingVelocity = 250,
     this.overdragResistance = 0.35,
     this.spring = const SpringDescription(

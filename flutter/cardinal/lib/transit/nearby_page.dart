@@ -393,6 +393,7 @@ class _NearbyTransitPageState extends State<NearbyTransitPage> with RouteAware {
     final access = _controller!.rows.sortedBy ?? TransitAccess.walking;
     return SheetContent(
       showsBottomBar: true,
+      collapsible: true,
       anchors: const [_lower],
       freeRanges: const [_range],
       slivers: [

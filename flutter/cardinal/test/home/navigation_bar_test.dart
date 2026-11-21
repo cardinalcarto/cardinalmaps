@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
 
 import 'package:cardinal/home/navigation_bar.dart';
 import 'package:cardinal/home/stub_page.dart';
@@ -29,6 +32,63 @@ double _barTop(WidgetTester tester) =>
     tester.getTopLeft(find.byType(AppNavigationBar)).dy;
 
 Finder _tab(String tooltip) => find.byTooltip(tooltip);
+
+const _tooltips = [
+  'Saved places',
+  'Nearby places',
+  'Search',
+  'Nearby transit',
+  'Offline maps',
+];
+
+/// The tabs the bar shows as the current page: filled, and selected to a screen reader.
+List<String> _selected(WidgetTester tester) => [
+  for (final tip in _tooltips)
+    if (find
+        .ancestor(
+          of: _tab(tip),
+          matching: find.byWidgetPredicate(
+            (w) => w is Semantics && (w.properties.selected ?? false),
+          ),
+        )
+        .evaluate()
+        .isNotEmpty)
+      tip,
+];
+
+/// Whether [tip]'s button is filled.
+bool _filled(WidgetTester tester, String tip) {
+  final button = tester.widget<IconButton>(
+    find.ancestor(of: _tab(tip), matching: find.byType(IconButton)),
+  );
+  return tester
+          .widget<Material>(
+            find
+                .descendant(
+                  of: find.byWidget(button),
+                  matching: find.byType(Material),
+                )
+                .first,
+          )
+          .color !=
+      Colors.transparent;
+}
+
+SheetController _sheet(WidgetTester tester) =>
+    SheetScaffold.controllerOf(tester.element(find.byType(AppNavigationBar)));
+
+/// Flings the sheet down from its handle, hard enough to collapse it.
+Future<void> _collapse(WidgetTester tester) async {
+  final sheet = _sheet(tester);
+  await tester.flingFrom(
+    Offset(appScreen.width / 2, appScreen.height - sheet.extent + 12),
+    const Offset(0, 60),
+    3000,
+  );
+  await tester.pumpAndSettle();
+  expect(sheet.extent, 0);
+  expect(sheet.isCollapsed, isTrue);
+}
 
 void main() {
   testWidgets('sits over the navigation bar, the sheet resting above it', (
@@ -112,6 +172,8 @@ void main() {
     final sheet = SheetScaffold.controllerOf(
       tester.element(find.byType(SavedPage)),
     );
+    sheet.animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
     expect(sheet.extent, appScreen.height);
 
     await tester.tap(_tab('Nearby places'));
@@ -167,5 +229,210 @@ void main() {
     router.pop();
     await tester.pumpAndSettle();
     expect(_barTop(tester), peeking);
+  });
+
+  testWidgets('the current page\'s button is filled, and only that one', (
+    tester,
+  ) async {
+    await pumpFakeApp(tester, store: _store());
+    expect(_selected(tester), ['Search']);
+    expect(
+      [for (final t in _tooltips) _filled(tester, t)],
+      [false, false, true, false, false],
+    );
+
+    await tester.tap(_tab('Nearby transit'));
+    await tester.pumpAndSettle();
+    expect(_selected(tester), ['Nearby transit']);
+    expect(_filled(tester, 'Nearby transit'), isTrue);
+    expect(_filled(tester, 'Search'), isFalse);
+  });
+
+  testWidgets('collapsed, no page is current; its own button brings it back', (
+    tester,
+  ) async {
+    final router = await pumpFakeApp(tester, store: _store());
+    final peek = _sheet(tester).extent;
+    await _collapse(tester);
+    expect(_selected(tester), isEmpty);
+    expect([
+      for (final t in _tooltips) _filled(tester, t),
+    ], everyElement(false));
+
+    await tester.tap(_tab('Search'));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/');
+    expect(_sheet(tester).extent, peek);
+    expect(_selected(tester), ['Search']);
+    // Back as it was, not searching.
+    final field = tester.widget<TextField>(find.byType(TextField));
+    expect(field.focusNode!.hasFocus, isFalse);
+  });
+
+  testWidgets('collapsed, it comes back at the page\'s first anchor', (
+    tester,
+  ) async {
+    await pumpFakeApp(tester, store: _store());
+    await tester.tap(_tab('Nearby places'));
+    await tester.pumpAndSettle();
+    final first = _sheet(tester).extent;
+    await _collapse(tester);
+    await tester.tap(_tab('Nearby places'));
+    await tester.pump();
+    // Current again as soon as it starts back up.
+    expect(_selected(tester), ['Nearby places']);
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, first);
+    expect(find.byType(StubPage), findsOneWidget);
+  });
+
+  testWidgets('collapsed, another page\'s button opens it with the sheet up', (
+    tester,
+  ) async {
+    final router = await pumpFakeApp(tester, store: _store());
+    await _collapse(tester);
+    await tester.tap(_tab('Offline maps'));
+    await tester.pumpAndSettle();
+    expect(router.state.uri.path, '/offline');
+    expect(find.byType(OfflinePage), findsOneWidget);
+    expect(_sheet(tester).extent, greaterThan(0));
+    expect(_sheet(tester).isCollapsed, isFalse);
+    expect(_selected(tester), ['Offline maps']);
+  });
+
+  testWidgets(
+    'a page opened over a collapsed one closes back to it collapsed',
+    (tester) async {
+      final router = await pumpFakeApp(tester, store: _store());
+      await _collapse(tester);
+      // The bar's away under a place card.
+      final sheet = _sheet(tester);
+      unawaited(router.push(placeLocation('poi:1')));
+      await tester.pumpAndSettle();
+      expect(sheet.extent, greaterThan(0));
+
+      router.pop();
+      await tester.pumpAndSettle();
+      expect(sheet.extent, 0);
+      expect(sheet.isCollapsed, isTrue);
+      expect(_selected(tester), isEmpty);
+    },
+  );
+
+  testWidgets('collapsed is an anchor like any other', (tester) async {
+    await pumpFakeApp(tester, store: _store());
+    final sheet = _sheet(tester);
+    final peek = sheet.extent;
+    final handle = Offset(appScreen.width / 2, appScreen.height - peek + 12);
+    // Let go a little way down, it snaps back to the nearest...
+    await tester.drag(
+      find.bySemanticsLabel('Resize sheet'),
+      const Offset(0, 50),
+    );
+    await tester.pumpAndSettle();
+    expect(sheet.extent, peek);
+    // ...and a soft fling down settles on the next one down.
+    await tester.flingFrom(handle, const Offset(0, 60), 800);
+    await tester.pumpAndSettle();
+    expect(sheet.isCollapsed, isTrue);
+  });
+
+  for (final (name, grab) in [('the handle', 12.0), ('the content', 40.0)]) {
+    testWidgets('a drag from $name follows the finger over the bar and back', (
+      tester,
+    ) async {
+      final router = await pumpFakeApp(tester, store: _store());
+      final sheet = _sheet(tester);
+      final peek = sheet.extent;
+      var y = appScreen.height - peek + grab;
+      final gesture = await tester.startGesture(Offset(appScreen.width / 2, y));
+      Future<void> move(double dy) async {
+        await gesture.moveBy(Offset(0, dy));
+        y += dy;
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      // Past the touch slop, which the sheet doesn't follow.
+      await move(20);
+      final start = sheet.extent;
+      final startY = y;
+      // Down over the bar, nearly to the bottom of the screen...
+      final barTop = appScreen.height - appNavigationBar - appBarHeight;
+      while (y < appScreen.height - 10) {
+        await move(10);
+        expect(sheet.isHeld, isTrue, reason: 'finger at $y');
+        expect(
+          sheet.extent,
+          moreOrLessEquals(math.max(0, start - (y - startY)), epsilon: 0.01),
+          reason: 'finger at $y',
+        );
+      }
+      expect(y, greaterThan(barTop));
+      // ...and back up, the same drag all the way.
+      while (y > startY) {
+        await move(-10);
+        expect(sheet.isHeld, isTrue, reason: 'finger at $y');
+      }
+      expect(sheet.extent, moreOrLessEquals(start, epsilon: 0.01));
+      // Down over the bar again, and let go there without a fling: nearest the
+      // bottom, it collapses.
+      while (y < appScreen.height - 10) {
+        await move(10);
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(sheet.isCollapsed, isTrue);
+      // The bar's buttons never saw the finger.
+      expect(router.state.uri.path, '/');
+      expect(find.byType(SearchBar), findsOneWidget);
+    });
+  }
+
+  testWidgets('a fling down that ends over the bar collapses the sheet', (
+    tester,
+  ) async {
+    await pumpFakeApp(tester, store: _store());
+    final sheet = _sheet(tester);
+    final y = appScreen.height - sheet.extent + 40;
+    await tester.flingFrom(
+      Offset(appScreen.width / 2, y),
+      Offset(0, appScreen.height - 10 - y),
+      3000,
+    );
+    await tester.pumpAndSettle();
+    expect(sheet.isCollapsed, isTrue);
+  });
+
+  testWidgets('the handle never collapses the sheet', (tester) async {
+    await pumpFakeApp(tester, store: _store());
+    await tester.tap(_tab('Nearby transit'));
+    await tester.pumpAndSettle();
+    final handle = find.bySemanticsLabel('Resize sheet');
+    for (var i = 0; i < 4; i++) {
+      await tester.tap(handle);
+      await tester.pumpAndSettle();
+      expect(_sheet(tester).extent, greaterThan(0));
+    }
+  });
+
+  testWidgets('on iOS, the lens leaves while collapsed, and comes back', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await pumpFakeApp(tester, store: _store());
+    // The glass bar's tab, rather than the search bar's hint.
+    Finder tab(String label) => find.byWidgetPredicate(
+      (w) => w is Semantics && w.properties.label == label,
+    );
+    bool selected(String label) =>
+        tester.widget<Semantics>(tab(label)).properties.selected ?? false;
+    expect(selected('Search'), isTrue);
+    await _collapse(tester);
+    expect(selected('Search'), isFalse);
+    await tester.tap(tab('Search'));
+    await tester.pumpAndSettle();
+    expect(selected('Search'), isTrue);
+    debugDefaultTargetPlatformOverride = null;
   });
 }

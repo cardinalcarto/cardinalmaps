@@ -13,6 +13,8 @@ class SheetContent extends StatefulWidget {
     this.initialAnchor = 0,
     this.showsBottomBar = false,
     this.draggable = true,
+    this.collapsible = false,
+    this.keepsHeight = false,
     required this.slivers,
   }) : assert(anchors.length > 0);
 
@@ -37,6 +39,18 @@ class SheetContent extends StatefulWidget {
   /// it.
   final bool draggable;
 
+  /// Whether the sheet can be pulled down out of sight while this page shows, to rest
+  /// at [SheetAnchor.collapsed] below its [anchors] until [SheetController.expand]
+  /// brings it back. Usually for a page that [showsBottomBar], where the bar is the
+  /// way to bring it back.
+  final bool collapsible;
+
+  /// Whether the sheet stays where it rests when this page comes in, pushed or gone
+  /// back to, if this page has that anchor (or range) too. Otherwise, as for any page,
+  /// it moves to the [initialAnchor] of a page pushed, and back to where it was left
+  /// on a page gone back to.
+  final bool keepsHeight;
+
   final List<Widget> slivers;
 
   @override
@@ -47,6 +61,12 @@ class _SheetContentState extends State<SheetContent> {
   final _SheetEntry _entry = _SheetEntry();
   _SheetScaffoldState? _scaffold;
   _SheetScrollController? _scroll;
+
+  /// Where the sheet can rest on this page: [SheetContent.anchors], and the collapsed
+  /// anchor after them, so [SheetContent.initialAnchor] is still theirs.
+  List<SheetAnchor> get _anchors => widget.collapsible
+      ? [...widget.anchors, const SheetAnchor.collapsed()]
+      : widget.anchors;
 
   /// [SheetScaffold]'s geometry, as this page sees it.
   SheetGeometry _geometry(_SheetScope scope) => widget.showsBottomBar
@@ -71,11 +91,12 @@ class _SheetContentState extends State<SheetContent> {
       ..route = ModalRoute.of(context)
       ..geometry = _geometry(scope)
       ..physics = scope.controller.physics
-      ..anchors = widget.anchors
+      ..anchors = _anchors
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
-      ..draggable = widget.draggable;
+      ..draggable = widget.draggable
+      ..keepsHeight = widget.keepsHeight;
     _scaffold!._scheduleUpdate();
   }
 
@@ -84,11 +105,12 @@ class _SheetContentState extends State<SheetContent> {
     super.didUpdateWidget(oldWidget);
     _entry
       ..geometry = _geometry(_SheetScope.of(context))
-      ..anchors = widget.anchors
+      ..anchors = _anchors
       ..freeRanges = widget.freeRanges
       ..initialAnchor = widget.initialAnchor
       ..showsBottomBar = widget.showsBottomBar
-      ..draggable = widget.draggable;
+      ..draggable = widget.draggable
+      ..keepsHeight = widget.keepsHeight;
     if (widget.draggable != oldWidget.draggable) _scaffold?._scheduleUpdate();
   }
 
@@ -111,7 +133,7 @@ class _SheetContentState extends State<SheetContent> {
       child: _SheetContentLayout(
         entry: _entry,
         geometry: _entry.geometry,
-        anchors: widget.anchors,
+        anchors: _anchors,
         freeRanges: widget.freeRanges,
         physics: _entry.physics,
         child: Scrollable(
@@ -147,6 +169,7 @@ class _SheetEntry extends ChangeNotifier {
   int initialAnchor = 0;
   bool showsBottomBar = false;
   bool draggable = true;
+  bool keepsHeight = false;
 
   /// What the bottom bar's [_SheetScaffoldState._barShown] is on this page.
   double get _barValue => showsBottomBar ? 1 : 0;
@@ -513,6 +536,7 @@ class SheetView {
     this._entry, {
     required this._color,
     required this._translucent,
+    required this.bottomBarCover,
   });
 
   final SheetController controller;
@@ -520,6 +544,10 @@ class SheetView {
   final _SheetEntry? _entry;
   final Color _color;
   final bool _translucent;
+
+  /// How much of the bottom of the window the scaffold's bottom bar covers, with the
+  /// navigation bar under it: 0 while it's away, or if there isn't one.
+  final double bottomBarCover;
 
   /// The sheet's color where it is now: for what pins to its content, say, to paint
   /// behind itself. Over a backdrop it's only as solid as the sheet
@@ -534,8 +562,11 @@ class SheetView {
   /// How far the sheet has turned into a full screen (see [SheetGeometry.expansion]).
   double get expansion => geometry.expansion(extent);
 
-  /// The part of the window the sheet covers.
-  EdgeInsets get obscured => geometry.obscured(extent);
+  /// The part of the window the sheet covers, and the bottom bar under a sheet
+  /// that's lower than it.
+  EdgeInsets get obscured => geometry.placement == SheetPlacement.docked
+      ? geometry.obscured(extent)
+      : geometry.obscured(math.max(extent, bottomBarCover));
 
   /// How much of the section [id] shows above the bottom inset, from 0 (none of it) to
   /// 1 (all of it). Always 0 outside a [SheetContent], or before the section's laid out.
@@ -575,9 +606,11 @@ class SheetBuilder extends StatelessWidget {
     final scope = _SheetScope.of(context);
     final entry = _SheetContentScope.maybeOf(context);
     return ListenableBuilder(
-      listenable: entry == null
-          ? scope.controller
-          : Listenable.merge([scope.controller, entry]),
+      listenable: Listenable.merge([
+        scope.controller,
+        scope.state._barShown,
+        ?entry,
+      ]),
       builder: (context, child) => builder(
         context,
         SheetView._(
@@ -586,6 +619,7 @@ class SheetBuilder extends StatelessWidget {
           entry,
           color: scope.color,
           translucent: scope.translucent,
+          bottomBarCover: scope.bottomBarCover,
         ),
         child,
       ),

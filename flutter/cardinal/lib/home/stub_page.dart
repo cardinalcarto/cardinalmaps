@@ -13,6 +13,7 @@ class StubPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SheetContent(
     showsBottomBar: true,
+    collapsible: true,
     anchors: const [SheetAnchor.section(_header)],
     slivers: [
       SliverToBoxAdapter(

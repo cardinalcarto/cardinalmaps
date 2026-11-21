@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
@@ -233,6 +234,25 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('the bar\'s Cancel arrow stops searching, as back does', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    expect(find.byTooltip('Cancel'), findsNothing);
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Cancel'));
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    expect(find.text('space ne'), findsNothing);
+    expect(find.text('Space Needle'), findsNothing);
+    expect(find.byTooltip('Cancel'), findsNothing);
+  });
+
   testWidgets('back stops searching and clears the query', (tester) async {
     await _pumpApp(tester);
     final peek = _sheet(tester).extent;
@@ -308,14 +328,7 @@ void main() {
           if (collapse == 'back') {
             await tester.binding.handlePopRoute();
           } else {
-            final gesture = await tester.startGesture(
-              Offset(200, 800 - _sheet(tester).extent + 12),
-            );
-            for (var i = 0; i < 20; i++) {
-              await gesture.moveBy(const Offset(0, 40));
-              await tester.pump(const Duration(milliseconds: 16));
-            }
-            await gesture.up();
+            await _dragDown(tester);
           }
           await tester.pumpAndSettle();
           expect(_sheet(tester).extent, moreOrLessEquals(peek));
@@ -671,13 +684,16 @@ const spacePlace = Place(
   tags: {'tourism': 'attraction'},
 );
 
-/// Drags the sheet down to the bar.
+/// Drags the sheet down to the bar, and no further, where it would collapse.
 Future<void> _dragDown(WidgetTester tester) async {
+  final sheet = _sheet(tester);
+  final bar = sheet.anchors.firstWhere((a) => a.extent > 0).extent;
   final gesture = await tester.startGesture(
-    Offset(200, 800 - _sheet(tester).extent + 12),
+    Offset(200, 800 - sheet.extent + 12),
   );
-  for (var i = 0; i < 20; i++) {
-    await gesture.moveBy(const Offset(0, 40));
+  // Until the sheet's there, past the touch slop, which it doesn't follow.
+  for (var i = 0; i < 40 && sheet.extent > bar; i++) {
+    await gesture.moveBy(Offset(0, math.min(40, sheet.extent - bar + 1)));
     await tester.pump(const Duration(milliseconds: 16));
   }
   await gesture.up();

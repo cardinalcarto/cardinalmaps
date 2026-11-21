@@ -399,6 +399,7 @@ class _RouteDetailPageState extends State<RouteDetailPage> with RouteAware {
     final departures = controller.departures;
     return SheetContent(
       showsBottomBar: true,
+      collapsible: true,
       anchors: const [_lower],
       freeRanges: const [_range],
       slivers: [
