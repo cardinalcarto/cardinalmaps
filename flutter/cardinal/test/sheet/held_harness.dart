@@ -34,6 +34,7 @@ class Harness extends StatefulWidget {
     this.rows = 20,
     this.sectionThree = true,
     this.collapsible = false,
+    this.translucent = false,
   });
 
   final Object? held;
@@ -48,6 +49,10 @@ class Harness extends StatefulWidget {
   /// Whether the fourth row is a section from the first.
   final bool sectionThree;
   final bool collapsible;
+
+  /// Whether the sheet is glass over a backdrop while it's low, and neither the rows
+  /// nor the footer paint a background.
+  final bool translucent;
 
   @override
   State<Harness> createState() => HarnessState();
@@ -71,6 +76,9 @@ class HarnessState extends State<Harness> {
       resizeToAvoidBottomInset: false,
       body: SheetScaffold(
         body: const SizedBox.expand(),
+        backdrop: widget.translucent
+            ? (context, radius, clarity) => const SizedBox.expand()
+            : null,
         sheet: Navigator(
           pages: [
             SheetPage<void>(
@@ -83,13 +91,21 @@ class HarnessState extends State<Harness> {
                 initialMaxFraction: widget.initialMaxFraction,
                 collapsible: widget.collapsible,
                 held: held,
+                // Its background runs behind the navigation bar, and its controls
+                // keep clear of it.
                 footer: footer
                     ? ColoredBox(
                         key: const ValueKey('footer'),
-                        color: Colors.blue,
-                        child: SizedBox(
-                          height: footerExtent,
-                          child: const Center(child: Text('footer')),
+                        color: widget.translucent
+                            ? Colors.transparent
+                            : Colors.blue,
+                        child: SafeArea(
+                          top: false,
+                          child: SizedBox(
+                            key: const ValueKey('controls'),
+                            height: footerExtent,
+                            child: const Center(child: Text('footer')),
+                          ),
                         ),
                       )
                     : null,
@@ -127,6 +143,7 @@ class HarnessState extends State<Harness> {
       key: ValueKey('row$i'),
       index: i,
       height: heights[i] ?? rowHeight,
+      color: widget.translucent ? Colors.transparent : Colors.white,
     ),
   );
 }
@@ -134,10 +151,16 @@ class HarnessState extends State<Harness> {
 /// A row with state of its own, that counts what the tests check never happens as the
 /// sheet moves.
 class TestRow extends StatefulWidget {
-  const TestRow({super.key, required this.index, required this.height});
+  const TestRow({
+    super.key,
+    required this.index,
+    required this.height,
+    required this.color,
+  });
 
   final int index;
   final double height;
+  final Color color;
 
   @override
   State<TestRow> createState() => TestRowState();
@@ -183,7 +206,7 @@ class TestRowState extends State<TestRow> {
         onLayout: () => layouts++,
         onPaint: () => paints++,
         child: ColoredBox(
-          color: Colors.white,
+          color: widget.color,
           child: SizedBox(
             height: widget.height,
             child: Text('row ${widget.index}: $taps'),
@@ -303,6 +326,26 @@ const footerTop = 800 - navigationBar - footerHeight;
     layer = layer.parent;
   }
   return (offset: offset, opacity: opacity);
+}
+
+/// Whether the content is painted at [point] on screen: within the clip around the
+/// viewport's layer, if it has one.
+bool contentShowsAt(WidgetTester tester, Offset point) {
+  final viewport = tester.renderObject<RenderRepaintBoundary>(
+    find
+        .ancestor(
+          of: find.byKey(const ValueKey('header'), skipOffstage: false),
+          matching: find.byType(RepaintBoundary, skipOffstage: false),
+        )
+        .first,
+  );
+  final layer = viewport.debugLayer!;
+  var offset = Offset.zero;
+  for (Layer? l = layer; l != null; l = l.parent) {
+    if (l is OffsetLayer) offset += l.offset;
+  }
+  final clip = layer.parent;
+  return clip is! ClipPathLayer || clip.clipPath!.contains(point - offset);
 }
 
 /// The top of row [i] on screen, where it's painted, which must be where its render

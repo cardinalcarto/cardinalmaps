@@ -300,6 +300,73 @@ void main() {
       expect(tester.getRect(row(2)).bottom, screen.height - navigationBar);
     });
 
+    testWidgets('nothing of the content shows or is hit through it while '
+        "it's out of its slot", (tester) async {
+      final sheet = await pumpHarness(
+        tester,
+        (key) => Harness(
+          key: key,
+          held: 8,
+          initialSection: #three,
+          translucent: true,
+        ),
+      );
+      // Low, where the sheet is glass, the held row is over another row's slot.
+      final extent = sheet.extent;
+      expect(extent, lessThan(screen.height * 2 / 3));
+      expect(rowTop(tester, 8), _aboveFooter);
+      final behind = [
+        for (var i = 0; i < 8; i++)
+          if (slotTop(extent, i) == _aboveFooter) i,
+      ].single;
+      const inBox = Offset(40, _aboveFooter + rowHeight / 2);
+      expect(contentShowsAt(tester, inBox), isFalse);
+      expect(
+        contentShowsAt(tester, inBox - const Offset(0, rowHeight)),
+        isTrue,
+      );
+      await tester.tapAt(inBox);
+      await tester.pump();
+      expect(rowState(tester, 8).taps, 1);
+      expect(rowState(tester, behind).taps, 0);
+
+      // The clip follows it as it goes back to its slot, without painting the
+      // content or the row again.
+      final paints = (
+        rowState(tester, behind).paints,
+        rowState(tester, 8).paints,
+      );
+      await _hold(tester, 1);
+      await tester.pump(const Duration(milliseconds: 80));
+      final moving = rowTop(tester, 8);
+      expect(moving, greaterThan(_aboveFooter));
+      expect(contentShowsAt(tester, Offset(40, moving + 1)), isFalse);
+      expect(contentShowsAt(tester, Offset(40, moving - 1)), isTrue);
+      expect((
+        rowState(tester, behind).paints,
+        rowState(tester, 8).paints,
+      ), paints);
+
+      // Back in its slot, the content shows and is hit where it was held.
+      await tester.pumpAndSettle();
+      expect(rowTop(tester, 8), slotTop(extent, 8));
+      expect(contentShowsAt(tester, inBox), isTrue);
+      await tester.tapAt(inBox);
+      await tester.pump();
+      expect(rowState(tester, behind).taps, 1);
+      expect(rowState(tester, 8).taps, 1);
+    });
+
+    testWidgets('in its slot, the content is whole', (tester) async {
+      await pumpHarness(
+        tester,
+        (key) => Harness(key: key, held: 2, initialSection: #three),
+      );
+      expect(rowState(tester, 2).displacement, 0);
+      expect(contentShowsAt(tester, tester.getCenter(row(2))), isTrue);
+      expect(contentShowsAt(tester, tester.getCenter(row(1))), isTrue);
+    });
+
     testWidgets('outside a slot, nothing is displaced', (tester) async {
       await pumpHarness(tester, (key) => Harness(key: key, held: 2));
       final context = tester.element(find.text('header'));
@@ -488,10 +555,15 @@ void main() {
             rowTop(tester, i),
             moreOrLessEquals(slot < _aboveFooter ? slot : _aboveFooter),
           );
-          if (slot <= _aboveFooter) {
-            expect(painted(tester, i)!.opacity, 1);
-            raised = true;
-          }
+        }
+        // The held row is solid in its slot, and the one fading out by the time
+        // it's out from under the held one.
+        if (slotTop(sheet.extent, 5) <= _aboveFooter) {
+          expect(painted(tester, 5)!.opacity, 1);
+        }
+        if (slotTop(sheet.extent, 2) + rowHeight <= rowTop(tester, 5)) {
+          expect(painted(tester, 2)!.opacity, 1);
+          raised = true;
         }
       }
       expect(raised, isTrue);
@@ -529,10 +601,9 @@ void main() {
       expect(painted(tester, 1)!.opacity, 1);
     });
 
-    testWidgets('a row in place gives way to one that rises over it', (
-      tester,
-    ) async {
-      // At the header the first row is held where its slot is.
+    testWidgets('a row in its slot, just where the next is held, is faded '
+        'over in place', (tester) async {
+      // At the header the first row is held where its slot is, directly under it.
       final sheet = await pumpHarness(
         tester,
         (key) => Harness(key: key, held: 0),
@@ -542,17 +613,21 @@ void main() {
       expect(rowState(tester, 0).displacement, 0);
 
       await _hold(tester, 5);
-      await tester.pump(const Duration(milliseconds: 80));
-      expect(painted(tester, 0), (
-        offset: const Offset(0, _aboveFooter),
-        opacity: 1.0,
-      ));
-      expect(
-        rowTop(tester, 5),
-        inExclusiveRange(_aboveFooter, slotTop(extent, 5)),
-      );
-      expect(painted(tester, 5)!.opacity, 1);
+      var last = 0.0;
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+        // The one fades out as the other fades in, neither moving.
+        final from = painted(tester, 0)!;
+        final to = painted(tester, 5)!;
+        expect(from.offset, const Offset(0, _aboveFooter));
+        expect(to.offset, const Offset(0, _aboveFooter));
+        expect(to.opacity, inExclusiveRange(last, 1));
+        expect(from.opacity + to.opacity, moreOrLessEquals(1, epsilon: 0.01));
+        last = to.opacity;
+        expect(sheet.extent, extent);
+      }
       await tester.pumpAndSettle();
+      expect(painted(tester, 5)!.opacity, 1);
       expect(rowTop(tester, 5), _aboveFooter);
       expect(rowTop(tester, 0), _aboveFooter);
       expect(sheet.extent, extent);

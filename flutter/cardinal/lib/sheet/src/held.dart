@@ -88,7 +88,7 @@ class _SheetSlotBox extends SingleChildRenderObjectWidget {
 /// Where a slot sits in its content.
 @immutable
 class _SlotPlace {
-  const _SlotPlace(this.span, this.top, this.left);
+  const _SlotPlace(this.span, this.top, this.left, this.width);
 
   /// Measures [slot] in [viewport], after it's laid out.
   factory _SlotPlace.of(_RenderSheetViewport viewport, _RenderSheetSlot slot) {
@@ -116,6 +116,7 @@ class _SlotPlace {
       _spanOf(viewport, slot),
       viewport.contentOffsetOf(child as RenderSliver, within + inBox.dy),
       inViewport.dx,
+      slot.size.width,
     );
   }
 
@@ -129,6 +130,8 @@ class _SlotPlace {
   /// How far the slot's left edge is from the content's.
   final double left;
 
+  final double width;
+
   double get height => span.end - span.start;
 
   @override
@@ -136,10 +139,11 @@ class _SlotPlace {
       other is _SlotPlace &&
       other.span == span &&
       other.top == top &&
-      other.left == left;
+      other.left == left &&
+      other.width == width;
 
   @override
-  int get hashCode => Object.hash(span, top, left);
+  int get hashCode => Object.hash(span, top, left, width);
 }
 
 class _RenderSheetSlot extends RenderProxyBox {
@@ -235,15 +239,17 @@ class _Hold {
   /// Whether this is the slot the page holds, rather than one on its way back.
   bool isTarget = true;
 
-  /// Whether it goes back by fading out where it's held, rather than by moving to its
-  /// slot.
+  /// Whether it goes back by fading out where it is, under the child held now, rather
+  /// than by moving to its slot.
   bool fading = false;
 
+  final LayerHandle<ClipPathLayer> clip = LayerHandle();
   final LayerHandle<OpacityLayer> layer = LayerHandle();
 
   void dispose() {
     strength.dispose();
     opacity.dispose();
+    clip.layer = null;
     layer.layer = null;
   }
 }
@@ -349,6 +355,18 @@ class _SheetHolds extends ChangeNotifier {
     }
   }
 
+  /// Sends the child of [hold], which was fading out where it was, back to its slot
+  /// instead: [solid] at once, if it is already.
+  void slideBack(_Hold hold, {required bool solid}) {
+    hold.fading = false;
+    _animate(hold.strength, 0);
+    if (solid) {
+      hold.opacity.value = 1;
+    } else {
+      _animate(hold.opacity, 1);
+    }
+  }
+
   /// Puts the child of [hold] back in its slot.
   void release(_Hold hold) {
     _holds.remove(hold);
@@ -375,22 +393,36 @@ class _SheetHolds extends ChangeNotifier {
 
 /// Where a held child is painted.
 class _Held {
-  const _Held(this.offset, this.displacement, this.height, this.opacity);
+  const _Held(this.box, this.displacement);
 
-  /// Its top left corner, from the content's.
-  final Offset offset;
+  /// Its box, from the content's top left corner: as wide and tall as its slot.
+  final Rect box;
 
   /// How far that is above its slot (see [SheetSlot.displacementOf]).
   final double displacement;
 
-  final double height;
-  final double opacity;
+  Offset get offset => box.topLeft;
+
+  /// How far out of its slot it is, from 0 in it to 1 wholly out of it.
+  double get away => box.height > 0
+      ? (displacement.abs() / box.height).clamp(0.0, 1.0)
+      : (isInPlace ? 0 : 1);
 
   /// Whether it's wholly out of its slot.
-  bool get isAway => height > 0 && displacement.abs() >= height - _epsilon;
+  bool get isAway =>
+      box.height > 0 && displacement.abs() >= box.height - _epsilon;
 
   /// Whether it's where its slot is.
   bool get isInPlace => displacement.abs() < precisionErrorTolerance;
+
+  /// How much of this the box of [other] covers, top to bottom, from 0 to 1.
+  double coveredBy(_Held other) {
+    if (box.height <= 0) return 0;
+    final overlap =
+        math.min(box.bottom, other.box.bottom) -
+        math.max(box.top, other.box.top);
+    return (overlap / box.height).clamp(0.0, 1.0);
+  }
 }
 
 enum _BodySlot { viewport, footer }
@@ -402,6 +434,11 @@ enum _BodySlot { viewport, footer }
 /// held children are placed in it by the sheet's extent (and how far the content is
 /// scrolled) each time it's painted. Moving the sheet or scrolling builds and lays out
 /// neither.
+///
+/// Nothing shows through the footer or a child held out of its slot, whether or not
+/// they paint a background: the content is clipped out of their boxes, and isn't hit
+/// there. Each is a layer, so as the boxes move only the clips change shape, and
+/// nothing is painted again.
 class _SheetBody
     extends SlottedMultiChildRenderObjectWidget<_BodySlot, RenderBox> {
   const _SheetBody({
@@ -410,6 +447,7 @@ class _SheetBody
     required this.extent,
     required this.offset,
     required this.held,
+    required this.footerPadding,
     required this.viewport,
     required this.footer,
   });
@@ -419,6 +457,7 @@ class _SheetBody
   final double Function() extent;
   final ViewportOffset offset;
   final Object? held;
+  final double footerPadding;
   final Widget viewport;
   final Widget? footer;
 
@@ -438,6 +477,7 @@ class _SheetBody
     extent: extent,
     offset: offset,
     held: held,
+    footerPadding: footerPadding,
   );
 
   @override
@@ -447,7 +487,8 @@ class _SheetBody
       ..controller = controller
       ..extent = extent
       ..offset = offset
-      ..held = held;
+      ..held = held
+      ..footerPadding = footerPadding;
   }
 }
 
@@ -459,6 +500,7 @@ class _RenderSheetBody extends RenderBox
     required this.extent,
     required this._offset,
     required this._held,
+    required this._footerPadding,
   }) {
     _entry.body = this;
   }
@@ -513,10 +555,20 @@ class _RenderSheetBody extends RenderBox
     markNeedsLayout();
   }
 
+  /// How much of the footer's height is behind the navigation bar, below what the
+  /// content keeps clear of (see [SheetGeometry.footerPadding]).
+  double get footerPadding => _footerPadding;
+  double _footerPadding;
+  set footerPadding(double value) {
+    if (value == _footerPadding) return;
+    _footerPadding = value;
+    markNeedsLayout();
+  }
+
   RenderBox? get _viewport => childForSlot(_BodySlot.viewport);
   RenderBox? get _footer => childForSlot(_BodySlot.footer);
 
-  final LayerHandle<ClipRectLayer> _clip = LayerHandle();
+  final LayerHandle<ClipPathLayer> _clip = LayerHandle();
 
   @override
   void attach(PipelineOwner owner) {
@@ -578,17 +630,26 @@ class _RenderSheetBody extends RenderBox
   }
 
   /// Puts back in their slots the children the page no longer holds that are painted
-  /// where their slots are, or have faded out wholly away from them: nothing changes
-  /// on screen. So too any whose slot has gone.
+  /// where their slots are: nothing changes on screen. One that has faded out under
+  /// the child held now, or is no longer under it, goes back to its slot from there.
+  /// So too any whose slot has gone.
   void _releaseSettled() {
     final holds = entry.holds;
     for (final hold in holds.all.toList()) {
       if (hold.isTarget) continue;
       final held = _place(hold);
-      if (held == null ||
-          held.isInPlace ||
-          hold.fading && hold.opacity.value == 0 && held.isAway) {
+      if (held == null) {
         holds.release(hold);
+      } else if (!hold.fading) {
+        if (held.isInPlace) holds.release(hold);
+      } else {
+        final covered = _covered(held);
+        if (hold.opacity.value > 0 && covered > 0) continue;
+        if (held.isInPlace) {
+          holds.release(hold);
+        } else {
+          holds.slideBack(hold, solid: covered == 0);
+        }
       }
     }
   }
@@ -610,33 +671,71 @@ class _RenderSheetBody extends RenderBox
         : geometry.contentShown(_extent);
   }
 
-  /// Where the child [hold] holds is painted, as far from its slot as [hold] has it
-  /// (or [strength]) and as solid (or [opacity]): null if its slot isn't laid out.
-  _Held? _place(_Hold hold, {double? strength, double? opacity}) {
+  /// Where the child [hold] holds is painted: null if its slot isn't laid out.
+  _Held? _place(_Hold hold) {
     final place = entry.slotFor(hold.id)?.place;
-    return place == null
-        ? null
-        : _placeAt(
-            place,
-            strength ?? hold.strength.value,
-            opacity ?? hold.opacity.value,
-          );
+    return place == null ? null : _placeAt(place, hold.strength.value);
   }
 
-  _Held _placeAt(_SlotPlace place, double strength, double opacity) {
+  /// Where the child of the slot at [place] is painted, [strength] of the way from
+  /// its slot to where it's held.
+  _Held _placeAt(_SlotPlace place, double strength) {
     final natural = place.top - (offset.hasPixels ? offset.pixels : 0);
     // Above the footer and, sooner than that, below the content's top.
     final clamped = math.max(0.0, math.min(natural, _footerTop - place.height));
     final displacement = (natural - clamped) * strength;
-    // Solid where its slot is, and only as solid as it's faded once wholly out of it.
-    final away = place.height > 0
-        ? (displacement.abs() / place.height).clamp(0.0, 1.0)
-        : (displacement == 0 ? 0.0 : 1.0);
     return _Held(
-      Offset(place.left, natural - displacement),
+      Offset(place.left, natural - displacement) &
+          Size(place.width, place.height),
       displacement,
-      place.height,
-      1 - (1 - opacity) * away,
+    );
+  }
+
+  /// How much of [held], a child fading out, is under the child the page holds now,
+  /// from 0 to 1.
+  double _covered(_Held held) {
+    final target = switch (entry.holds.target) {
+      final id? => entry.holds.find(id),
+      null => null,
+    };
+    final over = target == null ? null : _place(target);
+    return over == null ? 0 : held.coveredBy(over);
+  }
+
+  /// How solid the child [hold] holds is painted at [held]. The held child is solid
+  /// in its slot, and as solid as it has faded in once wholly out of it; so is one on
+  /// its way back to its slot. One fading out is as faded as it's under the child held
+  /// now, so it's solid by the time it's out from under it.
+  double _opacityOf(_Hold hold, _Held held) {
+    final faded = 1 - hold.opacity.value;
+    if (faded == 0) return 1;
+    return 1 - faded * (hold.fading ? _covered(held) : held.away);
+  }
+
+  /// The footer's box in this: all of it, down behind the navigation bar.
+  Rect? get _footerBox => switch (_footer) {
+    final footer? => Offset(0, _footerTop) & footer.size,
+    null => null,
+  };
+
+  /// The boxes of the children held out of their slots, in the order they're painted,
+  /// each with its hold.
+  List<(_Hold, _Held)> _lifted() => [
+    for (final hold in entry.holds.all)
+      if (_place(hold) case final held? when !held.isInPlace) (hold, held),
+  ];
+
+  /// All of this but [boxes], or null if that's all of it.
+  Path? _allBut(Iterable<Rect> boxes) {
+    if (boxes.isEmpty) return null;
+    final out = Path();
+    for (final box in boxes) {
+      out.addRect(box);
+    }
+    return Path.combine(
+      PathOperation.difference,
+      Path()..addRect(Offset.zero & size),
+      out,
     );
   }
 
@@ -650,14 +749,18 @@ class _RenderSheetBody extends RenderBox
   Offset? paintedAt(_RenderSheetSlot slot) => _heldAt(slot)?.offset;
 
   /// Whether the child held as [from] fades into the child of the slot [to], rather
-  /// than each moving: when both are wholly out of their slots, past the same edge,
-  /// and so in the same place.
+  /// than each moving: when [to]'s child comes to rest just where [from]'s is painted
+  /// now, each covering all of the other's height to within [_epsilon]. Both held
+  /// against the same edge, say, or [from]'s in its slot exactly where [to]'s is held.
   bool _crossFades(_Hold from, Object to) {
     final a = _place(from);
     final place = entry.slotFor(to)?.place;
     if (a == null || place == null) return false;
-    final b = _placeAt(place, 1, 1);
-    return a.isAway && b.isAway && a.displacement.sign == b.displacement.sign;
+    final b = _placeAt(place, 1);
+    final overlap =
+        math.min(a.box.bottom, b.box.bottom) - math.max(a.box.top, b.box.top);
+    final taller = math.max(a.box.height, b.box.height);
+    return taller > 0 && overlap >= taller - _epsilon;
   }
 
   @override
@@ -676,7 +779,7 @@ class _RenderSheetBody extends RenderBox
         ),
         parentUsesSize: true,
       );
-      footerHeight = footer.size.height;
+      footerHeight = math.max(0, footer.size.height - footerPadding);
     }
     if (footerHeight != entry.footerHeight) {
       entry.footerHeight = footerHeight;
@@ -698,42 +801,71 @@ class _RenderSheetBody extends RenderBox
 
   @override
   void paint(PaintingContext context, Offset offset) {
-    if (_viewport case final viewport?) context.paintChild(viewport, offset);
-    if (entry.holds.isEmpty) {
-      _clip.layer = null;
-    } else {
-      // Within the content, as the viewport keeps its own.
-      _clip.layer = context.pushClipRect(
+    final footerBox = _footerBox;
+    final lifted = _lifted();
+    // The content, but not where the footer or a child held out of its slot is.
+    final shown = _allBut([
+      ?footerBox,
+      for (final (_, held) in lifted) held.box,
+    ]);
+    if (_viewport case final viewport?) {
+      if (shown == null) {
+        _clip.layer = null;
+        context.paintChild(viewport, offset);
+      } else {
+        _clip.layer = context.pushClipPath(
+          needsCompositing,
+          offset,
+          Offset.zero & size,
+          shown,
+          (context, offset) => context.paintChild(viewport, offset),
+          oldLayer: _clip.layer,
+        );
+      }
+    }
+    for (final hold in entry.holds.all) {
+      final child = entry.slotFor(hold.id)?.child;
+      final held = _place(hold);
+      final alpha = held == null ? 0 : (255 * _opacityOf(hold, held)).round();
+      if (child == null || held == null || alpha == 0) {
+        hold.clip.layer = null;
+        hold.layer.layer = null;
+        continue;
+      }
+      // Within the content, as the viewport keeps its own, and not where the footer
+      // is. One on its way back to its slot is as the content is: not where a child
+      // painted over it is held. One fading out shows through the one fading in.
+      final holds = entry.holds.all;
+      final over = [
+        ?footerBox,
+        if (!hold.fading)
+          for (final (other, held) in lifted)
+            if (holds.indexOf(other) > holds.indexOf(hold)) held.box,
+      ];
+      hold.clip.layer = context.pushClipPath(
         needsCompositing,
         offset,
         Offset.zero & size,
-        _paintHeld,
-        oldLayer: _clip.layer,
+        _allBut(over) ?? (Path()..addRect(Offset.zero & size)),
+        (context, offset) {
+          if (alpha < 255) {
+            hold.layer.layer = context.pushOpacity(
+              offset,
+              alpha,
+              (context, offset) =>
+                  context.paintChild(child, offset + held.offset),
+              oldLayer: hold.layer.layer,
+            );
+          } else {
+            hold.layer.layer = null;
+            context.paintChild(child, offset + held.offset);
+          }
+        },
+        oldLayer: hold.clip.layer,
       );
     }
     if (_footer case final footer?) {
       context.paintChild(footer, offset + Offset(0, _footerTop));
-    }
-  }
-
-  void _paintHeld(PaintingContext context, Offset offset) {
-    for (final hold in entry.holds.all) {
-      final child = entry.slotFor(hold.id)?.child;
-      final held = _place(hold);
-      final alpha = held == null ? 0 : (255 * held.opacity).round();
-      if (child == null || held == null || alpha == 0) {
-        hold.layer.layer = null;
-      } else if (alpha < 255) {
-        hold.layer.layer = context.pushOpacity(
-          offset,
-          alpha,
-          (context, offset) => context.paintChild(child, offset + held.offset),
-          oldLayer: hold.layer.layer,
-        );
-      } else {
-        hold.layer.layer = null;
-        context.paintChild(child, offset + held.offset);
-      }
     }
   }
 
@@ -747,12 +879,17 @@ class _RenderSheetBody extends RenderBox
           hitTest: (result, position) =>
               child.hitTest(result, position: position),
         );
-    // As painted, from the top: the footer, the held children, the content.
-    if (hit(_footer, Offset(0, _footerTop))) return true;
+    // As painted, from the top: the footer, the held children, the content. Nothing
+    // is under the footer, or under a child held out of its slot.
+    if (_footerBox case final box? when box.contains(position)) {
+      return hit(_footer, box.topLeft);
+    }
     for (final hold in entry.holds.all.reversed) {
       final held = _place(hold);
-      if (held == null || held.opacity == 0) continue;
-      if (hit(entry.slotFor(hold.id)?.child, held.offset)) return true;
+      if (held == null) continue;
+      final shows = _opacityOf(hold, held) > 0;
+      if (shows && hit(entry.slotFor(hold.id)?.child, held.offset)) return true;
+      if (!held.isInPlace && held.box.contains(position)) return false;
     }
     return hit(_viewport, Offset.zero);
   }

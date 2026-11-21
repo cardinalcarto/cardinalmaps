@@ -77,16 +77,25 @@ class SheetContent extends StatefulWidget {
   /// shows. Null, the default, is one content throughout.
   final Object? scrollId;
 
-  /// Stays at the bottom of the window (of the column, in a wide window) wherever the
-  /// sheet is, above the navigation bar, the scaffold's bottom bar on a page that
-  /// [showsBottomBar], and the keyboard while it shows. It's as wide as the content
-  /// and takes its own height, which shouldn't depend on how far the sheet is pulled
-  /// up. It's part of the page, so it comes and goes with it.
+  /// Stays along the bottom of the window (of the column, in a wide window) wherever
+  /// the sheet is. It's as wide as the content and takes its own height, which
+  /// shouldn't depend on how far the sheet is pulled up. It's part of the page, so it
+  /// comes and goes with it.
   ///
-  /// Its height joins what covers the bottom of the window
+  /// Its box runs to the bottom of the window, behind the navigation bar, as the
+  /// scaffold's bottom bar does, so that content passing behind it never shows again
+  /// below it. It's given the navigation bar's height as [MediaQueryData.padding]'s
+  /// bottom, and must keep its controls clear of it (in a [SafeArea], say), with any
+  /// background it paints over all of its box. While the keyboard shows, or on a
+  /// page that [showsBottomBar], it sits directly on the keyboard or the bar, and
+  /// that padding is 0.
+  ///
+  /// The content isn't painted or hit anywhere in its box, so nothing shows through
+  /// it even if it paints no background, as over a [SheetScaffold.backdrop].
+  ///
+  /// Its height above that padding joins what covers the bottom of the window
   /// ([SheetGeometry.bottomInset]), so the anchors and the end of the content keep
-  /// clear of it. The content passes behind it as the sheet lowers, so it wants a
-  /// background of its own. A vertical drag on it moves the sheet as one on the
+  /// clear of its controls. A vertical drag on it moves the sheet as one on the
   /// content does.
   final Widget? footer;
 
@@ -96,13 +105,16 @@ class SheetContent extends StatefulWidget {
   /// While its slot is in view the child shows there, as any other. Once the sheet
   /// lowers, or the content scrolls, so far that the slot would pass under the
   /// [footer] (or whatever else covers the bottom of the window), or above the top of
-  /// the content, the child stops there, and the rest of the content passes behind it:
-  /// so it wants a background of its own. It's painted over the content, and so
-  /// outside whatever the slot's ancestors paint around it (a clip, a fade).
+  /// the content, the child stops there, and the rest of the content passes behind it.
+  /// The content isn't painted or hit within the box of a child out of its slot (as
+  /// wide and tall as the slot), so nothing shows through it or round its corners,
+  /// whatever background it paints. It's painted over the content, and so outside
+  /// whatever the slot's ancestors paint around it (a clip, a fade).
   ///
   /// When this changes the children move to and from their places over
-  /// [holdDuration]; when both are wholly out of view past the same edge, the one
-  /// fades into the other in place instead.
+  /// [holdDuration]; when the newly held one comes to rest where the other is (both
+  /// held against the same edge, say), it fades in over it in place instead, as the
+  /// other fades out as far as it's out of its slot.
   ///
   /// The slot must be built to be held: one in a sliver that only builds what's near
   /// the viewport (a [SliverList], say) isn't held once it scrolls far enough away
@@ -220,6 +232,7 @@ class _SheetContentState extends State<SheetContent>
   @override
   Widget build(BuildContext context) {
     final scope = _SheetScope.of(context);
+    final footerPadding = _entry.baseGeometry?.footerPadding ?? 0;
     final bottom = math.max(
       _entry.baseGeometry?.bottomInset ?? 0,
       MediaQuery.viewInsetsOf(context).bottom,
@@ -248,6 +261,7 @@ class _SheetContentState extends State<SheetContent>
             extent: scope.state._paintExtent,
             offset: offset,
             held: widget.held,
+            footerPadding: footerPadding,
             // Each a layer of its own, as the sheet moving repaints only where they
             // are.
             viewport: RepaintBoundary(
@@ -266,7 +280,16 @@ class _SheetContentState extends State<SheetContent>
             ),
             footer: switch (widget.footer) {
               final footer? => _SheetFooter(
-                child: RepaintBoundary(child: footer),
+                child: RepaintBoundary(
+                  // The navigation bar it runs down behind, for it to keep clear of.
+                  child: MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      padding: EdgeInsets.only(bottom: footerPadding),
+                      viewPadding: EdgeInsets.only(bottom: footerPadding),
+                    ),
+                    child: footer,
+                  ),
+                ),
               ),
               null => null,
             },
@@ -289,7 +312,8 @@ class _SheetEntry extends ChangeNotifier {
   /// [SheetScaffold]'s geometry as the page sees it, but for its footer.
   SheetGeometry? baseGeometry;
 
-  /// How tall the page's footer was last laid out, 0 if it hasn't one.
+  /// How tall the page's footer was last laid out over what else covers the bottom of
+  /// the window (see [SheetGeometry.footer]), 0 if it hasn't one.
   double footerHeight = 0;
 
   /// [SheetScaffold]'s geometry as the page sees it.

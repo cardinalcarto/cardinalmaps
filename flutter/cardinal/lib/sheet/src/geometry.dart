@@ -63,8 +63,9 @@ class SheetGeometry {
   /// doesn't show one (see [SheetContent.showsBottomBar]).
   final double bottomBar;
 
-  /// How tall the page's footer is (see [SheetContent.footer]), 0 if it hasn't one. It
-  /// sits over whatever else covers the bottom of the window.
+  /// How tall the page's footer is over whatever else covers the bottom of the window
+  /// (see [SheetContent.footer]), 0 if it hasn't one: its height less the
+  /// [footerPadding] it runs down behind the navigation bar.
   final double footer;
 
   /// What covers the bottom of the window: the keyboard, or else the navigation bar and
@@ -72,6 +73,12 @@ class SheetGeometry {
   /// content's anchors are measured from its top.
   double get bottomInset =>
       math.max(padding.bottom + bottomBar, keyboard) + footer;
+
+  /// How far below its controls a page's footer runs (see [SheetContent.footer]): down
+  /// behind the navigation bar, where neither the keyboard nor the bottom bar covers
+  /// it. That much of [bottomInset] is under the footer rather than below it.
+  double get footerPadding =>
+      bottomBar > 0 ? 0 : math.max(0, padding.bottom - keyboard);
 
   /// This geometry for a page that shows a bottom bar [height] tall.
   SheetGeometry withBottomBar(double height) => SheetGeometry(
