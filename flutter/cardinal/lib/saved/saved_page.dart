@@ -538,6 +538,8 @@ class _BrowsingHeader extends StatelessWidget {
           else
             PopupMenuButton<void>(
               tooltip: 'More options',
+              // Over the whole app, not clipped to the sheet.
+              useRootNavigator: true,
               itemBuilder: (context) => [
                 PopupMenuItem(
                   enabled: onSelect != null,
@@ -617,6 +619,7 @@ class _EditingHeader extends StatelessWidget {
           ),
           PopupMenuButton<void>(
             tooltip: 'More options',
+            useRootNavigator: true,
             itemBuilder: (context) => [
               PopupMenuItem(
                 enabled: onCopy != null,
@@ -871,6 +874,7 @@ class _Row extends StatelessWidget {
 
   Widget _menu(SavedItem item) => PopupMenuButton<_RowAction>(
     tooltip: 'More options',
+    useRootNavigator: true,
     onSelected: onAction,
     itemBuilder: (context) => [
       const PopupMenuItem(value: _RowAction.edit, child: Text('Edit')),
