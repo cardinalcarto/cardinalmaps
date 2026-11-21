@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
 import 'package:flutter/foundation.dart' show listEquals;
@@ -18,7 +19,7 @@ import 'package:routing/routing.dart';
 import 'package:sparkle/sparkle.dart';
 
 import '../geocoder/address.dart';
-import '../geocoder/geocoder.dart';
+import '../geocoder/geocoder.dart' hide Viewport;
 import '../map/location.dart';
 import '../map/map.dart';
 import '../map/route_layer.dart';
@@ -75,7 +76,7 @@ const structureSettle = Duration(milliseconds: 400);
 /// |---|---|---|
 /// | opening | | the sheet comes to rest on the header and up to three rows, in no more than 60% of the window; the trip shows nothing until the way last chosen is read, then fades in as that way |
 /// | showing the trip | a field is tapped | editing it: full, keyboard up, the field's text selected; the trip (ends, tabs, rows, the held row, buttons) fades out as the search fades in |
-/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the header anchor; the ends, tabs, rows and buttons fade in |
+/// | editing | a place or My Location is chosen | that's the end; showing the trip, at the header anchor, the keyboard going; the ends, tabs, rows and buttons fade in as the search, as it was, fades out where it was, not to be tapped |
 /// | editing | back | showing the trip, the same, the end as it was unless it was cleared |
 /// | showing the trip | X, or back | the place's card |
 /// | showing the trip | an end changes, or the ends are swapped | every way is asked again: placeholders, then its options, the first selected |
@@ -269,17 +270,35 @@ class _DirectionsPageState extends State<DirectionsPage>
 
   /// How much the trip shows, with its rows and buttons: none of it until the way
   /// last chosen is read, then all, but not while an end is edited.
-  late final _chrome = AnimationController(
-    vsync: this,
-    value: 0,
-    duration: const Duration(milliseconds: 200),
-  )..addStatusListener((_) => setState(() {}));
+  late final _chrome =
+      AnimationController(
+        vsync: this,
+        value: 0,
+        duration: const Duration(milliseconds: 200),
+      )..addStatusListener(
+        (status) => setState(() {
+          // The search has faded out.
+          if (status.isCompleted) _forgetLeft();
+        }),
+      );
 
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'directions');
 
   /// The end being edited, if one is.
   RouteField? _editing;
+
+  /// The search for the end last edited, as it was when editing ended, and the field
+  /// of it, which keeps its state as it goes from the sheet's content to fading out
+  /// over the trip.
+  _LeftSearch? _left;
+  final _inputKey = GlobalKey();
+
+  /// Lets the search last edited go, once it's faded out or an end is edited again.
+  void _forgetLeft() {
+    _left?.offset.dispose();
+    _left = null;
+  }
 
   /// The transit journey the map shows, and which it is of which question's plans:
   /// the map moves to show another journey, not the same one planned again.
@@ -461,6 +480,7 @@ class _DirectionsPageState extends State<DirectionsPage>
     _focus.dispose();
     _text.dispose();
     _chrome.dispose();
+    _forgetLeft();
     super.dispose();
   }
 
@@ -921,6 +941,7 @@ class _DirectionsPageState extends State<DirectionsPage>
       text: text,
       selection: TextSelection(baseOffset: 0, extentOffset: text.length),
     );
+    _forgetLeft();
     _search!
       ..update('')
       ..focus = (directions.from ?? directions.to)?.point;
@@ -936,9 +957,31 @@ class _DirectionsPageState extends State<DirectionsPage>
     _scheduleRefresh();
   }
 
-  /// Back to showing the trip, with the ends and tabs over the held row.
+  /// Back to showing the trip, with the ends and tabs over the held row, as the search
+  /// fades out where it is, however far it's scrolled.
   void _stopEditing() {
-    if (_editing == null) return;
+    final field = _editing;
+    if (field == null) return;
+    final search = _search!;
+    final scrolled = switch (_inputKey.currentContext) {
+      final input? => Scrollable.maybeOf(input)?.position.pixels ?? 0,
+      null => 0.0,
+    };
+    _forgetLeft();
+    _left = _LeftSearch(
+      field: field,
+      offset: ViewportOffset.fixed(scrolled),
+      choices: _EndChoices(
+        text: search.text,
+        results: List.of(search.results),
+        loading: search.loading,
+        error: search.error,
+        saved: _saved,
+        locating: _directions!.locating,
+        onMyLocation: () {},
+        onPlace: (_) {},
+      ),
+    );
     setState(() => _editing = null);
     _chrome.forward();
     _focus.unfocus();
@@ -1059,7 +1102,10 @@ class _DirectionsPageState extends State<DirectionsPage>
               ),
         slivers: editing != null
             ? _editingSlivers(editing, trip: trip?.content)
-            : [if (trip != null) SliverToBoxAdapter(child: trip.content)],
+            : [
+                if (_left case final left?) _leftSearch(left),
+                if (trip != null) SliverToBoxAdapter(child: trip.content),
+              ],
       ),
     );
   }
@@ -1272,7 +1318,7 @@ class _DirectionsPageState extends State<DirectionsPage>
   /// trip, fading out where it was, for as long as that takes.
   List<Widget> _editingSlivers(RouteField field, {required Widget? trip}) {
     final search = _search!;
-    final input = _endInput(field, search);
+    final input = KeyedSubtree(key: _inputKey, child: _endInput(field, search));
     return [
       SliverToBoxAdapter(
         child: Stack(
@@ -1294,7 +1340,10 @@ class _DirectionsPageState extends State<DirectionsPage>
         sliver: ListenableBuilder(
           listenable: Listenable.merge([search, _directions!]),
           builder: (context, _) => _EndChoices(
-            search: search,
+            text: search.text,
+            results: search.results,
+            loading: search.loading,
+            error: search.error,
             saved: _saved,
             locating: _directions!.locating,
             onMyLocation: _useMyLocation,
@@ -1304,6 +1353,34 @@ class _DirectionsPageState extends State<DirectionsPage>
       ),
     ];
   }
+
+  /// The search [left] holds, as it was when editing ended, fading out over the top of
+  /// what shows of the trip as it fades in: not to be tapped, or reached by moving
+  /// focus, or read.
+  Widget _leftSearch(_LeftSearch left) => _SliverOverTop(
+    child: IgnorePointer(
+      child: ExcludeSemantics(
+        child: FocusTraversalGroup(
+          descendantsAreTraversable: false,
+          child: FadeTransition(
+            opacity: _searching,
+            child: Viewport(
+              offset: left.offset,
+              slivers: [
+                SliverToBoxAdapter(
+                  child: KeyedSubtree(
+                    key: _inputKey,
+                    child: _endInput(left.field, _search!),
+                  ),
+                ),
+                left.choices,
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   /// The field the end [field] is typed in.
   Widget _endInput(RouteField field, PlaceSearch search) {
@@ -1370,6 +1447,61 @@ class _DirectionsPageState extends State<DirectionsPage>
   }
 }
 
+/// The search for an end as it was when editing ended, to fade out: which end, how
+/// far it was scrolled, and what it offered.
+class _LeftSearch {
+  _LeftSearch({
+    required this.field,
+    required this.offset,
+    required this.choices,
+  });
+
+  final RouteField field;
+  final ViewportOffset offset;
+  final _EndChoices choices;
+}
+
+/// Paints [child] as tall as the viewport, over the top of what it shows wherever
+/// it's scrolled to, and over the slivers after it, taking no room in the scroll and
+/// never hit: for what fades out over content as that fades in.
+class _SliverOverTop extends SingleChildRenderObjectWidget {
+  const _SliverOverTop({required Widget super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSliverOverTop();
+}
+
+class _RenderSliverOverTop extends RenderSliverSingleBoxAdapter {
+  @override
+  void performLayout() {
+    final child = this.child;
+    if (child == null) {
+      geometry = SliverGeometry.zero;
+      return;
+    }
+    final height = constraints.viewportMainAxisExtent;
+    child.layout(
+      constraints.asBoxConstraints(minExtent: height, maxExtent: height),
+    );
+    final painted = math.min(height, constraints.remainingPaintExtent);
+    geometry = SliverGeometry(
+      paintExtent: painted,
+      layoutExtent: 0,
+      maxPaintExtent: height,
+      hasVisualOverflow: painted < height,
+    );
+    (child.parentData! as SliverPhysicalParentData).paintOffset = Offset.zero;
+  }
+
+  @override
+  bool hitTestChildren(
+    SliverHitTestResult result, {
+    required double mainAxisPosition,
+    required double crossAxisPosition,
+  }) => false;
+}
+
 /// Two animations' values multiplied: how much shows of what fades for two reasons.
 class _Product extends CompoundAnimation<double> {
   _Product(Animation<double> first, Animation<double> next)
@@ -1404,14 +1536,21 @@ class _Message extends StatelessWidget {
 /// and then what the text finds.
 class _EndChoices extends StatelessWidget {
   const _EndChoices({
-    required this.search,
+    required this.text,
+    required this.results,
+    required this.loading,
+    required this.error,
     required this.saved,
     required this.locating,
     required this.onMyLocation,
     required this.onPlace,
   });
 
-  final PlaceSearch search;
+  /// What's typed, what it finds, whether it's still looking, and why it couldn't.
+  final String text;
+  final List<Place> results;
+  final bool loading;
+  final Object? error;
   final List<SavedPlace> saved;
   final bool locating;
   final VoidCallback onMyLocation;
@@ -1419,10 +1558,10 @@ class _EndChoices extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final searching = search.text.trim().isNotEmpty;
-    final message = switch (search) {
-      PlaceSearch(error: final error?) => 'Search failed: $error',
-      PlaceSearch(loading: false, results: []) when searching => 'No results',
+    final searching = text.trim().isNotEmpty;
+    final message = switch (error) {
+      final error? => 'Search failed: $error',
+      null when searching && !loading && results.isEmpty => 'No results',
       _ => null,
     };
     if (isCupertinoOf(context)) {
@@ -1437,7 +1576,7 @@ class _EndChoices extends StatelessWidget {
           );
       return SliverMainAxisGroup(
         slivers: [
-          if (search.loading)
+          if (loading)
             const SliverToBoxAdapter(
               child: SizedBox(height: 28, child: CupertinoActivityIndicator()),
             ),
@@ -1446,7 +1585,7 @@ class _EndChoices extends StatelessWidget {
             child: AppListSection(
               children: searching
                   ? [
-                      for (final place in search.results)
+                      for (final place in results)
                         row(
                           placeTitle(place),
                           placeSubtitle(place),
@@ -1481,7 +1620,7 @@ class _EndChoices extends StatelessWidget {
         SliverToBoxAdapter(
           child: SizedBox(
             height: 2,
-            child: search.loading ? const LinearProgressIndicator() : null,
+            child: loading ? const LinearProgressIndicator() : null,
           ),
         ),
         if (message != null) SliverToBoxAdapter(child: _Message(message)),
@@ -1489,11 +1628,11 @@ class _EndChoices extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
           sliver: searching
               ? SliverList.builder(
-                  itemCount: search.results.length,
+                  itemCount: results.length,
                   itemBuilder: (context, i) => _ChoiceCard(
-                    title: placeTitle(search.results[i]),
-                    subtitle: placeSubtitle(search.results[i]),
-                    onTap: () => onPlace(search.results[i]),
+                    title: placeTitle(results[i]),
+                    subtitle: placeSubtitle(results[i]),
+                    onTap: () => onPlace(results[i]),
                   ),
                 )
               : SliverList.builder(

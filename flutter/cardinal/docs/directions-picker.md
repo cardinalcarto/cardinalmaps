@@ -214,7 +214,7 @@ animation, since the row is under their control. All durations 200 ms, ease out.
 | Any | The mode's options are loading | A placeholder row holds the dock. Content fades in when they arrive. |
 | Any | No route, or the plan failed | The message takes the row's place, the same height. The buttons are disabled. |
 | Any | An end changes or the trip is swapped | Rows cross-fade to placeholders, then to the new options, first row selected. |
-| Any | A field is tapped | Editing replaces the content as it does today. The docked row and buttons fade out, and back in when editing ends. |
+| Any | A field is tapped | Editing replaces the content as it does today. The docked row and buttons fade out, and back in when editing ends. Both ways it's a cross-fade, each side where it is: going in, the trip fades out where it was scrolled to as the search fades in; coming back, the search fades out as it was left, with nothing in it to tap, as the trip fades in where it was left and the sheet lowers to the header anchor. |
 | Scrubbing a row cut off by the buttons | The scrub starts | The row stays where it is until the scrub ends, then rises as for a tap. |
 
 ## Scrubbing

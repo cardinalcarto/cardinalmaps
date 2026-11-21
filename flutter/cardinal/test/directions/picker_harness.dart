@@ -222,6 +222,16 @@ Object? heldSlot(WidgetTester tester) => tester
 SheetController sheetOf(WidgetTester tester) =>
     SheetScaffold.controllerOf(tester.element(tabs));
 
+/// Where the top of the sheet's content is in the window: under the handle, or the
+/// status bar once the sheet is as high as it goes.
+double contentTop(WidgetTester tester) {
+  final view = SheetScaffold.viewOf(
+    tester.element(find.byType(DirectionsPage)),
+  );
+  final window = tester.view.physicalSize / tester.view.devicePixelRatio;
+  return window.height - view.extent + view.geometry.contentOffset(view.extent);
+}
+
 /// The top of the buttons, which a held row stops above.
 double footerTop(WidgetTester tester) => tester.getRect(footer).top;
 

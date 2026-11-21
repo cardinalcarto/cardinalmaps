@@ -11,8 +11,14 @@ import 'package:cardinal/directions/trip_details_page.dart';
 import 'package:cardinal/map/route_layer.dart';
 import 'package:cardinal/settings/accessibility.dart';
 import 'package:cardinal/sheet/sheet.dart';
+import 'package:cardinal/store/store.dart';
 import 'package:cupertino_ui/cupertino_ui.dart'
-    show CupertinoButton, CupertinoMenuAnchor;
+    show
+        CupertinoButton,
+        CupertinoIcons,
+        CupertinoListTile,
+        CupertinoMenuAnchor,
+        CupertinoSearchTextField;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -43,6 +49,17 @@ void main() {
   List<bool> selected(WidgetTester tester) => [
     for (final row in tester.widgetList<JourneyRow>(journeys())) row.selected,
   ];
+
+  /// Matches rects at [rect], give or take what adding the same heights up in
+  /// another order comes to.
+  Matcher rectNear(Rect rect) => predicate<Rect>(
+    (actual) =>
+        (actual.left - rect.left).abs() < 1e-6 &&
+        (actual.top - rect.top).abs() < 1e-6 &&
+        (actual.right - rect.right).abs() < 1e-6 &&
+        (actual.bottom - rect.bottom).abs() < 1e-6,
+    'within a millionth of a pixel of $rect',
+  );
 
   /// How much of [finder]'s widget shows through everything that fades it.
   double opacityOf(WidgetTester tester, Finder finder) => tester
@@ -446,10 +463,61 @@ void main() {
   });
 
   group('editing an end', () {
-    for (final mode in [TravelMode.driving, TravelMode.transit]) {
-      testWidgets('fades the trip out where it is, the held row with it, as '
-          'the search fades in: ${mode.name}', (tester) async {
-        await picker.open(tester);
+    /// Pumps a frame at a time through the fade between the trip and the search,
+    /// checking at each that [outgoing] fades out by as much as [incoming] fades
+    /// in, that each stays where it was, and that nothing of [outgoing] can be
+    /// tapped; until [incoming] shows in full.
+    Future<void> crossFade(
+      WidgetTester tester, {
+      required Finder outgoing,
+      required Finder incoming,
+      required Map<Finder, Rect> staying,
+    }) async {
+      var shown = opacityOf(tester, incoming);
+      var frames = 0;
+      while (shown < 1) {
+        expect(frames++, lessThan(30), reason: 'the fade ends');
+        await tester.pump(const Duration(milliseconds: 16));
+        // Gone once it's faded out.
+        final out = outgoing.evaluate().isEmpty
+            ? 0.0
+            : opacityOf(tester, outgoing);
+        final into = opacityOf(tester, incoming);
+        expect(out + into, moreOrLessEquals(1), reason: 'frame $frames');
+        expect(into, greaterThanOrEqualTo(shown), reason: 'frame $frames');
+        shown = into;
+        for (final MapEntry(key: finder, value: rect) in staying.entries) {
+          if (finder.evaluate().isEmpty) continue;
+          expect(
+            tester.getRect(finder).shift(Offset(0, -contentTop(tester))),
+            rectNear(rect),
+            reason: '$finder, frame $frames',
+          );
+        }
+        if (out > 0) {
+          final box = tester.renderObject(outgoing);
+          final at = tester.getCenter(outgoing);
+          expect(
+            tester
+                .hitTestOnBinding(at)
+                .path
+                .any((entry) => entry.target == box),
+            isFalse,
+            reason: 'a tap on what fades out, frame $frames',
+          );
+        }
+      }
+    }
+
+    for (final (platform, mode) in [
+      for (final platform in [TargetPlatform.android, TargetPlatform.iOS])
+        for (final mode in TravelMode.values) (platform, mode),
+    ]) {
+      testWidgets('the trip and the search cross-fade, each where it is, the '
+          'held row with the trip: going in, and back: ${mode.name} on '
+          '${platform.name}', (tester) async {
+        final cupertino = platform == TargetPlatform.iOS;
+        await picker.open(tester, platform: platform);
         await showMode(tester, mode);
         await moveTo(tester, headerAnchor);
         final row = mode == TravelMode.transit ? journeys() : rows;
@@ -461,38 +529,73 @@ void main() {
               matching: find.text('Museum of Flight', findRichText: false),
             )
             .last;
-        await tester.tap(find.widgetWithText(InkWell, 'To'));
+        final field = find.byType(
+          cupertino ? CupertinoSearchTextField : TextField,
+        );
+        final input = find.descendant(
+          of: field,
+          matching: find.byType(EditableText),
+        );
+        await tester.tap(
+          find
+              .ancestor(
+                of: find.text('To'),
+                matching: find.byType(cupertino ? CupertinoListTile : InkWell),
+              )
+              .first,
+        );
         await tester.pump();
         // The trip is all still there, where it was, with the search under it.
         expect(tester.getRect(inCard()), card);
-        expect(find.byType(TextField), findsOneWidget);
+        expect(field, findsOneWidget);
+        expect(tester.testTextInput.isVisible, isTrue);
         await tester.pump(const Duration(milliseconds: 60));
         expect(opacityOf(tester, tabs), inExclusiveRange(0, 1));
         expect(opacityOf(tester, row.first), inExclusiveRange(0, 1));
         expect(opacityOf(tester, footer), inExclusiveRange(0, 1));
-        expect(
-          opacityOf(tester, find.byType(TextField)),
-          inExclusiveRange(0, 1),
-        );
         // The held row is still held, over the buttons.
         expect(
           tester.getRect(row.first).bottom,
           lessThanOrEqualTo(footerTop(tester) + 0.5),
         );
+        await crossFade(tester, outgoing: tabs, incoming: field, staying: {});
         await tester.pumpAndSettle();
         expect(row, findsNothing);
         expect(tabs, findsNothing);
         expect(footer, findsNothing);
-        expect(opacityOf(tester, find.byType(TextField)), 1);
+        expect(opacityOf(tester, field), 1);
         expect(sheet.isAtMax, isTrue);
 
-        // And back: the trip fades in, the sheet at the header anchor.
+        // And back: the search fades out where it is, in the sheet as it lowers
+        // to the header anchor, as the trip fades in; the keyboard goes at once.
+        final search = tester
+            .getRect(field)
+            .shift(Offset(0, -contentTop(tester)));
+        final choice = cupertino
+            ? find.byIcon(CupertinoIcons.location_fill)
+            : find.text('Use current location');
+        final choiceAt = tester
+            .getRect(choice)
+            .shift(Offset(0, -contentTop(tester)));
         await tester.binding.handlePopRoute();
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 60));
-        expect(find.byType(TextField), findsNothing);
-        expect(opacityOf(tester, tabs), inExclusiveRange(0, 1));
-        expect(opacityOf(tester, row.first), inExclusiveRange(0, 1));
+        expect(field, findsOneWidget);
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(tester.widget<EditableText>(input).focusNode.hasFocus, isFalse);
+        expect(opacityOf(tester, field), 1);
+        expect(
+          tester.getRect(field).shift(Offset(0, -contentTop(tester))),
+          rectNear(search),
+        );
+        expect(opacityOf(tester, tabs), 0);
+        await crossFade(
+          tester,
+          outgoing: field,
+          incoming: tabs,
+          staying: {field: search, choice: choiceAt},
+        );
+        expect(field, findsNothing);
+        expect(choice, findsNothing);
         await tester.pumpAndSettle();
         expect(sheet.restingAt, headerAnchor);
         expect(opacityOf(tester, row.first), 1);
@@ -500,8 +603,110 @@ void main() {
           tester.getRect(row.first).bottom,
           moreOrLessEquals(footerTop(tester)),
         );
+        expect(tester.testTextInput.isVisible, isFalse);
       });
     }
+
+    testWidgets('a choice tapped fades out with the search, where it was, and '
+        "can't be tapped again", (tester) async {
+      await picker.open(tester);
+      await tester.tap(find.widgetWithText(InkWell, 'From'));
+      await tester.pumpAndSettle();
+      final choice = find.text('Use current location');
+      final at = tester.getRect(choice).shift(Offset(0, -contentTop(tester)));
+      await tester.tap(choice);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(TextField), findsOneWidget);
+      expect(tabs, findsOneWidget);
+      expect(tester.testTextInput.isVisible, isFalse);
+      await crossFade(
+        tester,
+        outgoing: choice,
+        incoming: tabs,
+        staying: {choice: at},
+      );
+      await tester.pumpAndSettle();
+      expect(choice, findsNothing);
+      expect(find.text('My Location'), findsOneWidget);
+      expect(sheetOf(tester).restingAt, headerAnchor);
+    });
+
+    testWidgets('editing again as the search fades out fades it back in, with '
+        'the keyboard', (tester) async {
+      await picker.open(tester);
+      await tester.tap(find.widgetWithText(InkWell, 'To'));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      final field = find.byType(TextField);
+      final fading = opacityOf(tester, field);
+      expect(fading, inExclusiveRange(0, 1));
+      tester.widget<InkWell>(find.widgetWithText(InkWell, 'From')).onTap!();
+      await tester.pump();
+      expect(field, findsOneWidget);
+      expect(opacityOf(tester, field), moreOrLessEquals(fading));
+      expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      await tester.pumpAndSettle();
+      expect(opacityOf(tester, field), 1);
+      expect(tabs, findsNothing);
+      expect(
+        SheetScaffold.controllerOf(tester.element(find.byType(DirectionsPage)))
+            .isAtMax,
+        isTrue,
+      );
+    });
+
+    testWidgets('fades the search out where it was scrolled to, over the trip '
+        'where it comes back to, though that\'s shorter', (tester) async {
+      for (var i = 0; i < 20; i++) {
+        final place = Place(
+          id: 'poi:${100 + i}',
+          kind: 'poi',
+          name: 'Saved $i',
+          center: LngLat(2, 2 + i / 100),
+        );
+        await picker.store.places.put(place);
+        await picker.store.saved.savePlace(place.id);
+      }
+      picker.transit.immediately = fakePlan(journeys: 10);
+      await picker.open(tester);
+      await showMode(tester, TravelMode.transit);
+      await moveTo(tester, const SheetAnchor.full());
+      await tester.drag(journeys().at(2), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      double scrolled() => tester
+          .state<ScrollableState>(
+            find.ancestor(of: tabs, matching: find.byType(Scrollable)).first,
+          )
+          .position
+          .pixels;
+      final left = scrolled();
+      tester.widget<InkWell>(find.widgetWithText(InkWell, 'To')).onTap!();
+      await tester.pumpAndSettle();
+      await tester.drag(find.text('Saved 17'), const Offset(0, -300));
+      await tester.pumpAndSettle();
+      // A choice, not the end it becomes.
+      final choice = find.widgetWithText(ListTile, 'Saved 8');
+      final at = tester.getRect(choice).shift(Offset(0, -contentTop(tester)));
+      // The new trip has placeholders while it's planned: far shorter.
+      picker.transit.immediately = null;
+      await tester.tap(choice);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(OptionPlaceholder), findsWidgets);
+      expect(scrolled(), lessThan(left));
+      await crossFade(
+        tester,
+        outgoing: choice,
+        incoming: tabs,
+        staying: {choice: at},
+      );
+      await tester.pumpAndSettle();
+      expect(choice, findsNothing);
+    });
 
     testWidgets('fades the trip out where it was scrolled to', (tester) async {
       picker.transit.immediately = fakePlan(journeys: 10);
