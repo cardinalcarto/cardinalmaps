@@ -34,6 +34,7 @@ import '../ui/haptics.dart';
 import '../units.dart';
 import 'callouts.dart';
 import 'connections.dart';
+import 'departure_legs.dart';
 import 'directions.dart';
 import 'format.dart';
 import 'route_source.dart';
@@ -149,6 +150,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
   /// The departures chosen of the open journey's rides, if they've been worked out.
   ConnectionChain? _chain;
 
+  /// The legs of the departures chosen other than the plan's, for the map to draw.
+  DepartureLegs? _legs;
+
   List<SavedPlace> _saved = const [];
 
   /// The routes the map shows, and what's worked out from them.
@@ -204,6 +208,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
       transit: scope.transit,
       location: scope.location,
     )..addListener(_changed);
+    _legs = DepartureLegs(scope.transit)
+      ..addListener(() {
+        if (mounted) _drawRoutes();
+      });
     // The place's card under this page has it, or is fetching it.
     final cached = store.places.cached(widget.to);
     if (cached != null) {
@@ -274,6 +282,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
       ..setGeoJson(routeCalloutSource, empty)
       ..setGeoJson(transitSource, empty);
     _directions?.dispose();
+    _legs?.dispose();
     _search?.dispose();
     _focus.dispose();
     _text.dispose();
@@ -344,6 +353,9 @@ class _DirectionsPageState extends State<DirectionsPage> {
       _shownJourney = journey;
       _showJourney();
     }
+    // A newer plan of the open journey keeps its choices, as far as it can.
+    if (_journeyOpen && journey != null) _chainOf(journey);
+    _followChain();
     _drawRoutes();
     _placeCallouts();
     _keepClock(directions.mode == TravelMode.transit);
@@ -395,8 +407,52 @@ class _DirectionsPageState extends State<DirectionsPage> {
     );
     _map.setGeoJson(
       transitSource,
-      journeyGeoJson(navigating ? null : _shownJourney),
+      journeyGeoJson(
+        navigating ? null : _shownJourney,
+        rides: navigating ? const {} : _chosenRides(),
+      ),
     );
+  }
+
+  /// The open journey's choices, rebased onto [journey] when that's a newer plan of it.
+  ConnectionChain _chainOf(Journey journey) => _chain = switch (_chain) {
+    final chain? when identical(chain.journey, journey) => chain,
+    final chain? => chain.rebase(journey),
+    null => ConnectionChain(journey),
+  };
+
+  /// Has the legs fetched of the departures the open journey takes but the plan's own,
+  /// and no others.
+  void _followChain() {
+    final directions = _directions!;
+    final plan = directions.plan;
+    if (plan == null) return;
+    _legs!.follow(plan, _journeyOpen ? _chain : null, directions.transitAccess);
+  }
+
+  /// How the map draws each ride of the open journey that takes another departure than
+  /// the plan's, by its index in the journey's legs: along the departure's own line once
+  /// it's fetched, and until then along the plan's, which is between the same two stops,
+  /// in the departure's route's colors.
+  Map<int, DrawnRide> _chosenRides() {
+    final journey = _shownJourney;
+    final chain = _chain;
+    if (!_journeyOpen ||
+        journey == null ||
+        chain == null ||
+        !identical(chain.journey, journey)) {
+      return const {};
+    }
+    final access = _directions!.transitAccess;
+    return {
+      for (final (i, leg) in journey.legs.indexed)
+        if (chain.forLeg(i) case final choice?
+            when choice.made && !choice.suggested)
+          i: switch (_legs!.legOf(choice, access)) {
+            final fetched? => (shape: fetched.shape, route: fetched.route),
+            null => (shape: leg.shape, route: choice.route),
+          },
+    };
   }
 
   /// Makes the transit journey the map's subject.
@@ -515,12 +571,20 @@ class _DirectionsPageState extends State<DirectionsPage> {
       _journeyOpen = true;
       _chain = null;
     });
+    _chainChanged();
     _animateAfterFrame(_detailsAnchor);
   }
 
   void _closeJourney() {
     setState(() => _journeyOpen = false);
+    _chainChanged();
     _animateAfterFrame(_tripAnchor);
+  }
+
+  /// The departures chosen changed: fetch the legs they need, and draw them.
+  void _chainChanged() {
+    _followChain();
+    _drawRoutes();
   }
 
   /// A field's tapped: edit it, full, with its text ready to be typed over.
@@ -825,12 +889,7 @@ class _DirectionsPageState extends State<DirectionsPage> {
   List<Widget> _journeySlivers(Directions directions, Journey journey) {
     final units = _units.onDevice;
     final now = DateTime.now();
-    final chain = switch (_chain) {
-      final chain? when identical(chain.journey, journey) => chain,
-      final chain? => chain.rebase(journey),
-      null => ConnectionChain(journey),
-    };
-    _chain = chain;
+    final chain = _chainOf(journey);
     return [
       SliverToBoxAdapter(
         child: SheetSection(
@@ -845,8 +904,10 @@ class _DirectionsPageState extends State<DirectionsPage> {
       ),
       JourneyItinerary(
         chain: chain,
-        onSelect: (ride, departure) =>
-            setState(() => _chain = chain.select(ride, departure)),
+        onSelect: (ride, departure) {
+          setState(() => _chain = chain.select(ride, departure));
+          _chainChanged();
+        },
         start: directions.from?.label ?? 'Start',
         destination: directions.to?.label ?? 'Destination',
         units: units,
