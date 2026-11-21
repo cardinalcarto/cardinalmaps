@@ -233,6 +233,25 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('the bar\'s Cancel arrow stops searching, as back does', (
+    tester,
+  ) async {
+    await _pumpApp(tester);
+    final peek = _sheet(tester).extent;
+    expect(find.byTooltip('Cancel'), findsNothing);
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Cancel'));
+    await tester.pumpAndSettle();
+    expect(_sheet(tester).extent, moreOrLessEquals(peek));
+    expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('search'));
+    expect(find.text('space ne'), findsNothing);
+    expect(find.text('Space Needle'), findsNothing);
+    expect(find.byTooltip('Cancel'), findsNothing);
+  });
+
   testWidgets('back stops searching and clears the query', (tester) async {
     await _pumpApp(tester);
     final peek = _sheet(tester).extent;
