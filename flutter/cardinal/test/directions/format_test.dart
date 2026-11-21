@@ -99,11 +99,14 @@ void main() {
       expect(facts([freeway, _route(23000, 1340)], 1)[1], '<1 min slower');
     });
 
-    test('one that isn\'t slower, though it isn\'t first, says neither', () {
-      expect(facts([freeway, _route(30000, 1200, motorway: true)], 1), [
-        '19 mi',
-      ]);
-    });
+    test(
+      'the quickest is the fastest, though the router put another first',
+      () {
+        final routes = [freeway, _route(30000, 1200, motorway: true)];
+        expect(facts(routes, 1), ['19 mi', 'Fastest']);
+        expect(facts(routes, 0)[1], endsWith('slower'));
+      },
+    );
 
     test('the shortest says so, unless it\'s the only one', () {
       expect(facts(routes, 2), contains('Shortest'));

@@ -74,8 +74,9 @@ move the tabs when one is tapped there.
   walking: climb, "Least climbing" on the row that has it, "Mostly trails" over half.
 - **Selected row.** A tonal fill and the headline in the primary color. Nothing else
   changes, so selecting never moves anything.
-- **Order.** As the router returns them, fastest first. A list never reorders while it
-  shows.
+- **Order.** As the router returns them: its best route first, which is usually but
+  not always the quickest. "Fastest" goes on the one that takes the least time. A list
+  never reorders while it shows.
 
 ### Naming a route
 

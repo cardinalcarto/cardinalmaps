@@ -102,9 +102,10 @@ int? leastClimbing(List<DirectionsRoute> routes) {
   return least;
 }
 
-/// What's said under the route at [index] of [routes], the fastest first: how far it
-/// goes, then how it differs from the others. In order: its distance; "Fastest" for the
-/// first, or how much slower it is; "Shortest", unless it's the only one; then:
+/// What's said under the route at [index] of [routes]: how far it goes, then how it
+/// differs from the others. In order: its distance; "Fastest" for the one that takes
+/// the least time (the first of them, if several show the same minutes), or how much
+/// slower than it this one is; "Shortest", unless it's the only one; then:
 ///
 /// - if [driving], "Ferry", "No freeways" if another of the routes takes one, and
 ///   "Tolls" unless [tollOnProfile] says its profile has "Toll" written on it;
@@ -122,16 +123,20 @@ List<String> routeFacts(
 }) {
   final route = routes[index];
   int minutes(DirectionsRoute route) => (route.duration / 60).round();
-  // By the minutes each shows, so the two add up.
-  final slower = minutes(route) - minutes(routes.first);
+  // By the minutes each shows, so the two add up. The router gives its best route
+  // first, which isn't always the quickest.
+  final fastest = routes.indexWhere(
+    (other) => !routes.any((r) => minutes(r) < minutes(other)),
+  );
+  final slower = minutes(route) - minutes(routes[fastest]);
   final shortest = routes.indexWhere(
     (other) => !routes.any((r) => r.distance < other.distance),
   );
   return [
     formatDistance(route.distance, units: units),
-    if (index == 0)
+    if (index == fastest)
       'Fastest'
-    else if (slower >= 0)
+    else
       '${formatDuration(slower * 60)} slower',
     if (routes.length > 1 && index == shortest) 'Shortest',
     if (driving) ...[
