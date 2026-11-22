@@ -10,17 +10,17 @@ The goal of Cardinal Maps is to be the slickest maps app you can find that doesn
 * Search for addresses, points of interest, administrative areas, and categories of places.
 * Save places for easy access, and show your favorites on the map.
 * Download maps for offline use.
+* Search for places or things near you, even offline.
 * Get directions for driving, cycling and walking, even offline.
 * Plan a journey by public transit, even while you're offline.
 * Plan transit journeys "offline" using real-time data. The server never sees where you are or where you're going.
 * Show nearby transit departures, schedules and routes.
 * Turn-by-turn navigation to your destination.
-* Topographic maps, even offline, for free.
+* Topographic maps, even offline.
 
 ## Missing features
 
 * Online routes. We're still working on deploying the routing engine globally, so currently you need to download offline maps for routing and transit information.
-* Offline searching. Porting over the geocoder to work on the phone is to be completed.
 * End-to-end encrypted saved place sync/backups.
 * End-to-end encrypted location sharing and social features.
 
