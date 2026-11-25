@@ -70,22 +70,48 @@ impl Lattice {
                 }
             }
         }
-        let trans = (0..labels * labels).map(|k| weights.trans(k / labels, k % labels)).collect();
-        Self { labels, len, state, state_trans, trans }
+        let trans = (0..labels * labels)
+            .map(|k| weights.trans(k / labels, k % labels))
+            .collect();
+        Self {
+            labels,
+            len,
+            state,
+            state_trans,
+            trans,
+        }
     }
 
     /// A lattice from scores already summed: `state[t * L + j]`,
     /// `state_trans[(t * L + i) * L + j]` and `trans[i * L + j]`.
     #[must_use]
-    pub fn from_scores(labels: usize, len: usize, state: Vec<f64>, state_trans: Vec<f64>, trans: Vec<f64>) -> Self {
-        Self { labels, len, state, state_trans, trans }
+    pub fn from_scores(
+        labels: usize,
+        len: usize,
+        state: Vec<f64>,
+        state_trans: Vec<f64>,
+        trans: Vec<f64>,
+    ) -> Self {
+        Self {
+            labels,
+            len,
+            state,
+            state_trans,
+            trans,
+        }
     }
 
     /// The lattice with every score multiplied by `scale`.
     #[must_use]
     pub fn scaled(&self, scale: f64) -> Self {
         let times = |v: &[f64]| v.iter().map(|x| x * scale).collect();
-        Self { labels: self.labels, len: self.len, state: times(&self.state), state_trans: times(&self.state_trans), trans: times(&self.trans) }
+        Self {
+            labels: self.labels,
+            len: self.len,
+            state: times(&self.state),
+            state_trans: times(&self.state_trans),
+            trans: times(&self.trans),
+        }
     }
 
     /// The log of a path's probability.
@@ -120,7 +146,11 @@ impl Lattice {
     pub fn path_score(&self, path: &[Label]) -> f64 {
         path.iter().enumerate().fold(0.0, |score, (t, &j)| {
             let j = usize::from(j);
-            let edge = if t > 0 { self.edge(t, usize::from(path[t - 1]), j) } else { 0.0 };
+            let edge = if t > 0 {
+                self.edge(t, usize::from(path[t - 1]), j)
+            } else {
+                0.0
+            };
             score + edge + self.state(t, j)
         })
     }
@@ -150,7 +180,12 @@ impl Lattice {
             best = next;
         }
         let (mut last, score) =
-            best.iter().enumerate().fold((0, f64::NEG_INFINITY), |acc, (j, &s)| if s > acc.1 { (j, s) } else { acc });
+            best.iter()
+                .enumerate()
+                .fold(
+                    (0, f64::NEG_INFINITY),
+                    |acc, (j, &s)| if s > acc.1 { (j, s) } else { acc },
+                );
         let mut path = vec![0 as Label; self.len];
         for t in (0..self.len).rev() {
             path[t] = last as Label;
@@ -186,11 +221,20 @@ impl Lattice {
                 candidates.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
                 candidates.truncate(k);
                 let state = self.state(t, j);
-                best[t][j] = candidates.into_iter().map(|(s, i, r)| (s + state, i, r)).collect();
+                best[t][j] = candidates
+                    .into_iter()
+                    .map(|(s, i, r)| (s + state, i, r))
+                    .collect();
             }
         }
-        let mut ends: Vec<(f64, usize, usize)> =
-            (0..l).flat_map(|j| best[self.len - 1][j].iter().enumerate().map(move |(r, (s, _, _))| (*s, j, r))).collect();
+        let mut ends: Vec<(f64, usize, usize)> = (0..l)
+            .flat_map(|j| {
+                best[self.len - 1][j]
+                    .iter()
+                    .enumerate()
+                    .map(move |(r, (s, _, _))| (*s, j, r))
+            })
+            .collect();
         ends.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
         ends.truncate(k);
         let log_z = self.log_partition();
@@ -215,7 +259,9 @@ impl Lattice {
         let mut alpha: Vec<f64> = (0..l).map(|j| self.state(0, j)).collect();
         for t in 1..self.len {
             alpha = (0..l)
-                .map(|j| log_sum_exp((0..l).map(|i| alpha[i] + self.edge(t, i, j))) + self.state(t, j))
+                .map(|j| {
+                    log_sum_exp((0..l).map(|i| alpha[i] + self.edge(t, i, j))) + self.state(t, j)
+                })
                 .collect();
         }
         log_sum_exp(alpha.into_iter())
@@ -242,13 +288,18 @@ impl Lattice {
         let mut beta = vec![0.0; self.len * l];
         for t in (0..self.len - 1).rev() {
             for i in 0..l {
-                let terms = (0..l).map(|j| self.edge(t + 1, i, j) + self.state(t + 1, j) + beta[(t + 1) * l + j]);
+                let terms = (0..l)
+                    .map(|j| self.edge(t + 1, i, j) + self.state(t + 1, j) + beta[(t + 1) * l + j]);
                 beta[t * l + i] = log_sum_exp(terms);
             }
         }
         let log_z = log_sum_exp((0..l).map(|j| alpha[(self.len - 1) * l + j]));
         (0..self.len)
-            .map(|t| (0..l).map(|j| (alpha[t * l + j] + beta[t * l + j] - log_z).exp()).collect())
+            .map(|t| {
+                (0..l)
+                    .map(|j| (alpha[t * l + j] + beta[t * l + j] - log_z).exp())
+                    .collect()
+            })
             .collect()
     }
 }
@@ -271,7 +322,10 @@ fn log_sum_exp(terms: impl Iterator<Item = f64> + Clone) -> f64 {
 #[must_use]
 pub fn fit_scale(labelled: &[(Lattice, Vec<Label>)]) -> f64 {
     let loss = |scale: f64| -> f64 {
-        labelled.iter().map(|(lattice, truth)| -lattice.scaled(scale).log_probability(truth)).sum()
+        labelled
+            .iter()
+            .map(|(lattice, truth)| -lattice.scaled(scale).log_probability(truth))
+            .sum()
     };
     let (mut lo, mut hi) = (1e-3f64.ln(), 10f64.ln());
     let ratio = (5f64.sqrt() - 1.0) / 2.0;
@@ -335,14 +389,20 @@ mod test {
 
     fn tokens(n: usize) -> Vec<TokenFeatures> {
         (0..n)
-            .map(|t| TokenFeatures { state: vec![format!("w{t}"), "bias".into()], transition: vec![format!("t{t}")] })
+            .map(|t| TokenFeatures {
+                state: vec![format!("w{t}"), "bias".into()],
+                transition: vec![format!("t{t}")],
+            })
             .collect()
     }
 
     fn all_paths(len: usize, labels: usize) -> Vec<Vec<Label>> {
         let mut paths = vec![Vec::new()];
         for _ in 0..len {
-            paths = paths.into_iter().flat_map(|p| (0..labels).map(move |j| [p.clone(), vec![j as Label]].concat())).collect();
+            paths = paths
+                .into_iter()
+                .flat_map(|p| (0..labels).map(move |j| [p.clone(), vec![j as Label]].concat()))
+                .collect();
         }
         paths
     }
@@ -353,7 +413,10 @@ mod test {
             let weights = Random { labels: 3, seed };
             let lattice = Lattice::new(&weights, &tokens(4));
             let (path, score) = lattice.viterbi();
-            let best = all_paths(4, 3).into_iter().map(|p| lattice.path_score(&p)).fold(f64::NEG_INFINITY, f64::max);
+            let best = all_paths(4, 3)
+                .into_iter()
+                .map(|p| lattice.path_score(&p))
+                .fold(f64::NEG_INFINITY, f64::max);
             assert!((score - best).abs() < 1e-9, "seed {seed}");
             assert!((lattice.path_score(&path) - score).abs() < 1e-9);
         }
@@ -371,9 +434,16 @@ mod test {
                 let total: f64 = marginals[t].iter().sum();
                 assert!((total - 1.0).abs() < 1e-9);
                 for j in 0..3 {
-                    let expected: f64 =
-                        paths.iter().filter(|p| usize::from(p[t]) == j).map(|p| lattice.path_score(p).exp()).sum::<f64>() / z;
-                    assert!((marginals[t][j] - expected).abs() < 1e-9, "seed {seed} t {t} j {j}");
+                    let expected: f64 = paths
+                        .iter()
+                        .filter(|p| usize::from(p[t]) == j)
+                        .map(|p| lattice.path_score(p).exp())
+                        .sum::<f64>()
+                        / z;
+                    assert!(
+                        (marginals[t][j] - expected).abs() < 1e-9,
+                        "seed {seed} t {t} j {j}"
+                    );
                 }
             }
         }
@@ -386,12 +456,21 @@ mod test {
             let lattice = Lattice::new(&weights, &tokens(4));
             let paths = all_paths(4, 3);
             let z: f64 = paths.iter().map(|p| lattice.path_score(p).exp()).sum();
-            let mut scored: Vec<(Vec<Label>, f64)> = paths.into_iter().map(|p| { let s = lattice.path_score(&p); (p, s) }).collect();
+            let mut scored: Vec<(Vec<Label>, f64)> = paths
+                .into_iter()
+                .map(|p| {
+                    let s = lattice.path_score(&p);
+                    (p, s)
+                })
+                .collect();
             scored.sort_by(|a, b| b.1.total_cmp(&a.1));
             let best = lattice.best_paths(5);
             assert_eq!(best.len(), 5);
             for ((path, probability), (want, score)) in best.iter().zip(&scored) {
-                assert!((lattice.path_score(path) - score).abs() < 1e-9, "seed {seed}: {path:?} vs {want:?}");
+                assert!(
+                    (lattice.path_score(path) - score).abs() < 1e-9,
+                    "seed {seed}: {path:?} vs {want:?}"
+                );
                 assert!((probability - score.exp() / z).abs() < 1e-9);
             }
             assert_eq!(best[0].0, lattice.viterbi().0);
@@ -410,7 +489,9 @@ mod test {
         // One token whose second label scores 10 more, right 70% of the time:
         // the scale that's most likely gives it sigmoid(10 s) = 0.7.
         let lattice = Lattice::from_scores(2, 1, vec![0.0, 10.0], vec![0.0; 4], vec![0.0; 4]);
-        let labelled: Vec<(Lattice, Vec<Label>)> = (0..10).map(|i| (lattice.clone(), vec![Label::from(i < 7)])).collect();
+        let labelled: Vec<(Lattice, Vec<Label>)> = (0..10)
+            .map(|i| (lattice.clone(), vec![Label::from(i < 7)]))
+            .collect();
         let scale = fit_scale(&labelled);
         let expected = (0.7f64 / 0.3).ln() / 10.0;
         assert!((scale - expected).abs() < 1e-3, "{scale} vs {expected}");

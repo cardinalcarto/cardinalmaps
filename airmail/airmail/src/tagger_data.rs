@@ -87,11 +87,12 @@ fn local_languages(country: &str) -> &'static [&'static str] {
         "UA" => &["ukr"],
         "DE" | "AT" | "LI" => &["deu"],
         "CH" => &["deu", "fra", "ita"],
-        "FR" | "LU" | "MC" | "SN" | "CI" | "ML" | "BF" | "NE" | "GN" | "CD" | "CG" | "CM" | "MG" | "HT" => &["fra"],
+        "FR" | "LU" | "MC" | "SN" | "CI" | "ML" | "BF" | "NE" | "GN" | "CD" | "CG" | "CM"
+        | "MG" | "HT" => &["fra"],
         "BE" => &["nld", "fra"],
         "NL" => &["nld"],
-        "ES" | "MX" | "AR" | "CL" | "CO" | "PE" | "VE" | "UY" | "EC" | "BO" | "PY" | "CR" | "GT" | "CU" | "DO" | "HN" | "NI" | "SV"
-        | "PA" => &["spa"],
+        "ES" | "MX" | "AR" | "CL" | "CO" | "PE" | "VE" | "UY" | "EC" | "BO" | "PY" | "CR"
+        | "GT" | "CU" | "DO" | "HN" | "NI" | "SV" | "PA" => &["spa"],
         "IT" | "SM" | "VA" => &["ita"],
         "PT" | "BR" | "AO" | "MZ" => &["por"],
         "PL" => &["pol"],
@@ -131,7 +132,8 @@ fn local_languages(country: &str) -> &'static [&'static str] {
         "MM" => &["mya"],
         "MN" => &["mon"],
         "IL" => &["heb"],
-        "SA" | "AE" | "EG" | "MA" | "DZ" | "TN" | "LY" | "IQ" | "SY" | "JO" | "LB" | "YE" | "OM" | "KW" | "QA" | "BH" | "SD" | "PS" => &["ara"],
+        "SA" | "AE" | "EG" | "MA" | "DZ" | "TN" | "LY" | "IQ" | "SY" | "JO" | "LB" | "YE"
+        | "OM" | "KW" | "QA" | "BH" | "SD" | "PS" => &["ara"],
         "IR" | "AF" => &["fas"],
         "IN" => &["hin"],
         "PK" => &["urd"],
@@ -147,7 +149,8 @@ fn language(country: Option<&str>) -> &'static str {
     match country.unwrap_or("") {
         "DE" | "AT" | "LI" => "de",
         "FR" | "BE" | "LU" | "MC" => "fr",
-        "ES" | "MX" | "AR" | "CL" | "CO" | "PE" | "VE" | "UY" | "EC" | "BO" | "PY" | "CR" | "GT" | "CU" => "es",
+        "ES" | "MX" | "AR" | "CL" | "CO" | "PE" | "VE" | "UY" | "EC" | "BO" | "PY" | "CR"
+        | "GT" | "CU" => "es",
         "IT" | "SM" => "it",
         "PT" | "BR" => "pt",
         "NL" => "nl",
@@ -176,13 +179,102 @@ struct Connectors {
 /// The last words of `near` phrases that stand alone: me, here and nearby,
 /// in the dictionaries' languages.
 const STANDALONE_LAST_WORDS: &[&str] = &[
-    "me", "here", "nearby", "men", "tuk", "наблизо", "nablizo", "mene", "ovdje", "ovde", "aquí", "aqui", "meu", "tady", "mig",
-    "her", "hier", "mir", "gegend", "acá", "aca", "mi", "mì", "mulle", "siinkandis", "lahedal", "hemen", "gertu", "minua", "täällä",
-    "taalla", "lähistöllä", "lahistolla", "lähellä", "lahella", "moi", "ici", "dici", "d'ici", "d'aquí", "d'aqui", "daquí", "là", "la", "alentours", "közelben",
-    "kozelben", "közelemben", "kozelemben", "hér", "hérna", "herna", "mér", "mer", "qui", "vicinanze", "meg", "naerheten",
-    "nærheten", "naerheden", "nærheden", "buurt", "mnie", "tutaj", "poblizu", "pobliżu", "mim", "daqui", "aici", "apropiere",
-    "mine", "мной", "mnoy", "здесь", "zdes", "zdes'", "поблизости", "poblizosti", "tu", "mne", "okoli", "okolí", "tukaj",
-    "här", "har", "narheten", "närheten", "тут", "tut", "мною", "mnoyu", "поблизу", "poblyzu", "nähe", "nahe", "naehe",
+    "me",
+    "here",
+    "nearby",
+    "men",
+    "tuk",
+    "наблизо",
+    "nablizo",
+    "mene",
+    "ovdje",
+    "ovde",
+    "aquí",
+    "aqui",
+    "meu",
+    "tady",
+    "mig",
+    "her",
+    "hier",
+    "mir",
+    "gegend",
+    "acá",
+    "aca",
+    "mi",
+    "mì",
+    "mulle",
+    "siinkandis",
+    "lahedal",
+    "hemen",
+    "gertu",
+    "minua",
+    "täällä",
+    "taalla",
+    "lähistöllä",
+    "lahistolla",
+    "lähellä",
+    "lahella",
+    "moi",
+    "ici",
+    "dici",
+    "d'ici",
+    "d'aquí",
+    "d'aqui",
+    "daquí",
+    "là",
+    "la",
+    "alentours",
+    "közelben",
+    "kozelben",
+    "közelemben",
+    "kozelemben",
+    "hér",
+    "hérna",
+    "herna",
+    "mér",
+    "mer",
+    "qui",
+    "vicinanze",
+    "meg",
+    "naerheten",
+    "nærheten",
+    "naerheden",
+    "nærheden",
+    "buurt",
+    "mnie",
+    "tutaj",
+    "poblizu",
+    "pobliżu",
+    "mim",
+    "daqui",
+    "aici",
+    "apropiere",
+    "mine",
+    "мной",
+    "mnoy",
+    "здесь",
+    "zdes",
+    "zdes'",
+    "поблизости",
+    "poblizosti",
+    "tu",
+    "mne",
+    "okoli",
+    "okolí",
+    "tukaj",
+    "här",
+    "har",
+    "narheten",
+    "närheten",
+    "тут",
+    "tut",
+    "мною",
+    "mnoyu",
+    "поблизу",
+    "poblyzu",
+    "nähe",
+    "nahe",
+    "naehe",
 ];
 
 impl Connectors {
@@ -195,11 +287,18 @@ impl Connectors {
                 .map(str::trim)
                 .filter(|p| !p.is_empty())
                 .map(str::to_string)
-                .partition(|p| p.split_whitespace().last().is_some_and(|w| STANDALONE_LAST_WORDS.contains(&w)));
+                .partition(|p| {
+                    p.split_whitespace()
+                        .last()
+                        .is_some_and(|w| STANDALONE_LAST_WORDS.contains(&w))
+                });
             before_place.insert(language, before);
             standalone.insert(language, alone);
         }
-        Self { before_place, standalone }
+        Self {
+            before_place,
+            standalone,
+        }
     }
 
     /// One that takes a place after it.
@@ -212,8 +311,15 @@ impl Connectors {
         Self::choose(&self.standalone, language, rng)
     }
 
-    fn choose<'a>(phrases: &'a HashMap<&'static str, Vec<String>>, language: &str, rng: &mut StdRng) -> Option<&'a str> {
-        let phrases = phrases.get(language).filter(|p| !p.is_empty()).or_else(|| phrases.get("en"))?;
+    fn choose<'a>(
+        phrases: &'a HashMap<&'static str, Vec<String>>,
+        language: &str,
+        rng: &mut StdRng,
+    ) -> Option<&'a str> {
+        let phrases = phrases
+            .get(language)
+            .filter(|p| !p.is_empty())
+            .or_else(|| phrases.get("en"))?;
         phrases.choose(rng).map(String::as_str)
     }
 }
@@ -228,8 +334,11 @@ impl Forms {
         for dictionary in dictionaries {
             for (_, contents) in airmail_tagger::dictionaries::of_type(dictionary) {
                 for line in contents.lines() {
-                    let all: Vec<String> =
-                        line.split('|').map(|f| fold(f.trim()).trim_end_matches('.').to_string()).filter(|f| !f.is_empty() && !f.contains(' ')).collect();
+                    let all: Vec<String> = line
+                        .split('|')
+                        .map(|f| fold(f.trim()).trim_end_matches('.').to_string())
+                        .filter(|f| !f.is_empty() && !f.contains(' '))
+                        .collect();
                     for form in &all {
                         let others = forms.entry(form.clone()).or_default();
                         others.extend(all.iter().filter(|o| *o != form).cloned());
@@ -247,7 +356,10 @@ impl Forms {
     /// A word in another form, sometimes.
     fn vary(&self, word: &str, rng: &mut StdRng) -> String {
         match self.0.get(word) {
-            Some(others) if rng.random_bool(odds::OTHER_FORM) => others.choose(rng).cloned().unwrap_or_else(|| word.to_string()),
+            Some(others) if rng.random_bool(odds::OTHER_FORM) => others
+                .choose(rng)
+                .cloned()
+                .unwrap_or_else(|| word.to_string()),
             _ => word.to_string(),
         }
     }
@@ -265,8 +377,15 @@ struct Part {
 fn part(text: &str, tag: Tag) -> Option<Part> {
     // As the index normalizes queries, so the tagger is trained on the words
     // it'll see.
-    let words: Vec<String> = words(&crate::index::normalize_text(text)).into_iter().map(|(_, w)| w.to_string()).collect();
-    (!words.is_empty()).then_some(Part { text: text.to_string(), words, tag })
+    let words: Vec<String> = words(&crate::index::normalize_text(text))
+        .into_iter()
+        .map(|(_, w)| w.to_string())
+        .collect();
+    (!words.is_empty()).then_some(Part {
+        text: text.to_string(),
+        words,
+        tag,
+    })
 }
 
 /// Formatted examples whose words couldn't all be traced back to their
@@ -292,7 +411,13 @@ impl Generator {
     pub fn new(seed: u64) -> Self {
         Self {
             connectors: Connectors::new(),
-            road_forms: Forms::new(&["street_types", "directionals", "synonyms", "personal_titles", "street_names"]),
+            road_forms: Forms::new(&[
+                "street_types",
+                "directionals",
+                "synonyms",
+                "personal_titles",
+                "street_names",
+            ]),
             name_forms: Forms::new(&["synonyms", "personal_titles", "directionals"]),
             rng: StdRng::seed_from_u64(seed),
         }
@@ -324,8 +449,14 @@ impl Generator {
             }
         }
         // As libpostal trains on places' local, romanized and English names.
-        let local: Vec<&String> =
-            area.country.as_deref().map(local_languages).unwrap_or_default().iter().filter_map(|lang| area.names.get(*lang)).collect();
+        let local: Vec<&String> = area
+            .country
+            .as_deref()
+            .map(local_languages)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|lang| area.names.get(*lang))
+            .collect();
         if !local.is_empty() && self.rng.random_bool(odds::LOCAL) {
             return local.choose(&mut self.rng).map(|name| (*name).clone());
         }
@@ -355,7 +486,9 @@ impl Generator {
         for (band, area) in by_band {
             let odds = match band {
                 AdminBand::Neighbourhood => odds::NEIGHBOURHOOD,
-                AdminBand::Locality if parts.iter().any(|p| p.tag == Tag::Neighbourhood) => odds::LOCALITY_WITH_NEIGHBOURHOOD,
+                AdminBand::Locality if parts.iter().any(|p| p.tag == Tag::Neighbourhood) => {
+                    odds::LOCALITY_WITH_NEIGHBOURHOOD
+                }
                 AdminBand::Locality => odds::LOCALITY,
                 AdminBand::County => odds::COUNTY,
                 AdminBand::Region => odds::REGION,
@@ -382,15 +515,27 @@ impl Generator {
     /// (`ballard fred meyer`), else the areas after it, perhaps after a
     /// connector (`pizza near capitol hill`) or, with none, a standalone
     /// phrase (`coffee near me`); any postcode last (`pizza 98101`).
-    fn venue_query(&mut self, subject: Vec<Part>, mut areas: Vec<Part>, postcode: Option<Part>, country: Option<&str>, commas: bool) -> Vec<(Part, bool)> {
+    fn venue_query(
+        &mut self,
+        subject: Vec<Part>,
+        mut areas: Vec<Part>,
+        postcode: Option<Part>,
+        country: Option<&str>,
+        commas: bool,
+    ) -> Vec<(Part, bool)> {
         let mut parts: Vec<(Part, bool)> = Vec::new();
         let areas_first = !areas.is_empty() && self.rng.random_bool(odds::AREAS_FIRST);
         if areas_first {
             areas.truncate(1);
         }
-        let connector = (!areas.is_empty() && !areas_first && self.rng.random_bool(odds::CONNECTOR))
-            .then(|| self.connectors.pick(language(country), &mut self.rng).and_then(|c| part(c, Tag::Near)))
-            .flatten();
+        let connector =
+            (!areas.is_empty() && !areas_first && self.rng.random_bool(odds::CONNECTOR))
+                .then(|| {
+                    self.connectors
+                        .pick(language(country), &mut self.rng)
+                        .and_then(|c| part(c, Tag::Near))
+                })
+                .flatten();
         if areas_first {
             parts.extend(areas.drain(..).map(|a| (a, false)));
             parts.extend(subject.into_iter().map(|s| (s, false)));
@@ -404,7 +549,10 @@ impl Generator {
             if no_areas
                 && postcode.is_none()
                 && self.rng.random_bool(odds::NEAR_HERE)
-                && let Some(near) = self.connectors.pick_standalone(language(country), &mut self.rng).and_then(|c| part(c, Tag::Near))
+                && let Some(near) = self
+                    .connectors
+                    .pick_standalone(language(country), &mut self.rng)
+                    .and_then(|c| part(c, Tag::Near))
             {
                 parts.push((near, false));
             }
@@ -417,9 +565,13 @@ impl Generator {
     /// templates put them in the country's order.
     fn address(hit: &SearchHit) -> Vec<Part> {
         // The first of several: `24,26`, `12;12a`.
-        let number = hit.tag("addr:housenumber").and_then(|n| part(n.split([';', ',']).next().unwrap_or(n), Tag::HouseNumber));
+        let number = hit
+            .tag("addr:housenumber")
+            .and_then(|n| part(n.split([';', ',']).next().unwrap_or(n), Tag::HouseNumber));
         let road = hit.tag("addr:street").and_then(|r| part(r, Tag::Road));
-        let (Some(number), Some(road)) = (number, road) else { return Vec::new() };
+        let (Some(number), Some(road)) = (number, road) else {
+            return Vec::new();
+        };
         let mut parts = vec![number, road];
         parts.extend(hit.tag("addr:unit").and_then(|u| part(u, Tag::Unit)));
         parts
@@ -431,7 +583,12 @@ impl Generator {
     /// if `commas`. A unit, which the templates leave out, goes after the
     /// road and number. `None` if the words can't all be traced back to
     /// parts (see `unaligned`).
-    fn formatted(&mut self, parts: &[Part], country: Option<&str>, commas: bool) -> Option<Vec<(Part, bool)>> {
+    fn formatted(
+        &mut self,
+        parts: &[Part],
+        country: Option<&str>,
+        commas: bool,
+    ) -> Option<Vec<(Part, bool)>> {
         let component = |tag: Tag| match tag {
             Tag::Venue => Some("house"),
             Tag::HouseNumber => Some("house_number"),
@@ -449,7 +606,11 @@ impl Generator {
             if let Some(key) = component(p.tag) {
                 // A country by its code in lower case, which the templates'
                 // rules don't spell out (`US` → `United States of America`).
-                let text = if p.tag == Tag::Country && p.text.chars().count() <= 3 { p.text.to_lowercase() } else { p.text.clone() };
+                let text = if p.tag == Tag::Country && p.text.chars().count() <= 3 {
+                    p.text.to_lowercase()
+                } else {
+                    p.text.clone()
+                };
                 // Commas within a value would split it across sections.
                 let text = text.replace(',', " ");
                 components.entry(key.to_string()).or_insert(text);
@@ -459,7 +620,11 @@ impl Generator {
             components.insert("country_code".to_string(), country.to_lowercase());
         }
         let codes = self.rng.random_bool(odds::ABBREVIATION);
-        let (text, components) = crate::address_format::Formatter::get().format_with_components(&components, Some(language(country)), codes);
+        let (text, components) = crate::address_format::Formatter::get().format_with_components(
+            &components,
+            Some(language(country)),
+            codes,
+        );
 
         // Each component's words as the template had them, in the parts'
         // order, to find in the text.
@@ -475,7 +640,12 @@ impl Generator {
             "country" => Some(Tag::Country),
             _ => None,
         };
-        let order = |tag: Tag| parts.iter().position(|p| p.tag == tag).unwrap_or(usize::MAX);
+        let order = |tag: Tag| {
+            parts
+                .iter()
+                .position(|p| p.tag == tag)
+                .unwrap_or(usize::MAX)
+        };
         let mut pending: Vec<(Tag, Vec<String>)> = components
             .iter()
             .filter_map(|(key, value)| Some((tag_of(key)?, part(value, Tag::Other)?.words)))
@@ -488,7 +658,9 @@ impl Generator {
         let mut boundary = false;
         for line in text.lines() {
             for piece in line.split(',') {
-                let Some(Part { words, .. }) = part(piece, Tag::Other) else { continue };
+                let Some(Part { words, .. }) = part(piece, Tag::Other) else {
+                    continue;
+                };
                 let mut tags: Vec<Option<Tag>> = vec![None; words.len()];
                 let mut i = 0;
                 while i < words.len() {
@@ -517,7 +689,9 @@ impl Generator {
                         start += 1;
                         continue;
                     }
-                    let end = (start..words.len()).find(|&j| tags[j].is_some()).unwrap_or(words.len());
+                    let end = (start..words.len())
+                        .find(|&j| tags[j].is_some())
+                        .unwrap_or(words.len());
                     let run = &words[start..end];
                     let left: Vec<usize> = (0..pending.len()).filter(|k| !used[*k]).collect();
                     let k = left
@@ -527,7 +701,10 @@ impl Generator {
                         .or_else(|| (left.len() == 1).then(|| left[0]));
                     // Else words a rule added to its neighbour's: `United
                     // States` written `United States of America`.
-                    let neighbour = (start > 0).then(|| tags[start - 1]).flatten().or_else(|| tags.get(end).copied().flatten());
+                    let neighbour = (start > 0)
+                        .then(|| tags[start - 1])
+                        .flatten()
+                        .or_else(|| tags.get(end).copied().flatten());
                     let tag = match (k, neighbour) {
                         (Some(k), _) => {
                             used[k] = true;
@@ -546,18 +723,32 @@ impl Generator {
                 }
                 // Runs of one tag as parts.
                 let mut first = true;
-                let tagged: Vec<(Tag, &String)> = tags.iter().map(|t| t.expect("tagged")).zip(&words).collect();
+                let tagged: Vec<(Tag, &String)> = tags
+                    .iter()
+                    .map(|t| t.expect("tagged"))
+                    .zip(&words)
+                    .collect();
                 for run in tagged.chunk_by(|a, b| a.0 == b.0) {
                     let words: Vec<String> = run.iter().map(|(_, w)| (*w).clone()).collect();
                     let section = first && boundary && commas;
-                    out.push((Part { text: words.join(" "), words, tag: run[0].0 }, section));
+                    out.push((
+                        Part {
+                            text: words.join(" "),
+                            words,
+                            tag: run[0].0,
+                        },
+                        section,
+                    ));
                     first = false;
                 }
                 boundary = true;
             }
         }
         if let Some(unit) = parts.iter().find(|p| p.tag == Tag::Unit) {
-            let after = out.iter().rposition(|(p, _)| matches!(p.tag, Tag::Road | Tag::HouseNumber)).map_or(out.len(), |i| i + 1);
+            let after = out
+                .iter()
+                .rposition(|(p, _)| matches!(p.tag, Tag::Road | Tag::HouseNumber))
+                .map_or(out.len(), |i| i + 1);
             out.insert(after, (unit.clone(), false));
         }
         Some(out)
@@ -573,10 +764,22 @@ impl Generator {
     }
 
     /// Examples of a place.
-    pub fn examples(&mut self, hit: &SearchHit, admins: &HashMap<u64, WofPlace>, focus_elsewhere: [f64; 2]) -> Vec<Example> {
-        let country = hit.wof.as_ref().and_then(|w| w.country.clone()).or_else(|| {
-            hit.admin_ids.iter().filter_map(|id| admins.get(id)).find_map(|a| a.country.clone())
-        });
+    pub fn examples(
+        &mut self,
+        hit: &SearchHit,
+        admins: &HashMap<u64, WofPlace>,
+        focus_elsewhere: [f64; 2],
+    ) -> Vec<Example> {
+        let country = hit
+            .wof
+            .as_ref()
+            .and_then(|w| w.country.clone())
+            .or_else(|| {
+                hit.admin_ids
+                    .iter()
+                    .filter_map(|id| admins.get(id))
+                    .find_map(|a| a.country.clone())
+            });
         let country = country.as_deref();
         let mut subject: Vec<Part> = Vec::new();
         // Placed with the areas, as the country writes it (see
@@ -585,23 +788,35 @@ impl Generator {
         match hit.kind {
             Kind::Poi => {
                 let english = self.rng.random_bool(0.2);
-                let name = hit.tag(if english { "name:en" } else { "name" }).or_else(|| hit.tag("name"));
+                let name = hit
+                    .tag(if english { "name:en" } else { "name" })
+                    .or_else(|| hit.tag("name"));
                 let category = Self::category(hit).filter(|_| self.rng.random_bool(odds::CATEGORY));
-                subject.extend(category.or(name.map(str::to_string)).and_then(|n| part(&n, Tag::Venue)));
+                subject.extend(
+                    category
+                        .or(name.map(str::to_string))
+                        .and_then(|n| part(&n, Tag::Venue)),
+                );
                 if self.rng.random_bool(odds::POI_ADDRESS) {
                     subject.extend(Self::address(hit));
                 } else if self.rng.random_bool(odds::POI_POSTCODE) {
-                    postcode = hit.tag("addr:postcode").and_then(|p| part(p, Tag::Postcode));
+                    postcode = hit
+                        .tag("addr:postcode")
+                        .and_then(|p| part(p, Tag::Postcode));
                 }
             }
             Kind::Address => {
                 subject = Self::address(hit);
                 if self.rng.random_bool(odds::POSTCODE) {
-                    postcode = hit.tag("addr:postcode").and_then(|p| part(p, Tag::Postcode));
+                    postcode = hit
+                        .tag("addr:postcode")
+                        .and_then(|p| part(p, Tag::Postcode));
                 }
             }
             Kind::Street => subject.extend(hit.tag("name").and_then(|n| part(n, Tag::Road))),
-            Kind::Postcode => subject.extend(hit.tag("postal_code").and_then(|p| part(p, Tag::Postcode))),
+            Kind::Postcode => {
+                subject.extend(hit.tag("postal_code").and_then(|p| part(p, Tag::Postcode)))
+            }
             Kind::Admin => {
                 let wof = hit.wof.as_ref();
                 let tag = match wof.and_then(|w| AdminBand::of(&w.placetype)) {
@@ -632,7 +847,8 @@ impl Generator {
         let commas = self.rng.random_bool(odds::COMMAS);
         // Addresses, streets, postcodes and areas as the country writes
         // them; venues, which the templates don't do, as people search.
-        let venue = subject[0].tag == Tag::Venue && !subject.iter().any(|p| p.tag == Tag::HouseNumber);
+        let venue =
+            subject[0].tag == Tag::Venue && !subject.iter().any(|p| p.tag == Tag::HouseNumber);
         let parts = if venue {
             self.venue_query(subject, areas, postcode, country, commas)
         } else {
@@ -651,13 +867,27 @@ impl Generator {
         for (part, comma) in parts {
             let comma = comma || self.rng.random_bool(odds::STRAY_COMMA);
             let words: Vec<String> = match part.tag {
-                Tag::Road => part.words.iter().map(|w| self.road_forms.vary(w, &mut self.rng)).collect(),
+                Tag::Road => part
+                    .words
+                    .iter()
+                    .map(|w| self.road_forms.vary(w, &mut self.rng))
+                    .collect(),
                 Tag::HouseNumber | Tag::Postcode | Tag::Unit | Tag::Near => part.words,
-                _ => part.words.iter().map(|w| self.name_forms.vary(w, &mut self.rng)).collect(),
+                _ => part
+                    .words
+                    .iter()
+                    .map(|w| self.name_forms.vary(w, &mut self.rng))
+                    .collect(),
             };
             for (i, word) in words.into_iter().enumerate() {
-                let word = if word.chars().count() >= 5 && self.rng.random_bool(odds::TYPO) { typo(&word, &mut self.rng) } else { word };
-                query.section_starts.push(comma && i == 0 && !query.words.is_empty());
+                let word = if word.chars().count() >= 5 && self.rng.random_bool(odds::TYPO) {
+                    typo(&word, &mut self.rng)
+                } else {
+                    word
+                };
+                query
+                    .section_starts
+                    .push(comma && i == 0 && !query.words.is_empty());
                 query.words.push(word);
                 tags.push(part.tag);
             }
@@ -677,7 +907,10 @@ impl Generator {
         let roll: f64 = self.rng.random();
         query.focus = if roll < odds::FOCUS_NEAR {
             // Within about 20 km.
-            Some([center[0] + self.rng.random_range(-0.2..0.2), center[1] + self.rng.random_range(-0.15..0.15)])
+            Some([
+                center[0] + self.rng.random_range(-0.2..0.2),
+                center[1] + self.rng.random_range(-0.15..0.15),
+            ])
         } else if roll < odds::FOCUS_NEAR + odds::FOCUS_FAR {
             Some(focus_elsewhere)
         } else {
@@ -731,7 +964,10 @@ fn sparsity(hit: &SearchHit) -> usize {
 
 fn is_transit_stop(hit: &SearchHit) -> bool {
     hit.tag("highway") == Some("bus_stop")
-        || matches!(hit.tag("public_transport"), Some("platform" | "stop_position"))
+        || matches!(
+            hit.tag("public_transport"),
+            Some("platform" | "stop_position")
+        )
         || matches!(hit.tag("railway"), Some("tram_stop" | "platform"))
 }
 
@@ -747,38 +983,48 @@ const AREA_SHARE: f64 = 0.25;
 ///
 /// # Errors
 /// If the index can't be read.
-pub fn sample(index: &AirmailIndex, stride: u32, offset: u32) -> anyhow::Result<(Vec<SearchHit>, HashMap<u64, WofPlace>)> {
+pub fn sample(
+    index: &AirmailIndex,
+    stride: u32,
+    offset: u32,
+) -> anyhow::Result<(Vec<SearchHit>, HashMap<u64, WofPlace>)> {
     let searcher = index.searcher()?;
     let segments = searcher.segment_readers();
     // Per segment, in parallel: its sampled non-admins and its admins.
-    let per_segment = in_parallel(segments.len(), |ord| -> anyhow::Result<(Vec<SearchHit>, Vec<(DocAddress, f64)>)> {
-        let segment = &segments[ord];
-        let mut seen: HashMap<(Kind, usize), usize> = HashMap::new();
-        let (mut sampled, mut areas) = (Vec::new(), Vec::new());
-        let alive = segment.alive_bitset();
-        let is_admin = segment.fast_fields().u64(crate::index::FIELD_IS_ADMIN)?;
-        let importance = segment.fast_fields().f64(crate::index::FIELD_IMPORTANCE)?;
-        for doc in 0..segment.max_doc() {
-            if !alive.is_none_or(|bits| bits.is_alive(doc)) {
-                continue;
+    let per_segment = in_parallel(
+        segments.len(),
+        |ord| -> anyhow::Result<(Vec<SearchHit>, Vec<(DocAddress, f64)>)> {
+            let segment = &segments[ord];
+            let mut seen: HashMap<(Kind, usize), usize> = HashMap::new();
+            let (mut sampled, mut areas) = (Vec::new(), Vec::new());
+            let alive = segment.alive_bitset();
+            let is_admin = segment.fast_fields().u64(crate::index::FIELD_IS_ADMIN)?;
+            let importance = segment.fast_fields().f64(crate::index::FIELD_IMPORTANCE)?;
+            for doc in 0..segment.max_doc() {
+                if !alive.is_none_or(|bits| bits.is_alive(doc)) {
+                    continue;
+                }
+                if is_admin.first(doc) == Some(1) {
+                    areas.push((
+                        DocAddress::new(ord as u32, doc),
+                        area_weight(importance.first(doc).unwrap_or(0.0)),
+                    ));
+                    continue;
+                }
+                if doc % stride != offset % stride {
+                    continue;
+                }
+                let hit = index.hit(&searcher, DocAddress::new(ord as u32, doc), 0.0)?;
+                let every = sparsity(&hit);
+                let count = seen.entry((hit.kind, every)).or_default();
+                *count += 1;
+                if *count % every == 0 {
+                    sampled.push(without_shape(hit));
+                }
             }
-            if is_admin.first(doc) == Some(1) {
-                areas.push((DocAddress::new(ord as u32, doc), area_weight(importance.first(doc).unwrap_or(0.0))));
-                continue;
-            }
-            if doc % stride != offset % stride {
-                continue;
-            }
-            let hit = index.hit(&searcher, DocAddress::new(ord as u32, doc), 0.0)?;
-            let every = sparsity(&hit);
-            let count = seen.entry((hit.kind, every)).or_default();
-            *count += 1;
-            if *count % every == 0 {
-                sampled.push(without_shape(hit));
-            }
-        }
-        Ok((sampled, areas))
-    });
+            Ok((sampled, areas))
+        },
+    );
     let (mut sampled, mut areas) = (Vec::new(), Vec::new());
     for part in per_segment {
         let (hits, admins) = part?;
@@ -790,8 +1036,16 @@ pub fn sample(index: &AirmailIndex, stride: u32, offset: u32) -> anyhow::Result<
     // chosen several times, each making different queries.
     let wanted = ((sampled.len() as f64 * AREA_SHARE) as usize).max(1);
     let weight = areas.iter().map(|(_, w)| w).sum::<f64>();
-    let big = areas.iter().map(|(_, w)| w).filter(|w| **w >= 100.0).sum::<f64>();
-    eprintln!("{} areas, {:.0}% of their samples of places of 100,000 or more", areas.len(), 100.0 * big / weight.max(1.0));
+    let big = areas
+        .iter()
+        .map(|(_, w)| w)
+        .filter(|w| **w >= 100.0)
+        .sum::<f64>();
+    eprintln!(
+        "{} areas, {:.0}% of their samples of places of 100,000 or more",
+        areas.len(),
+        100.0 * big / weight.max(1.0)
+    );
     let step = weight / wanted as f64;
     let mut next = step * ((f64::from(offset) * 0.618_034) % 1.0);
     let (mut total, mut chosen) = (0.0, Vec::new());
@@ -813,10 +1067,18 @@ pub fn sample(index: &AirmailIndex, stride: u32, offset: u32) -> anyhow::Result<
         sampled.extend(hits?);
     }
     // Their admins, looked up in parallel.
-    let ids: Vec<u64> = sampled.iter().flat_map(|h| h.admin_ids.iter().copied()).collect::<BTreeSet<_>>().into_iter().collect();
+    let ids: Vec<u64> = sampled
+        .iter()
+        .flat_map(|h| h.admin_ids.iter().copied())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut admins = HashMap::new();
     for found in in_parallel(ids.len().div_ceil(PER_JOB), |job| {
-        let ids: BTreeSet<u64> = ids[job * PER_JOB..((job + 1) * PER_JOB).min(ids.len())].iter().copied().collect();
+        let ids: BTreeSet<u64> = ids[job * PER_JOB..((job + 1) * PER_JOB).min(ids.len())]
+            .iter()
+            .copied()
+            .collect();
         index.admins(&searcher, &ids)
     }) {
         admins.extend(found?);
@@ -844,7 +1106,9 @@ fn without_shape(mut hit: SearchHit) -> SearchHit {
 /// `run(job)` for each of `jobs` jobs, on as many threads as there are
 /// cores, with the results in job order.
 pub fn in_parallel<R: Send>(jobs: usize, run: impl Fn(usize) -> R + Sync) -> Vec<R> {
-    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get).min(jobs.max(1));
+    let threads = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZero::get)
+        .min(jobs.max(1));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut done: Vec<(usize, R)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..threads)
@@ -861,7 +1125,10 @@ pub fn in_parallel<R: Send>(jobs: usize, run: impl Fn(usize) -> R + Sync) -> Vec
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().expect("a job panicked")).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("a job panicked"))
+            .collect()
     });
     done.sort_by_key(|(job, _)| *job);
     done.into_iter().map(|(_, r)| r).collect()
@@ -883,12 +1150,22 @@ mod test {
 
     fn formatted(country: &str, parts: &[(&str, Tag)]) -> BTreeSet<String> {
         let mut generator = Generator::new(1);
-        let parts: Vec<Part> = parts.iter().map(|(text, tag)| part(text, *tag).unwrap()).collect();
+        let parts: Vec<Part> = parts
+            .iter()
+            .map(|(text, tag)| part(text, *tag).unwrap())
+            .collect();
         (0..50)
             .map(|_| {
                 let out = generator.formatted(&parts, Some(country), true).unwrap();
                 out.iter()
-                    .map(|(p, section)| format!("{}{}/{}", if *section { ", " } else { " " }, p.words.join(" "), p.tag.as_str()))
+                    .map(|(p, section)| {
+                        format!(
+                            "{}{}/{}",
+                            if *section { ", " } else { " " },
+                            p.words.join(" "),
+                            p.tag.as_str()
+                        )
+                    })
                     .collect::<String>()
             })
             .collect()
@@ -898,7 +1175,13 @@ mod test {
     fn addresses_are_written_as_their_countries_write_them() {
         let us = formatted(
             "US",
-            &[("1530", Tag::HouseNumber), ("Post Alley", Tag::Road), ("98101", Tag::Postcode), ("Seattle", Tag::Locality), ("Washington", Tag::Region)],
+            &[
+                ("1530", Tag::HouseNumber),
+                ("Post Alley", Tag::Road),
+                ("98101", Tag::Postcode),
+                ("Seattle", Tag::Locality),
+                ("Washington", Tag::Region),
+            ],
         );
         assert_eq!(
             us.into_iter().collect::<Vec<_>>(),
@@ -907,11 +1190,33 @@ mod test {
                 " 1530/house_number post alley/road, seattle/locality, washington/region 98101/postcode",
             ]
         );
-        let ch = formatted("CH", &[("1", Tag::HouseNumber), ("Bahnhofstrasse", Tag::Road), ("8001", Tag::Postcode), ("Zürich", Tag::Locality)]);
-        assert_eq!(ch.into_iter().collect::<Vec<_>>(), [" bahnhofstrasse/road 1/house_number, 8001/postcode zurich/locality"]);
+        let ch = formatted(
+            "CH",
+            &[
+                ("1", Tag::HouseNumber),
+                ("Bahnhofstrasse", Tag::Road),
+                ("8001", Tag::Postcode),
+                ("Zürich", Tag::Locality),
+            ],
+        );
+        assert_eq!(
+            ch.into_iter().collect::<Vec<_>>(),
+            [" bahnhofstrasse/road 1/house_number, 8001/postcode zurich/locality"]
+        );
         // A unit after the road and number, which the templates leave out.
-        let unit = formatted("US", &[("500", Tag::HouseNumber), ("Pine St", Tag::Road), ("2B", Tag::Unit), ("Seattle", Tag::Locality)]);
-        assert_eq!(unit.into_iter().collect::<Vec<_>>(), [" 500/house_number pine st/road 2b/unit, seattle/locality"]);
+        let unit = formatted(
+            "US",
+            &[
+                ("500", Tag::HouseNumber),
+                ("Pine St", Tag::Road),
+                ("2B", Tag::Unit),
+                ("Seattle", Tag::Locality),
+            ],
+        );
+        assert_eq!(
+            unit.into_iter().collect::<Vec<_>>(),
+            [" 500/house_number pine st/road 2b/unit, seattle/locality"]
+        );
     }
 
     #[test]
@@ -925,7 +1230,12 @@ mod test {
         assert!(connectors.standalone["en"].contains(&"near me".to_string()));
         assert!(connectors.standalone["fr"].contains(&"près d'ici".to_string()));
         assert!(connectors.before_place["fr"].contains(&"près de".to_string()));
-        let forms = Forms::new(&["street_types", "directionals", "personal_titles", "synonyms"]);
+        let forms = Forms::new(&[
+            "street_types",
+            "directionals",
+            "personal_titles",
+            "synonyms",
+        ]);
         assert!(forms.0["street"].contains(&"st".to_string()));
         assert!(forms.0["north"].contains(&"n".to_string()));
         assert!(forms.0["saint"].contains(&"st".to_string()));

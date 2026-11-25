@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Shared entry point for CI and local development. Checks never rewrite source files.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+check() (
+    echo "==> Checking $1 ($2)"
+    case "$1:$2" in
+        airmail:format|crates:format|poi_service:format|topo_pipeline:format|wof_service:format|valinor:format)
+            cd "$1"
+            cargo fmt --all -- --check
+            ;;
+        airmail:test|crates:test|poi_service:test|topo_pipeline:test|wof_service:test|valinor:test)
+            cd "$1"
+            cargo test --locked --workspace
+            ;;
+        flutter:format)
+            for package in geocoder routing sparkle cardinal; do
+                (
+                    cd "flutter/$package"
+                    # Dart format reads the package language version from this setup.
+                    flutter pub get
+                    # Generated files and vendored Cargokit are not authored Dart.
+                    git ls-files -z -- '*.dart' ':!:**/*.g.dart' ':!:**/frb_generated*.dart' ':!:lib/src/rust/**' ':!:cargokit/**' ':!:**/cargokit/**' ':!:**/generated/**' ':!:**/generated_plugin_registrant.dart' ':!:lib/l10n/app_localizations*.dart' |
+                        xargs -0 dart format --output=none --set-exit-if-changed
+                )
+            done
+            ;;
+        flutter:test)
+            # The bridge tests load these host libraries directly.
+            (cd crates && cargo build --locked --release -p geocoder_flutter -p routing_flutter)
+            for package in geocoder routing sparkle cardinal; do
+                (
+                    cd "flutter/$package"
+                    flutter pub get
+                    flutter test
+                    if [[ "$package" == cardinal ]]; then
+                        flutter test test_rust
+                    fi
+                )
+            done
+            ;;
+        python:format) ;; # No established Python formatter yet.
+        python:test)
+            (cd publish && uv run --locked pytest)
+            for directory in deploy/geocoder deploy/wof_service valinor/pipeline/transit; do
+                (cd "$directory" && python3 -B -m unittest discover)
+            done
+            ;;
+        go:format)
+            cd data_pipeline
+            unformatted=$(git ls-files -z -- '*.go' ':!:**/*.gen.go' ':!:*.gen.go' | xargs -0 gofmt -l)
+            if [[ -n "$unformatted" ]]; then
+                printf 'Go files need formatting:\n%s\n' "$unformatted" >&2
+                exit 1
+            fi
+            ;;
+        go:test)
+            cd data_pipeline
+            go test ./...
+            ;;
+        java:format)
+            cd planetiler-openmaptiles
+            ./mvnw --batch-mode --no-transfer-progress spotless:check
+            ;;
+        java:test)
+            cd planetiler-openmaptiles
+            ./mvnw --batch-mode --no-transfer-progress -Dspotless.check.skip test
+            ;;
+        *) echo "Unknown check group: $1" >&2; exit 2 ;;
+    esac
+)
+
+if [[ $# == 0 ]]; then
+    set -- airmail crates poi_service topo_pipeline wof_service valinor flutter python go java
+fi
+
+# Each check is a separate process, so formatting failures do not suppress tests.
+# Do not put check in an if/|| condition: Bash would suppress errexit inside it.
+status=0
+for group in "$@"; do
+    for phase in format test; do
+        set +e
+        (set -e; check "$group" "$phase")
+        result=$?
+        set -e
+        if [[ $result != 0 ]]; then
+            printf 'Check group %s (%s) failed (exit %s).\n' "$group" "$phase" "$result" >&2
+            status=1
+        fi
+    done
+done
+exit "$status"

@@ -1,10 +1,10 @@
-use airmail_importance::osm;
 use airmail::{
     geometry, importance,
     index::{AirmailIndex, AirmailIndexWriter, Document},
     language::Language,
     poi::{Kind, SchemafiedPoi, ToIndexPoi},
 };
+use airmail_importance::osm;
 use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 use futures_util::future::join_all;
@@ -20,8 +20,8 @@ use tokio::{
 
 use crate::{
     cache::IndexerCache,
-    postcodes::Postcodes,
     pip_tree::PipTree,
+    postcodes::Postcodes,
     qrank::QRank,
     query_pip,
     wof::{ConcisePipResponse, WhosOnFirst},
@@ -39,7 +39,9 @@ pub trait PoiSink: Send + 'static {
     /// every core at once, so the work that can be done apart is done here.
     /// `languages` are the ISO 639-3 codes Who's On First lists as spoken
     /// where the POI is.
-    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static;
+    fn preparer(
+        &self,
+    ) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static;
 
     fn add(&mut self, prepared: Self::Prepared) -> Result<()>;
 
@@ -71,12 +73,19 @@ impl PoiSink for IndexSink {
     /// The document, and the POI if it has a postcode, for `Postcodes`.
     type Prepared = (Document, Option<ToIndexPoi>);
 
-    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static {
+    fn preparer(
+        &self,
+    ) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static
+    {
         let builder = self.writer.document_builder();
         let source = self.source.clone();
         move |poi, _languages| {
-            let for_postcodes = (poi.postcode.is_some() && poi.country_code.is_some()).then(|| poi.clone());
-            Ok((builder.document(SchemafiedPoi::from(poi), &source)?, for_postcodes))
+            let for_postcodes =
+                (poi.postcode.is_some() && poi.country_code.is_some()).then(|| poi.clone());
+            Ok((
+                builder.document(SchemafiedPoi::from(poi), &source)?,
+                for_postcodes,
+            ))
         }
     }
 
@@ -90,7 +99,8 @@ impl PoiSink for IndexSink {
     fn finish(mut self) -> Result<()> {
         info!("Indexing {} postcodes", self.postcodes.len());
         for poi in std::mem::take(&mut self.postcodes).into_pois() {
-            self.writer.add_poi(SchemafiedPoi::from(poi), &self.source)?;
+            self.writer
+                .add_poi(SchemafiedPoi::from(poi), &self.source)?;
         }
         self.writer.commit()
     }
@@ -182,7 +192,11 @@ impl Importer {
         &self.wof_db
     }
 
-    pub async fn run_import<S: PoiSink>(self, receiver: Receiver<ToIndexPoi>, mut sink: S) -> Result<()> {
+    pub async fn run_import<S: PoiSink>(
+        self,
+        receiver: Receiver<ToIndexPoi>,
+        mut sink: S,
+    ) -> Result<()> {
         let prepare = sink.preparer();
         let (to_index_sender, to_index_receiver): (Sender<S::Prepared>, Receiver<S::Prepared>) =
             crossbeam::channel::bounded(1024);
@@ -229,7 +243,8 @@ impl Importer {
 
             handles.push(spawn(async move {
                 while let Ok(poi) = no_admin_receiver.recv() {
-                    match Self::populate_admin_areas(poi, &wof_db, &pip_tree, qrank.as_deref()).await
+                    match Self::populate_admin_areas(poi, &wof_db, &pip_tree, qrank.as_deref())
+                        .await
                     {
                         Ok((poi, languages)) => match prepare(poi, &languages) {
                             Ok(prepared) => to_index_sender.send(prepared).unwrap(),
@@ -263,7 +278,8 @@ impl Importer {
         pip_tree: &Option<PipTree<ConcisePipResponse>>,
         qrank: Option<&QRank>,
     ) -> Result<WithLanguages> {
-        let pip_response = query_pip::query_pip(poi.center.x(), poi.center.y(), wof_db, pip_tree).await?;
+        let pip_response =
+            query_pip::query_pip(poi.center.x(), poi.center.y(), wof_db, pip_tree).await?;
         poi.admin_ids = pip_response.admin_ids;
         poi.admin_names = pip_response.admin_names;
         poi.country_code = pip_response.country_code;
@@ -273,7 +289,11 @@ impl Importer {
             Kind::Street => importance::street_importance(poi.tag("highway")),
             _ => {
                 let tags = poi.tags.iter().map(|(k, v)| (k.as_str(), v.as_str()));
-                importance::poi_importance(osm::poi_signals(tags, geometry::area_m2(&poi.geometry), qrank))
+                importance::poi_importance(osm::poi_signals(
+                    tags,
+                    geometry::area_m2(&poi.geometry),
+                    qrank,
+                ))
             }
         };
         for lang in &pip_response.admin_langs {

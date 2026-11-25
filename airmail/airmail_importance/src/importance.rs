@@ -6,7 +6,10 @@
 /// than an area that groups them. A settlement's population says how much
 /// people look for it; an area's mostly says how many settlements it holds.
 fn is_settlement(placetype: &str) -> bool {
-    matches!(placetype, "locality" | "localadmin" | "borough" | "macrohood" | "neighbourhood" | "microhood")
+    matches!(
+        placetype,
+        "locality" | "localadmin" | "borough" | "macrohood" | "neighbourhood" | "microhood"
+    )
 }
 
 /// The most importance an administrative area gets: about the top of what
@@ -23,14 +26,22 @@ const MAX_ADMIN_IMPORTANCE: f64 = 0.6;
 /// population, Who's On First's `wof:population_rank` (0 to 18) stands in for
 /// it; without either, an area ranks as an ordinary POI.
 #[must_use]
-pub fn admin_importance(placetype: &str, population: Option<u64>, population_rank: Option<u32>) -> f64 {
+pub fn admin_importance(
+    placetype: &str,
+    population: Option<u64>,
+    population_rank: Option<u32>,
+) -> f64 {
     // Rank 11 is Seattle's, 18 the largest megacities'.
     let decades = match (population, population_rank) {
         (Some(population), _) if population > 0 => (population as f64).log10(),
         (_, Some(rank)) => 0.5 * f64::from(rank.min(18)) + 0.3,
         _ => return 0.08,
     };
-    let decades = if is_settlement(placetype) { decades } else { decades - 1.0 };
+    let decades = if is_settlement(placetype) {
+        decades
+    } else {
+        decades - 1.0
+    };
     // 0.1 at a thousand people, rising 0.14 a decade.
     (0.1 + 0.14 * (decades - 3.0)).clamp(0.05, MAX_ADMIN_IMPORTANCE)
 }
@@ -47,7 +58,10 @@ pub fn neighbourhood_importance(own: f64, city: f64) -> f64 {
 /// Whether a placetype is part of a city, inheriting its importance.
 #[must_use]
 pub fn is_neighbourhood(placetype: &str) -> bool {
-    matches!(placetype, "borough" | "macrohood" | "neighbourhood" | "microhood")
+    matches!(
+        placetype,
+        "borough" | "macrohood" | "neighbourhood" | "microhood"
+    )
 }
 
 /// What's known about a POI's prominence.
@@ -120,7 +134,9 @@ pub fn is_transit_stop(tags: &[(String, String)]) -> bool {
 pub fn is_transit_stop_tag(key: &str, value: &str) -> bool {
     matches!(
         (key, value),
-        ("highway", "bus_stop") | ("public_transport", "platform" | "stop_position") | ("railway", "platform" | "tram_stop")
+        ("highway", "bus_stop")
+            | ("public_transport", "platform" | "stop_position")
+            | ("railway", "platform" | "tram_stop")
     )
 }
 
@@ -136,14 +152,23 @@ mod test {
 
     #[test]
     fn bigger_cities_are_more_important() {
-        assert!(admin_importance("locality", Some(755_078), None) > admin_importance("locality", Some(5_000), None));
-        assert!(admin_importance("locality", None, Some(11)) > admin_importance("locality", None, Some(5)));
+        assert!(
+            admin_importance("locality", Some(755_078), None)
+                > admin_importance("locality", Some(5_000), None)
+        );
+        assert!(
+            admin_importance("locality", None, Some(11))
+                > admin_importance("locality", None, Some(5))
+        );
     }
 
     #[test]
     fn a_county_doesnt_outrank_its_seat() {
         // Spokane County and Spokane.
-        assert!(admin_importance("locality", Some(229_000), None) > admin_importance("county", Some(540_000), None));
+        assert!(
+            admin_importance("locality", Some(229_000), None)
+                > admin_importance("county", Some(540_000), None)
+        );
     }
 
     #[test]
@@ -159,13 +184,17 @@ mod test {
     #[test]
     fn a_big_city_outranks_a_small_region() {
         // Portland, Oregon and Portland Parish, Jamaica.
-        assert!(admin_importance("locality", Some(650_000), None) > admin_importance("region", Some(82_000), None));
+        assert!(
+            admin_importance("locality", Some(650_000), None)
+                > admin_importance("region", Some(82_000), None)
+        );
     }
 
     #[test]
     fn a_megacitys_neighbourhoods_dont_outrank_cities() {
         // The neighbourhood in Manhattan also called Bellevue, and Bellevue, Washington.
-        let manhattan = neighbourhood_importance(0.08, admin_importance("locality", Some(8_300_000), None));
+        let manhattan =
+            neighbourhood_importance(0.08, admin_importance("locality", Some(8_300_000), None));
         assert!(manhattan < admin_importance("locality", Some(150_000), None));
     }
 
@@ -175,7 +204,12 @@ mod test {
         // Starbuck, Washington.
         assert!(admin_importance("locality", Some(130), None) < cafe);
         // Tokyo, and China: no more than a famous POI could get.
-        let famous = poi_importance(PoiSignals { has_wikidata: true, qrank: Some(1_000_000_000), area_m2: 1e9, ..Default::default() });
+        let famous = poi_importance(PoiSignals {
+            has_wikidata: true,
+            qrank: Some(1_000_000_000),
+            area_m2: 1e9,
+            ..Default::default()
+        });
         assert!(admin_importance("locality", Some(37_000_000), None) <= MAX_ADMIN_IMPORTANCE);
         assert!(admin_importance("country", Some(1_400_000_000), None) <= famous + 0.05);
         // Without a population, an ordinary POI's.
@@ -185,9 +219,19 @@ mod test {
     #[test]
     fn well_known_pois_are_more_important() {
         let plain = poi_importance(PoiSignals::default());
-        let wikidata = poi_importance(PoiSignals { has_wikidata: true, ..Default::default() });
-        let famous = poi_importance(PoiSignals { has_wikidata: true, qrank: Some(10_000_000), ..Default::default() });
-        let campus = poi_importance(PoiSignals { area_m2: 2.0e6, ..Default::default() });
+        let wikidata = poi_importance(PoiSignals {
+            has_wikidata: true,
+            ..Default::default()
+        });
+        let famous = poi_importance(PoiSignals {
+            has_wikidata: true,
+            qrank: Some(10_000_000),
+            ..Default::default()
+        });
+        let campus = poi_importance(PoiSignals {
+            area_m2: 2.0e6,
+            ..Default::default()
+        });
         assert!(plain < wikidata && wikidata < famous);
         assert!(plain < campus);
         assert!(famous <= 1.0);
@@ -195,7 +239,10 @@ mod test {
 
     #[test]
     fn transit_stops_are_less_important() {
-        let stop = poi_importance(PoiSignals { transit_stop: true, ..Default::default() });
+        let stop = poi_importance(PoiSignals {
+            transit_stop: true,
+            ..Default::default()
+        });
         assert!(stop < poi_importance(PoiSignals::default()));
     }
 

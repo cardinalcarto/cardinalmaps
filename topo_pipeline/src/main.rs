@@ -68,7 +68,11 @@ fn parse_bbox(arg: Option<&str>) -> Result<Option<(f64, f64, f64, f64)>> {
     let Some(arg) = arg else { return Ok(None) };
     let parts = arg
         .split(',')
-        .map(|p| p.trim().parse::<f64>().context("--bbox needs west,south,east,north"))
+        .map(|p| {
+            p.trim()
+                .parse::<f64>()
+                .context("--bbox needs west,south,east,north")
+        })
         .collect::<Result<Vec<_>>>()?;
     let [w, s, e, n] = parts[..] else {
         bail!("--bbox needs west,south,east,north");
@@ -78,11 +82,22 @@ fn parse_bbox(arg: Option<&str>) -> Result<Option<(f64, f64, f64, f64)>> {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Contours { config, work, out, bbox, node_id_start, way_id_start } => {
+        Command::Contours {
+            config,
+            work,
+            out,
+            bbox,
+            node_id_start,
+            way_id_start,
+        } => {
             let config = config::Config::load(&config)?;
             let mosaic = chunks::Mosaic::open(&config, &work)?;
             for source in &mosaic.sources {
-                eprintln!("source {}: {} rasters", source.config.name, source.rasters.len());
+                eprintln!(
+                    "source {}: {} rasters",
+                    source.config.name,
+                    source.rasters.len()
+                );
             }
             let ids = mosaic.chunks(parse_bbox(bbox.as_deref())?);
             let files = mosaic.ensure(&work, &ids)?;
@@ -96,7 +111,11 @@ fn main() -> Result<()> {
                 std::fs::metadata(&out)?.len() as f64 / 1e6
             );
         }
-        Command::Append { planet, contours, out } => {
+        Command::Append {
+            planet,
+            contours,
+            out,
+        } => {
             assemble::append(&planet, &contours, &out)?;
             eprintln!("wrote {}", out.display());
         }

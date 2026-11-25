@@ -106,7 +106,9 @@ impl Kinds {
     /// The kind, if the phrase is only one.
     #[must_use]
     pub fn single(self) -> Option<Kind> {
-        (self.0.count_ones() == 1).then(|| self.iter().next()).flatten()
+        (self.0.count_ones() == 1)
+            .then(|| self.iter().next())
+            .flatten()
     }
 }
 
@@ -154,14 +156,23 @@ impl Lexicon {
                 }
             }
         }
-        for dictionary in ["concatenated_suffixes_separable", "concatenated_suffixes_inseparable"] {
+        for dictionary in [
+            "concatenated_suffixes_separable",
+            "concatenated_suffixes_inseparable",
+        ] {
             for (_, contents) in dictionaries::of_type(dictionary) {
                 for line in contents.lines() {
-                    lexicon.suffixes.extend(line.split('|').map(key).filter(|s| s.len() >= 2 && !s.contains(' ')));
+                    lexicon.suffixes.extend(
+                        line.split('|')
+                            .map(key)
+                            .filter(|s| s.len() >= 2 && !s.contains(' ')),
+                    );
                 }
             }
         }
-        lexicon.suffixes.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+        lexicon
+            .suffixes
+            .sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
         lexicon.suffixes.dedup();
         lexicon
     }
@@ -169,7 +180,10 @@ impl Lexicon {
     /// The kinds of a phrase of folded words.
     #[must_use]
     pub fn kinds(&self, words: &[String]) -> Kinds {
-        self.phrases.get(&words.join(" ")).copied().unwrap_or_default()
+        self.phrases
+            .get(&words.join(" "))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The query's dictionary phrases: the longest at each word, left to
@@ -181,7 +195,9 @@ impl Lexicon {
         while start < words.len() {
             let found = (start + 1..=words.len().min(start + self.longest))
                 .rev()
-                .find_map(|end| Some((end, self.kinds(&words[start..end]))).filter(|(_, k)| !k.is_empty()));
+                .find_map(|end| {
+                    Some((end, self.kinds(&words[start..end]))).filter(|(_, k)| !k.is_empty())
+                });
             match found {
                 Some((end, kinds)) => {
                     phrases.push(Phrase { start, end, kinds });
@@ -208,7 +224,11 @@ impl Lexicon {
 /// spaces.
 fn key(phrase: &str) -> String {
     let folded = fold(phrase.trim());
-    words(&folded).into_iter().map(|(_, w)| w).collect::<Vec<_>>().join(" ")
+    words(&folded)
+        .into_iter()
+        .map(|(_, w)| w)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -216,19 +236,34 @@ mod test {
     use super::*;
 
     fn words_of(text: &str) -> Vec<String> {
-        words(&fold(text)).into_iter().map(|(_, w)| w.to_string()).collect()
+        words(&fold(text))
+            .into_iter()
+            .map(|(_, w)| w.to_string())
+            .collect()
     }
 
     #[test]
     fn dictionaries_know_address_words() {
         let lexicon = Lexicon::new();
-        assert!(lexicon.kinds(&words_of("street")).contains(Kind::StreetType));
+        assert!(
+            lexicon
+                .kinds(&words_of("street"))
+                .contains(Kind::StreetType)
+        );
         assert!(lexicon.kinds(&words_of("st")).contains(Kind::StreetType));
-        assert!(lexicon.kinds(&words_of("Straße")).contains(Kind::StreetType));
+        assert!(
+            lexicon
+                .kinds(&words_of("Straße"))
+                .contains(Kind::StreetType)
+        );
         assert!(lexicon.kinds(&words_of("rue")).contains(Kind::StreetType));
         assert!(lexicon.kinds(&words_of("near")).contains(Kind::Near));
         assert!(lexicon.kinds(&words_of("apt")).contains(Kind::Unit));
-        assert!(lexicon.kinds(&words_of("north")).contains(Kind::Directional));
+        assert!(
+            lexicon
+                .kinds(&words_of("north"))
+                .contains(Kind::Directional)
+        );
         assert!(lexicon.kinds(&words_of("seattle")).is_empty());
     }
 
@@ -237,9 +272,16 @@ mod test {
         let lexicon = Lexicon::new();
         let words = words_of("coffee near me on 5th ave");
         let phrases = lexicon.phrases(&words);
-        let near = phrases.iter().find(|p| p.kinds.contains(Kind::Near)).unwrap();
+        let near = phrases
+            .iter()
+            .find(|p| p.kinds.contains(Kind::Near))
+            .unwrap();
         assert_eq!(&words[near.start..near.end], ["near", "me"]);
-        assert!(phrases.iter().any(|p| words[p.start] == "ave" && p.kinds.contains(Kind::StreetType)));
+        assert!(
+            phrases
+                .iter()
+                .any(|p| words[p.start] == "ave" && p.kinds.contains(Kind::StreetType))
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 package org.openmaptiles.layers;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static com.onthegomap.planetiler.TestUtils.rectangle;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.geo.GeoUtils;

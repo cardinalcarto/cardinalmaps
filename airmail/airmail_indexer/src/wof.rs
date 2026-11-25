@@ -166,20 +166,30 @@ impl WhosOnFirst {
     /// (`default`, `preferred`, `variant`, `colloquial`).
     pub async fn names(&self, id: u64) -> Result<Vec<WofName>> {
         let id: i64 = id.try_into()?;
-        let rows: Vec<(String, String, bool, String)> =
-            sqlx::query_as("SELECT lang, tag, abbr, name FROM main.name WHERE source = 'wof' AND id = ?1")
-                .bind(id)
-                .fetch_all(&self.pool)
-                .await?;
-        Ok(rows.into_iter().map(|(lang, tag, abbr, name)| WofName { lang, tag, abbr, name }).collect())
+        let rows: Vec<(String, String, bool, String)> = sqlx::query_as(
+            "SELECT lang, tag, abbr, name FROM main.name WHERE source = 'wof' AND id = ?1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(lang, tag, abbr, name)| WofName {
+                lang,
+                tag,
+                abbr,
+                name,
+            })
+            .collect())
     }
 
     /// A place's placetype, if it's in the database.
     pub async fn placetype(&self, id: u64) -> Result<Option<String>> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT type FROM main.place WHERE source = 'wof' AND id = ?1")
-            .bind(id.to_string())
-            .fetch_optional(&self.pool)
-            .await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT type FROM main.place WHERE source = 'wof' AND id = ?1")
+                .bind(id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(placetype,)| placetype))
     }
 
@@ -196,7 +206,10 @@ impl WhosOnFirst {
         .bind(id.to_string())
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().filter_map(|(id,)| id.parse().ok()).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id,)| id.parse().ok())
+            .collect())
     }
 
     /// The values of some of a place's properties.

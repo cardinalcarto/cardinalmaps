@@ -28,7 +28,9 @@ use crate::cuisine;
 #[cfg(feature = "tokio")]
 use crate::error::AirmailError;
 use crate::geometry;
-use crate::poi::{AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, ToIndexPoi, WofPlace};
+use crate::poi::{
+    AdminBand, Kind, OsmRef, PlaceId, Pointer, SchemafiedPoi, TileId, ToIndexPoi, WofPlace,
+};
 
 /// The version of the index's schema and of what its fields hold. Readers
 /// refuse indexes of other versions.
@@ -52,7 +54,11 @@ pub struct WriterOptions {
 
 impl Default for WriterOptions {
     fn default() -> Self {
-        Self { heap_bytes: DEFAULT_WRITER_HEAP, threads: None, storage: Storage::Full }
+        Self {
+            heap_bytes: DEFAULT_WRITER_HEAP,
+            threads: None,
+            storage: Storage::Full,
+        }
     }
 }
 
@@ -286,14 +292,19 @@ impl SearchHit {
     /// The OSM tag's value, if it has the tag.
     #[must_use]
     pub fn tag(&self, key: &str) -> Option<&str> {
-        self.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.tags
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Sets its tags: Cardinal's `cardinal:*` tags go to `poi` (if there's
     /// a version) and `local_id`, and the rest to `tags`.
     pub(crate) fn set_tags(&mut self, mut tags: Vec<(String, String)>) {
         let tag = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
-        let poi = tag("cardinal:poi_id").and_then(|id| id.parse().ok()).zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
+        let poi = tag("cardinal:poi_id")
+            .and_then(|id| id.parse().ok())
+            .zip(tag("cardinal:version").and_then(|v| v.parse().ok()));
         let local_id = tag(LOCAL_ID_TAG).and_then(|id| id.parse().ok());
         tags.retain(|(k, _)| !k.starts_with("cardinal:"));
         self.poi = poi;
@@ -383,7 +394,10 @@ impl AirmailIndex {
     }
 
     pub(crate) fn field(&self, name: &str) -> tantivy::schema::Field {
-        self.tantivy_index.schema().get_field(name).expect("schema field")
+        self.tantivy_index
+            .schema()
+            .get_field(name)
+            .expect("schema field")
     }
 
     /// Opens the index in `index_dir` for writing, creating it if there's
@@ -400,11 +414,21 @@ impl AirmailIndex {
         if index_dir.join("meta.json").exists() {
             check_version(index_dir)?;
         } else {
-            std::fs::write(&version_path, serde_json::to_vec(&VersionFile { schema_version: SCHEMA_VERSION })?)?;
+            std::fs::write(
+                &version_path,
+                serde_json::to_vec(&VersionFile {
+                    schema_version: SCHEMA_VERSION,
+                })?,
+            )?;
         }
-        let tantivy_index = tantivy::Index::open_or_create(MmapDirectory::open(index_dir)?, Self::schema())?;
+        let tantivy_index =
+            tantivy::Index::open_or_create(MmapDirectory::open(index_dir)?, Self::schema())?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
+        Ok(Self {
+            tantivy_index: Arc::new(tantivy_index),
+            reader: Arc::default(),
+            tagger: None,
+        })
     }
 
     /// Opens an existing index.
@@ -415,7 +439,11 @@ impl AirmailIndex {
         check_version(Path::new(index_dir))?;
         let tantivy_index = tantivy::Index::open_in_dir(index_dir)?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
+        Ok(Self {
+            tantivy_index: Arc::new(tantivy_index),
+            reader: Arc::default(),
+            tagger: None,
+        })
     }
 
     /// Opens an index for searching only, which works on a read-only
@@ -428,7 +456,11 @@ impl AirmailIndex {
         let directory = ReadOnlyDirectory(MmapDirectory::open(index_dir)?);
         let tantivy_index = tantivy::Index::open(directory)?;
         register_tokenizers(&tantivy_index);
-        Ok(Self { tantivy_index: Arc::new(tantivy_index), reader: Arc::default(), tagger: None })
+        Ok(Self {
+            tantivy_index: Arc::new(tantivy_index),
+            reader: Arc::default(),
+            tagger: None,
+        })
     }
 
     /// Reads queries with a tagger's interpretations of them, rather than by
@@ -465,16 +497,27 @@ impl AirmailIndex {
     /// threads (tantivy needs at least 15 MB for each).
     pub fn writer_with(&mut self, options: WriterOptions) -> Result<AirmailIndexWriter> {
         let tantivy_writer = match options.threads {
-            Some(threads) => self.tantivy_index.writer_with_num_threads::<TantivyDocument>(threads, options.heap_bytes)?,
-            None => self.tantivy_index.writer::<TantivyDocument>(options.heap_bytes)?,
+            Some(threads) => self
+                .tantivy_index
+                .writer_with_num_threads::<TantivyDocument>(threads, options.heap_bytes)?,
+            None => self
+                .tantivy_index
+                .writer::<TantivyDocument>(options.heap_bytes)?,
         };
-        Ok(AirmailIndexWriter { tantivy_writer, schema: self.tantivy_index.schema(), storage: options.storage })
+        Ok(AirmailIndexWriter {
+            tantivy_writer,
+            schema: self.tantivy_index.schema(),
+            storage: options.storage,
+        })
     }
 
     /// Merges every segment into one.
     pub async fn merge(&mut self) -> Result<()> {
         let ids = self.tantivy_index.searchable_segment_ids()?;
-        self.tantivy_index.writer::<TantivyDocument>(DEFAULT_WRITER_HEAP)?.merge(&ids).await?;
+        self.tantivy_index
+            .writer::<TantivyDocument>(DEFAULT_WRITER_HEAP)?
+            .merge(&ids)
+            .await?;
         Ok(())
     }
 
@@ -505,13 +548,21 @@ impl AirmailIndex {
     #[cfg(feature = "tokio")]
     pub async fn num_docs(&self) -> Result<u64> {
         let index = self.tantivy_index.clone();
-        let count = spawn_blocking(move || index.reader().ok().map(|reader| reader.searcher().num_docs()));
+        let count = spawn_blocking(move || {
+            index
+                .reader()
+                .ok()
+                .map(|reader| reader.searcher().num_docs())
+        });
         Ok(count.await?.ok_or(AirmailError::UnableToCount)?)
     }
 
     /// The words of `text` as the name field indexes them.
     pub(crate) fn tokens(&self, text: &str) -> Vec<String> {
-        let mut analyzer = self.tantivy_index.tokenizer_for_field(self.field(FIELD_NAME)).expect("tokenizer");
+        let mut analyzer = self
+            .tantivy_index
+            .tokenizer_for_field(self.field(FIELD_NAME))
+            .expect("tokenizer");
         let mut tokens = Vec::new();
         let normalized = normalize_text(text);
         let mut stream = analyzer.token_stream(&normalized);
@@ -522,7 +573,14 @@ impl AirmailIndex {
     /// The query's words, and the tagger's likeliest readings of them if
     /// there's a tagger, until together they're at least `coverage` likely or
     /// there are `max` of them.
-    pub(crate) fn tagged(&self, text: &str, prefix: bool, focus: Option<[f64; 2]>, max: usize, coverage: f64) -> (Vec<String>, Option<Vec<airmail_tagger::Interpretation>>) {
+    pub(crate) fn tagged(
+        &self,
+        text: &str,
+        prefix: bool,
+        focus: Option<[f64; 2]>,
+        max: usize,
+        coverage: f64,
+    ) -> (Vec<String>, Option<Vec<airmail_tagger::Interpretation>>) {
         let words = self.tokens(&text.replace("'s", "s").replace(',', " "));
         let readings = self.tagger.as_ref().and_then(|tagger| {
             let prefix = prefix && !text.ends_with(char::is_whitespace);
@@ -531,14 +589,23 @@ impl AirmailIndex {
                 return None;
             }
             query.words.clone_from(&words);
-            let areas = airmail_tagger::features::Gazetteer::areas(&crate::gazetteer::IndexGazetteer::new(self).ok()?, &query);
+            let areas = airmail_tagger::features::Gazetteer::areas(
+                &crate::gazetteer::IndexGazetteer::new(self).ok()?,
+                &query,
+            );
             Some(tagger.interpret(&query, &areas, max, coverage))
         });
         (words, readings)
     }
 
     /// Matches one query word in one field.
-    pub(crate) fn word_query(&self, field: &str, word: &str, prefix: bool, typos: bool) -> Box<dyn Query> {
+    pub(crate) fn word_query(
+        &self,
+        field: &str,
+        word: &str,
+        prefix: bool,
+        typos: bool,
+    ) -> Box<dyn Query> {
         let term = Term::from_field_text(self.field(field), word);
         let distance = match (typos, prefix) {
             (false, _) => 0,
@@ -547,24 +614,32 @@ impl AirmailIndex {
         };
         // Without term frequencies, so a place with its name in fifty
         // languages scores no higher than one with a single name.
-        let exact: Box<dyn Query> = Box::new(TermQuery::new(term.clone(), IndexRecordOption::Basic));
+        let exact: Box<dyn Query> =
+            Box::new(TermQuery::new(term.clone(), IndexRecordOption::Basic));
         if prefix {
             // A word still being typed: every word it begins matches alike,
             // with no bonus for the rare word that's exactly the text so far,
             // so `londo` is London before an obscure place called Londo. A
             // word it begins as typed counts a little more than one it
             // begins with a typo, so `wales` is Wales.
-            let fuzzy: Box<dyn Query> = Box::new(FuzzyTermQuery::new_prefix(term.clone(), distance, true));
+            let fuzzy: Box<dyn Query> =
+                Box::new(FuzzyTermQuery::new_prefix(term.clone(), distance, true));
             if distance == 0 {
                 return fuzzy;
             }
             let as_typed = Box::new(FuzzyTermQuery::new_prefix(term, 0, true));
             Box::new(BooleanQuery::new(vec![
                 (Occur::Must, fuzzy),
-                (Occur::Should, Box::new(ConstScoreQuery::new(as_typed, TYPED_PREFIX_SCORE))),
+                (
+                    Occur::Should,
+                    Box::new(ConstScoreQuery::new(as_typed, TYPED_PREFIX_SCORE)),
+                ),
             ]))
         } else if distance > 0 {
-            with_exact_score(Box::new(FuzzyTermQuery::new(term.clone(), distance, true)), term)
+            with_exact_score(
+                Box::new(FuzzyTermQuery::new(term.clone(), distance, true)),
+                term,
+            )
         } else {
             exact
         }
@@ -582,10 +657,20 @@ impl AirmailIndex {
             containing.extend(geometry::ancestors(*cell).into_iter().map(|c| c.0));
         }
         let term_query = |field: &str, value: u64| -> Box<dyn Query> {
-            Box::new(TermQuery::new(Term::from_field_u64(self.field(field), value), IndexRecordOption::Basic))
+            Box::new(TermQuery::new(
+                Term::from_field_u64(self.field(field), value),
+                IndexRecordOption::Basic,
+            ))
         };
-        let mut clauses: Vec<Box<dyn Query>> = inside.into_iter().map(|c| term_query(FIELD_S2_COVER_ANCESTORS, c)).collect();
-        clauses.extend(containing.into_iter().map(|c| term_query(FIELD_S2_COVER, c)));
+        let mut clauses: Vec<Box<dyn Query>> = inside
+            .into_iter()
+            .map(|c| term_query(FIELD_S2_COVER_ANCESTORS, c))
+            .collect();
+        clauses.extend(
+            containing
+                .into_iter()
+                .map(|c| term_query(FIELD_S2_COVER, c)),
+        );
         Box::new(BooleanQuery::union(clauses))
     }
 
@@ -606,12 +691,25 @@ impl AirmailIndex {
     /// If the search fails or the stored document can't be decoded.
     pub fn lookup_blocking(&self, id: &PlaceId) -> Result<SearchResults> {
         let (field, term) = match id {
-            PlaceId::Poi(id) => (FIELD_POI_ID, Term::from_field_u64(self.field(FIELD_POI_ID), *id)),
-            PlaceId::Wof(id) => (FIELD_WOF_ID, Term::from_field_u64(self.field(FIELD_WOF_ID), *id)),
-            PlaceId::Osm(osm_type, id) => {
-                (FIELD_OSM_ID, Term::from_field_text(self.field(FIELD_OSM_ID), &format!("{}/{id}", osm_type.as_str())))
-            }
-            PlaceId::Postcode(key) => (FIELD_POSTCODE_ID, Term::from_field_text(self.field(FIELD_POSTCODE_ID), key)),
+            PlaceId::Poi(id) => (
+                FIELD_POI_ID,
+                Term::from_field_u64(self.field(FIELD_POI_ID), *id),
+            ),
+            PlaceId::Wof(id) => (
+                FIELD_WOF_ID,
+                Term::from_field_u64(self.field(FIELD_WOF_ID), *id),
+            ),
+            PlaceId::Osm(osm_type, id) => (
+                FIELD_OSM_ID,
+                Term::from_field_text(
+                    self.field(FIELD_OSM_ID),
+                    &format!("{}/{id}", osm_type.as_str()),
+                ),
+            ),
+            PlaceId::Postcode(key) => (
+                FIELD_POSTCODE_ID,
+                Term::from_field_text(self.field(FIELD_POSTCODE_ID), key),
+            ),
         };
         trace!("Looking up {id} by {field}");
         self.lookup_term(term)
@@ -623,7 +721,10 @@ impl AirmailIndex {
     /// # Errors
     /// If the search fails or the stored document can't be decoded.
     pub fn lookup_local_blocking(&self, id: u64) -> Result<SearchResults> {
-        self.lookup_term(Term::from_field_text(self.field(FIELD_OSM_ID), &local_key(id)))
+        self.lookup_term(Term::from_field_text(
+            self.field(FIELD_OSM_ID),
+            &local_key(id),
+        ))
     }
 
     fn lookup_term(&self, term: Term) -> Result<SearchResults> {
@@ -631,34 +732,69 @@ impl AirmailIndex {
         let query = TermQuery::new(term, IndexRecordOption::Basic);
         // An element is indexed once, but a POI ID could in principle be
         // on more than one; the first is as good as any.
-        let Some((_, address)) = searcher.search(&query, &TopDocs::with_limit(1).order_by_score())?.into_iter().next() else {
+        let Some((_, address)) = searcher
+            .search(&query, &TopDocs::with_limit(1).order_by_score())?
+            .into_iter()
+            .next()
+        else {
             return Ok(SearchResults::default());
         };
         let hit = self.hit(&searcher, address, 0.0)?;
         let admins = self.admins(&searcher, &hit.admin_ids.iter().copied().collect())?;
-        Ok(SearchResults { hits: vec![hit], admins, categories: None })
+        Ok(SearchResults {
+            hits: vec![hit],
+            admins,
+            categories: None,
+        })
     }
 
-    pub(crate) fn hit(&self, searcher: &Searcher, address: DocAddress, score: f32) -> Result<SearchHit> {
+    pub(crate) fn hit(
+        &self,
+        searcher: &Searcher,
+        address: DocAddress,
+        score: f32,
+    ) -> Result<SearchHit> {
         let doc: TantivyDocument = searcher.doc(address)?;
-        let text = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_str()).map(str::to_string);
+        let text = |field: &str| {
+            doc.get_first(self.field(field))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        };
         let number = |field: &str| doc.get_first(self.field(field)).and_then(|v| v.as_u64());
-        let kind = text(FIELD_KIND).as_deref().and_then(Kind::parse).context("document without a kind")?;
+        let kind = text(FIELD_KIND)
+            .as_deref()
+            .and_then(Kind::parse)
+            .context("document without a kind")?;
         let tags: Vec<(String, String)> = doc
             .get_first(self.field(FIELD_TAGS))
             .and_then(|v| v.as_object())
-            .map(|object| object.map(|(k, v)| (k.to_string(), v.as_str().unwrap_or_default().to_string())).collect())
+            .map(|object| {
+                object
+                    .map(|(k, v)| (k.to_string(), v.as_str().unwrap_or_default().to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         let osm = text(FIELD_OSM).map(|s| OsmRef::decode(&s)).transpose()?;
-        let wof = text(FIELD_WOF).map(|s| serde_json::from_str::<WofPlace>(&s)).transpose()?;
-        let admin_ids = doc.get_all(self.field(FIELD_ADMIN_IDS)).filter_map(|v| v.as_u64()).collect();
+        let wof = text(FIELD_WOF)
+            .map(|s| serde_json::from_str::<WofPlace>(&s))
+            .transpose()?;
+        let admin_ids = doc
+            .get_all(self.field(FIELD_ADMIN_IDS))
+            .filter_map(|v| v.as_u64())
+            .collect();
         let center = number(FIELD_CENTER).context("document without a center")?;
         let center = s2::latlng::LatLng::from(s2::cellid::CellID(center));
         let center = Point::new(center.lng.deg(), center.lat.deg());
         let pointer = number(FIELD_POINTER_POI_ID)
             .zip(number(FIELD_POINTER_TILE))
-            .map(|(poi_id, tile)| Pointer { poi_id, tile: TileId::unpack(tile) });
-        let geometry = match doc.get_first(self.field(FIELD_GEOMETRY)).and_then(|v| v.as_bytes()) {
+            .map(|(poi_id, tile)| Pointer {
+                poi_id,
+                tile: TileId::unpack(tile),
+            });
+        let geometry = match doc
+            .get_first(self.field(FIELD_GEOMETRY))
+            .and_then(|v| v.as_bytes())
+        {
             Some(wkb) => geometry::from_wkb(wkb)?,
             None if pointer.is_some() => Geometry::Point(center),
             None => bail!("document without a geometry"),
@@ -675,28 +811,43 @@ impl AirmailIndex {
             admin_ids,
             center,
             geometry,
-            importance: doc.get_first(self.field(FIELD_IMPORTANCE)).and_then(|v| v.as_f64()).unwrap_or(0.0),
+            importance: doc
+                .get_first(self.field(FIELD_IMPORTANCE))
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0),
         };
         hit.set_tags(tags);
         Ok(hit)
     }
 
     /// The Who's On First places with these IDs that are in the index.
-    pub(crate) fn admins(&self, searcher: &Searcher, ids: &BTreeSet<u64>) -> Result<HashMap<u64, WofPlace>> {
+    pub(crate) fn admins(
+        &self,
+        searcher: &Searcher,
+        ids: &BTreeSet<u64>,
+    ) -> Result<HashMap<u64, WofPlace>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         let clauses: Vec<Box<dyn Query>> = ids
             .iter()
             .map(|id| -> Box<dyn Query> {
-                Box::new(TermQuery::new(Term::from_field_u64(self.field(FIELD_WOF_ID), *id), IndexRecordOption::Basic))
+                Box::new(TermQuery::new(
+                    Term::from_field_u64(self.field(FIELD_WOF_ID), *id),
+                    IndexRecordOption::Basic,
+                ))
             })
             .collect();
         let query = BooleanQuery::union(clauses);
         let mut admins = HashMap::new();
-        for (_, address) in searcher.search(&query, &TopDocs::with_limit(ids.len()).order_by_score())? {
+        for (_, address) in
+            searcher.search(&query, &TopDocs::with_limit(ids.len()).order_by_score())?
+        {
             let doc: TantivyDocument = searcher.doc(address)?;
-            if let Some(wof) = doc.get_first(self.field(FIELD_WOF)).and_then(|v| v.as_str()) {
+            if let Some(wof) = doc
+                .get_first(self.field(FIELD_WOF))
+                .and_then(|v| v.as_str())
+            {
                 let place: WofPlace = serde_json::from_str(wof)?;
                 admins.insert(place.id, place);
             }
@@ -722,11 +873,16 @@ const STREET_PIECE_DEGREES: f64 = 0.002;
 /// Merges the pieces of each street into the best-ranked one, which gets
 /// their shapes, so that a long street is one result shown whole.
 fn merge_street_pieces(hits: &mut Vec<SearchHit>) {
-    let streets: Vec<usize> = (0..hits.len()).filter(|&i| hits[i].kind == Kind::Street).collect();
+    let streets: Vec<usize> = (0..hits.len())
+        .filter(|&i| hits[i].kind == Kind::Street)
+        .collect();
     if streets.len() < 2 {
         return;
     }
-    let names: Vec<Option<String>> = streets.iter().map(|&i| hits[i].tag("name").map(name_words)).collect();
+    let names: Vec<Option<String>> = streets
+        .iter()
+        .map(|&i| hits[i].tag("name").map(name_words))
+        .collect();
     // Union-find over the streets, by name and nearness.
     let mut parent: Vec<usize> = (0..streets.len()).collect();
     fn root(parent: &mut [usize], mut i: usize) -> usize {
@@ -740,7 +896,8 @@ fn merge_street_pieces(hits: &mut Vec<SearchHit>) {
         for b in a + 1..streets.len() {
             if names[a].is_some()
                 && names[a] == names[b]
-                && geo::Euclidean.distance(&hits[streets[a]].geometry, &hits[streets[b]].geometry) < STREET_PIECE_DEGREES
+                && geo::Euclidean.distance(&hits[streets[a]].geometry, &hits[streets[b]].geometry)
+                    < STREET_PIECE_DEGREES
             {
                 let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
                 // The better-ranked piece, first in the list, is the root.
@@ -754,7 +911,10 @@ fn merge_street_pieces(hits: &mut Vec<SearchHit>) {
         let r = root(&mut parent, a);
         if r != a {
             dropped.insert(streets[a]);
-            merged.entry(r).or_default().extend(lines(&hits[streets[a]].geometry));
+            merged
+                .entry(r)
+                .or_default()
+                .extend(lines(&hits[streets[a]].geometry));
         }
     }
     for (r, extra) in merged {
@@ -782,12 +942,20 @@ fn lines(geometry: &Geometry<f64>) -> Vec<geo::LineString<f64>> {
 /// Merges a street's pieces and drops areas entered twice.
 pub(crate) fn merge_duplicates(hits: &mut Vec<SearchHit>) {
     merge_street_pieces(hits);
-    let key = |hit: &SearchHit| hit.wof.as_ref().map(|w| (normalize_text(&w.default_name).to_lowercase(), w.placetype.clone()));
+    let key = |hit: &SearchHit| {
+        hit.wof.as_ref().map(|w| {
+            (
+                normalize_text(&w.default_name).to_lowercase(),
+                w.placetype.clone(),
+            )
+        })
+    };
     let mut kept: Vec<SearchHit> = Vec::with_capacity(hits.len());
     for hit in hits.drain(..) {
         let duplicate = key(&hit).is_some()
             && kept.iter().any(|k| {
-                key(k) == key(&hit) && geo::Haversine.distance(k.center, hit.center) < DUPLICATE_ADMIN_KM * 1000.0
+                key(k) == key(&hit)
+                    && geo::Haversine.distance(k.center, hit.center) < DUPLICATE_ADMIN_KM * 1000.0
             });
         if !duplicate {
             kept.push(hit);
@@ -799,15 +967,23 @@ pub(crate) fn merge_duplicates(hits: &mut Vec<SearchHit>) {
 /// Registers the tokenizer text fields use: it's a name in the schema, and
 /// has to be supplied whenever an index is opened.
 fn register_tokenizers(index: &tantivy::Index) {
-    index.tokenizers().register(crate::text::TOKENIZER, tantivy::tokenizer::TextAnalyzer::from(crate::text::Tokenizer));
+    index.tokenizers().register(
+        crate::text::TOKENIZER,
+        tantivy::tokenizer::TextAnalyzer::from(crate::text::Tokenizer),
+    );
 }
 
 fn check_version(index_dir: &Path) -> Result<()> {
     let path = index_dir.join(VERSION_FILE);
     let file: VersionFile = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))?,
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).with_context(|| format!("reading {}", path.display()))?
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!("{} has no {VERSION_FILE}; it was built by an older airmail", index_dir.display())
+            bail!(
+                "{} has no {VERSION_FILE}; it was built by an older airmail",
+                index_dir.display()
+            )
         }
         Err(e) => return Err(e.into()),
     };
@@ -857,7 +1033,11 @@ pub fn normalize_text(text: &str) -> String {
 /// them and queries build them.
 #[must_use]
 pub fn name_key(name: &str) -> String {
-    crate::text::words(&normalize_text(name)).into_iter().map(|(_, w)| w).collect::<Vec<_>>().join(" ")
+    crate::text::words(&normalize_text(name))
+        .into_iter()
+        .map(|(_, w)| w)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The forms a name is indexed in: those that are exactly it (normalized,
@@ -880,10 +1060,15 @@ pub fn name_forms(name: &str) -> (Vec<String>, Vec<String>) {
     exact.extend(crate::text::umlaut_variant(name).map(|v| normalize_text(&v)));
     exact.extend(crate::text::apostrophe_variant(name).map(|v| normalize_text(&v)));
     let exact = with_variants(exact);
-    let other: Vec<String> = with_variants(crate::text::transliteration(name).map(|v| normalize_text(&v)).into_iter().collect())
-        .into_iter()
-        .filter(|form| !exact.contains(form))
-        .collect();
+    let other: Vec<String> = with_variants(
+        crate::text::transliteration(name)
+            .map(|v| normalize_text(&v))
+            .into_iter()
+            .collect(),
+    )
+    .into_iter()
+    .filter(|form| !exact.contains(form))
+    .collect();
     (exact, other)
 }
 
@@ -894,7 +1079,10 @@ pub fn name_forms(name: &str) -> (Vec<String>, Vec<String>) {
 fn with_exact_score(matcher: Box<dyn Query>, term: Term) -> Box<dyn Query> {
     Box::new(BooleanQuery::new(vec![
         (Occur::Must, matcher),
-        (Occur::Should, Box::new(TermQuery::new(term, IndexRecordOption::Basic))),
+        (
+            Occur::Should,
+            Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+        ),
     ]))
 }
 
@@ -906,7 +1094,11 @@ fn indexed_tags(tags: &[(String, String)]) -> BTreeSet<String> {
     for (key, raw) in tags {
         for value in categories::split_values(raw) {
             if key == "cuisine" {
-                terms.extend(cuisine::with_ancestors(&value).into_iter().map(|c| format!("cuisine={c}")));
+                terms.extend(
+                    cuisine::with_ancestors(&value)
+                        .into_iter()
+                        .map(|c| format!("cuisine={c}")),
+                );
             } else if key.starts_with("diet:") || categories::is_category_tag(key, &value) {
                 terms.insert(format!("{key}={value}"));
             }
@@ -935,7 +1127,11 @@ impl NameForms {
     fn of(name: &str) -> Self {
         let (exact, other) = name_forms(name);
         let exact_keys = exact.iter().map(|form| name_key(form)).collect();
-        Self { exact, other, exact_keys }
+        Self {
+            exact,
+            other,
+            exact_keys,
+        }
     }
 }
 
@@ -955,7 +1151,10 @@ impl RoadForms {
             exact_keys.extend(road_forms.exact_keys.iter().cloned());
             all.extend(road_forms.exact.iter().chain(&road_forms.other).cloned());
         }
-        Self { forms: all, exact_keys }
+        Self {
+            forms: all,
+            exact_keys,
+        }
     }
 }
 
@@ -987,7 +1186,10 @@ impl FormsCache {
     /// The forms of a POI's road, in its languages (see `SchemafiedPoi`).
     fn roads(&mut self, poi: &ToIndexPoi) -> Arc<RoadForms> {
         let Some(road) = &poi.road else {
-            return Arc::new(RoadForms { forms: BTreeSet::new(), exact_keys: BTreeSet::new() });
+            return Arc::new(RoadForms {
+                forms: BTreeSet::new(),
+                exact_keys: BTreeSet::new(),
+            });
         };
         let key = (road.clone(), poi.languages.clone());
         if let Some(forms) = self.roads.get(&key) {
@@ -1047,9 +1249,20 @@ impl DocumentBuilder {
     ///
     /// # Errors
     /// As `document`.
-    pub fn document_cached(&self, poi: ToIndexPoi, source: &str, cache: &mut FormsCache) -> Result<TantivyDocument> {
+    pub fn document_cached(
+        &self,
+        poi: ToIndexPoi,
+        source: &str,
+        cache: &mut FormsCache,
+    ) -> Result<TantivyDocument> {
         let roads = cache.roads(&poi);
-        self.build(&poi, &poi.names, &roads, &mut |name| cache.name(name), source)
+        self.build(
+            &poi,
+            &poi.names,
+            &roads,
+            &mut |name| cache.name(name),
+            source,
+        )
     }
 
     fn build(
@@ -1062,7 +1275,9 @@ impl DocumentBuilder {
     ) -> Result<TantivyDocument> {
         let pointer = match (self.storage, poi.poi_id()) {
             (Storage::Pointers, Some(poi_id)) => {
-                let tile = poi.tile.with_context(|| format!("POI {poi_id} is stored as a pointer, but has no tile"))?;
+                let tile = poi.tile.with_context(|| {
+                    format!("POI {poi_id} is stored as a pointer, but has no tile")
+                })?;
                 Some(Pointer { poi_id, tile })
             }
             _ => None,
@@ -1103,7 +1318,13 @@ impl DocumentBuilder {
             }
         }
         let values = |value: &Option<String>| -> Vec<String> {
-            value.iter().flat_map(|v| v.split(';')).map(str::trim).filter(|v| !v.is_empty()).map(normalize_text).collect()
+            value
+                .iter()
+                .flat_map(|v| v.split(';'))
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(normalize_text)
+                .collect()
         };
         for number in values(&poi.house_number) {
             doc.add_text(self.field(FIELD_HOUSENUMBER), number);
@@ -1124,12 +1345,21 @@ impl DocumentBuilder {
         let mut admin_forms = BTreeSet::new();
         for (band, name) in &poi.admin_names {
             let name_forms = forms(name);
-            admin_forms.extend(name_forms.exact.iter().chain(&name_forms.other).map(|form| (*band, form.clone())));
+            admin_forms.extend(
+                name_forms
+                    .exact
+                    .iter()
+                    .chain(&name_forms.other)
+                    .map(|form| (*band, form.clone())),
+            );
         }
         for (band, form) in admin_forms {
             doc.add_text(self.field(admin_field(band)), form);
         }
-        let country = poi.country_code.as_deref().or_else(|| poi.wof.as_ref().and_then(|w| w.country.as_deref()));
+        let country = poi
+            .country_code
+            .as_deref()
+            .or_else(|| poi.wof.as_ref().and_then(|w| w.country.as_deref()));
         if let Some(country) = country {
             doc.add_text(self.field(FIELD_COUNTRY_CODE), country.to_uppercase());
             for code in crate::countries::codes(country) {
@@ -1139,7 +1369,8 @@ impl DocumentBuilder {
         // The gazetteer: an area's own names by its band.
         if let Some(band) = poi.wof.as_ref().and_then(|w| AdminBand::of(&w.placetype)) {
             doc.add_text(self.field(FIELD_PLACETYPE), band.as_str());
-            let mut keys: BTreeSet<String> = all_forms.iter().map(|form| self.exact_key(form)).collect();
+            let mut keys: BTreeSet<String> =
+                all_forms.iter().map(|form| self.exact_key(form)).collect();
             if band == AdminBand::Country
                 && let Some(country) = country
             {
@@ -1153,7 +1384,10 @@ impl DocumentBuilder {
             doc.add_text(self.field(FIELD_INDEXED_TAG), &term);
         }
         doc.add_text(self.field(FIELD_KIND), poi.kind.as_str());
-        doc.add_u64(self.field(FIELD_IS_ADMIN), u64::from(poi.kind == Kind::Admin));
+        doc.add_u64(
+            self.field(FIELD_IS_ADMIN),
+            u64::from(poi.kind == Kind::Admin),
+        );
         doc.add_text(self.field(FIELD_SOURCE), source);
         for id in &poi.admin_ids {
             doc.add_u64(self.field(FIELD_ADMIN_IDS), *id);
@@ -1164,7 +1398,10 @@ impl DocumentBuilder {
             if stored {
                 doc.add_text(self.field(FIELD_OSM), osm.encode());
             }
-            doc.add_text(self.field(FIELD_OSM_ID), format!("{}/{}", osm.osm_type.as_str(), osm.id));
+            doc.add_text(
+                self.field(FIELD_OSM_ID),
+                format!("{}/{}", osm.osm_type.as_str(), osm.id),
+            );
         }
         if let Some(local) = poi.tag(LOCAL_ID_TAG).and_then(|v| v.parse::<u64>().ok()) {
             doc.add_text(self.field(FIELD_OSM_ID), local_key(local));
@@ -1193,11 +1430,20 @@ impl DocumentBuilder {
         if !kept.is_empty() {
             doc.add_object(self.field(FIELD_TAGS), kept);
         }
-        let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(poi.center.y(), poi.center.x()));
+        let center = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(
+            poi.center.y(),
+            poi.center.x(),
+        ));
         doc.add_u64(self.field(FIELD_CENTER), center.0);
-        doc.add_u64(self.field(FIELD_IS_POINT), u64::from(!stored || matches!(poi.geometry, Geometry::Point(_))));
+        doc.add_u64(
+            self.field(FIELD_IS_POINT),
+            u64::from(!stored || matches!(poi.geometry, Geometry::Point(_))),
+        );
         if stored {
-            doc.add_bytes(self.field(FIELD_GEOMETRY), &geometry::to_wkb(&poi.geometry)?);
+            doc.add_bytes(
+                self.field(FIELD_GEOMETRY),
+                &geometry::to_wkb(&poi.geometry)?,
+            );
         }
         let mut ancestors = BTreeSet::new();
         for cell in geometry::covering(&poi.geometry) {
@@ -1227,7 +1473,10 @@ impl AirmailIndexWriter {
     /// writer's options say.
     #[must_use]
     pub fn document_builder(&self) -> DocumentBuilder {
-        DocumentBuilder { schema: self.schema.clone(), storage: self.storage }
+        DocumentBuilder {
+            schema: self.schema.clone(),
+            storage: self.storage,
+        }
     }
 
     /// Adds a document from `document_builder`.
@@ -1244,7 +1493,8 @@ impl AirmailIndexWriter {
     /// Deletes every document from `source`, so loading it again replaces
     /// it rather than adding duplicates.
     pub fn delete_source(&mut self, source: &str) {
-        self.tantivy_writer.delete_term(Term::from_field_text(self.field(FIELD_SOURCE), source));
+        self.tantivy_writer
+            .delete_term(Term::from_field_text(self.field(FIELD_SOURCE), source));
     }
 
     /// Commits, then waits for the merges the commit set off. Dropping the
@@ -1270,7 +1520,10 @@ mod test {
     }
 
     fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -1295,7 +1548,13 @@ mod test {
         );
     }
 
-    fn admin_hit(id: u64, placetype: &str, name: &str, at: (f64, f64), ancestors: &[u64]) -> SearchHit {
+    fn admin_hit(
+        id: u64,
+        placetype: &str,
+        name: &str,
+        at: (f64, f64),
+        ancestors: &[u64],
+    ) -> SearchHit {
         SearchHit {
             score: 1.0,
             kind: Kind::Admin,
@@ -1338,12 +1597,21 @@ mod test {
         // across the state.
         let piece = |id: u64, from: f64, to: f64| {
             let mut hit = street(id, "Broadway", from);
-            hit.geometry = Geometry::LineString(geo::LineString::from(vec![(from, 47.6), (to, 47.6)]));
+            hit.geometry =
+                Geometry::LineString(geo::LineString::from(vec![(from, 47.6), (to, 47.6)]));
             hit
         };
-        let mut hits = vec![piece(1, -122.32, -122.30), piece(3, -122.28, -122.26), piece(2, -122.30, -122.28), piece(4, -117.4, -117.3)];
+        let mut hits = vec![
+            piece(1, -122.32, -122.30),
+            piece(3, -122.28, -122.26),
+            piece(2, -122.30, -122.28),
+            piece(4, -117.4, -117.3),
+        ];
         merge_duplicates(&mut hits);
-        assert_eq!(hits.iter().map(|h| h.center.x()).collect::<Vec<_>>(), vec![-122.32, -117.4]);
+        assert_eq!(
+            hits.iter().map(|h| h.center.x()).collect::<Vec<_>>(),
+            vec![-122.32, -117.4]
+        );
         assert!(matches!(&hits[0].geometry, Geometry::MultiLineString(m) if m.0.len() == 3));
     }
 
@@ -1361,13 +1629,19 @@ mod test {
     #[test]
     fn test_indexed_tags_keeps_explicit_vegetarian() {
         let terms = indexed_tags(&tags(&[("diet:vegan", "yes"), ("diet:vegetarian", "only")]));
-        assert_eq!(terms.into_iter().collect::<Vec<_>>(), vec!["diet:vegan=yes", "diet:vegetarian=only"]);
+        assert_eq!(
+            terms.into_iter().collect::<Vec<_>>(),
+            vec!["diet:vegan=yes", "diet:vegetarian=only"]
+        );
     }
 
     #[test]
     fn cached_documents_are_the_same() {
         use crate::language::Language;
-        let builder = DocumentBuilder { schema: AirmailIndex::schema(), storage: Storage::Full };
+        let builder = DocumentBuilder {
+            schema: AirmailIndex::schema(),
+            storage: Storage::Full,
+        };
         let at = Geometry::Point(Point::new(-122.3405, 47.6097));
         let mut docs = Vec::new();
         for (street, number, kind) in [
@@ -1378,13 +1652,19 @@ mod test {
             ("Rue de l'Arsenal", "40", Kind::Address),
             ("Ленинский проспект", "2", Kind::Address),
         ] {
-            let names = if kind == Kind::Street { vec![street.to_string()] } else { Vec::new() };
+            let names = if kind == Kind::Street {
+                vec![street.to_string()]
+            } else {
+                Vec::new()
+            };
             let mut doc = ToIndexPoi::new(kind, names, at.clone(), Vec::new()).unwrap();
             doc.road = Some(street.to_string());
             doc.house_number = (!number.is_empty()).then(|| number.to_string());
             doc.languages = vec![Language::English, Language::French];
-            doc.admin_names =
-                vec![(AdminBand::Locality, "Seattle".into()), (AdminBand::Neighbourhood, "Fremont".into())];
+            doc.admin_names = vec![
+                (AdminBand::Locality, "Seattle".into()),
+                (AdminBand::Neighbourhood, "Fremont".into()),
+            ];
             doc.variant_names = vec!["Müllerstraße".into()];
             doc.country_code = Some("US".into());
             docs.push(doc);
@@ -1393,7 +1673,9 @@ mod test {
         docs.extend(docs.clone());
         let mut cache = FormsCache::default();
         for doc in docs {
-            let plain = builder.document(SchemafiedPoi::from(doc.clone()), "test").unwrap();
+            let plain = builder
+                .document(SchemafiedPoi::from(doc.clone()), "test")
+                .unwrap();
             let cached = builder.document_cached(doc, "test", &mut cache).unwrap();
             assert_eq!(format!("{plain:?}"), format!("{cached:?}"));
         }

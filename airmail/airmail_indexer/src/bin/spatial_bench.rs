@@ -46,7 +46,11 @@ enum Command {
         #[clap(long)]
         queries: PathBuf,
         /// Box widths and heights in meters.
-        #[clap(long, value_delimiter = ',', default_value = "300,1000,5000,25000,100000")]
+        #[clap(
+            long,
+            value_delimiter = ',',
+            default_value = "300,1000,5000,25000,100000"
+        )]
         sizes: Vec<f64>,
         #[clap(long, default_value_t = 10)]
         limit: usize,
@@ -62,7 +66,14 @@ enum Command {
 fn main() -> Result<()> {
     match Args::parse().command {
         Command::Sample { index, count, out } => sample(&index, count, &out),
-        Command::Run { index, queries, sizes, limit, repeat, out } => run(&index, &queries, &sizes, limit, repeat, &out),
+        Command::Run {
+            index,
+            queries,
+            sizes,
+            limit,
+            repeat,
+            out,
+        } => run(&index, &queries, &sizes, limit, repeat, &out),
         Command::Compare { base, other } => compare(&base, &other),
     }
 }
@@ -76,7 +87,9 @@ fn sample(index: &str, count: usize, out: &PathBuf) -> Result<()> {
     let mut out = BufWriter::new(std::fs::File::create(out)?);
     let mut written = 0;
     for hit in hits.iter().filter(|hit| hit.kind == Kind::Poi) {
-        let Some(name) = hit.tag("name").filter(|n| !n.contains(['\t', '\n'])) else { continue };
+        let Some(name) = hit.tag("name").filter(|n| !n.contains(['\t', '\n'])) else {
+            continue;
+        };
         writeln!(out, "{name}\t{}\t{}", hit.center.x(), hit.center.y())?;
         written += 1;
         if written == count {
@@ -91,7 +104,12 @@ fn sample(index: &str, count: usize, out: &PathBuf) -> Result<()> {
 fn bbox(lon: f64, lat: f64, size_m: f64) -> [f64; 4] {
     let half_lat = size_m / 2.0 / 111_195.0;
     let half_lon = half_lat / lat.to_radians().cos().max(0.01);
-    [lon - half_lon, (lat - half_lat).max(-90.0), lon + half_lon, (lat + half_lat).min(90.0)]
+    [
+        lon - half_lon,
+        (lat - half_lat).max(-90.0),
+        lon + half_lon,
+        (lat + half_lat).min(90.0),
+    ]
 }
 
 /// What identifies a result across indexes of the same data.
@@ -103,29 +121,51 @@ fn id(hit: &SearchHit) -> String {
     } else if let Some(wof) = &hit.wof {
         format!("wof:{}", wof.id)
     } else {
-        format!("{}@{:.6},{:.6}", hit.kind.as_str(), hit.center.x(), hit.center.y())
+        format!(
+            "{}@{:.6},{:.6}",
+            hit.kind.as_str(),
+            hit.center.x(),
+            hit.center.y()
+        )
     }
 }
 
-fn run(index: &str, queries: &PathBuf, sizes: &[f64], limit: usize, repeat: usize, out: &PathBuf) -> Result<()> {
+fn run(
+    index: &str,
+    queries: &PathBuf,
+    sizes: &[f64],
+    limit: usize,
+    repeat: usize,
+    out: &PathBuf,
+) -> Result<()> {
     let index = AirmailIndex::open_read_only(index)?;
     let queries: Vec<(String, f64, f64)> = std::io::BufReader::new(std::fs::File::open(queries)?)
         .lines()
         .map(|line| {
             let line = line?;
             let mut parts = line.split('\t');
-            let (Some(text), Some(lon), Some(lat)) = (parts.next(), parts.next(), parts.next()) else {
+            let (Some(text), Some(lon), Some(lat)) = (parts.next(), parts.next(), parts.next())
+            else {
                 bail!("not text<TAB>lon<TAB>lat: {line:?}");
             };
             Ok((text.to_string(), lon.parse()?, lat.parse()?))
         })
         .collect::<Result<_>>()?;
     // The first search opens the index.
-    index.search(&SearchRequest { text: "warm up", limit, ..SearchRequest::default() })?;
+    index.search(&SearchRequest {
+        text: "warm up",
+        limit,
+        ..SearchRequest::default()
+    })?;
     let mut out = BufWriter::new(std::fs::File::create(out)?);
     for (text, lon, lat) in &queries {
         for &size in sizes {
-            let request = SearchRequest { text, bbox: Some(bbox(*lon, *lat, size)), limit, ..SearchRequest::default() };
+            let request = SearchRequest {
+                text,
+                bbox: Some(bbox(*lon, *lat, size)),
+                limit,
+                ..SearchRequest::default()
+            };
             let mut fastest = f64::INFINITY;
             let mut hits = Vec::new();
             for _ in 0..repeat.max(1) {
@@ -134,7 +174,11 @@ fn run(index: &str, queries: &PathBuf, sizes: &[f64], limit: usize, repeat: usiz
                 fastest = fastest.min(start.elapsed().as_secs_f64() * 1000.0);
             }
             let ids: Vec<String> = hits.iter().map(id).collect();
-            writeln!(out, "{text}\t{lon}\t{lat}\t{size}\t{fastest:.3}\t{}", ids.join(","))?;
+            writeln!(
+                out,
+                "{text}\t{lon}\t{lat}\t{size}\t{fastest:.3}\t{}",
+                ids.join(",")
+            )?;
         }
     }
     Ok(())
@@ -148,25 +192,40 @@ fn read_run(path: &PathBuf) -> Result<Runs> {
     for line in std::io::BufReader::new(std::fs::File::open(path)?).lines() {
         let line = line?;
         let parts: Vec<&str> = line.split('\t').collect();
-        let [text, lon, lat, size, ms, ids] = parts[..] else { bail!("not a run line: {line:?}") };
-        let ids = ids.split(',').filter(|id| !id.is_empty()).map(str::to_string).collect();
-        runs.insert((text.into(), lon.into(), lat.into(), size.into()), (ms.parse().context("ms")?, ids));
+        let [text, lon, lat, size, ms, ids] = parts[..] else {
+            bail!("not a run line: {line:?}")
+        };
+        let ids = ids
+            .split(',')
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect();
+        runs.insert(
+            (text.into(), lon.into(), lat.into(), size.into()),
+            (ms.parse().context("ms")?, ids),
+        );
     }
     Ok(runs)
 }
 
 fn percentile(values: &mut [f64], p: f64) -> f64 {
     values.sort_by(f64::total_cmp);
-    values.get(((values.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(f64::NAN)
+    values
+        .get(((values.len() as f64 - 1.0) * p).round() as usize)
+        .copied()
+        .unwrap_or(f64::NAN)
 }
 
 fn compare(base: &PathBuf, other: &PathBuf) -> Result<()> {
     let (base, other) = (read_run(base)?, read_run(other)?);
     // By size: queries, base results, of those found, queries losing any,
     // base and other latencies.
-    let mut by_size: BTreeMap<u64, (usize, usize, usize, usize, Vec<f64>, Vec<f64>)> = BTreeMap::new();
+    let mut by_size: BTreeMap<u64, (usize, usize, usize, usize, Vec<f64>, Vec<f64>)> =
+        BTreeMap::new();
     for (key, (base_ms, base_ids)) in &base {
-        let Some((other_ms, other_ids)) = other.get(key) else { continue };
+        let Some((other_ms, other_ids)) = other.get(key) else {
+            continue;
+        };
         let size: f64 = key.3.parse()?;
         let entry = by_size.entry(size as u64).or_default();
         let found = base_ids.intersection(other_ids).count();
@@ -177,9 +236,15 @@ fn compare(base: &PathBuf, other: &PathBuf) -> Result<()> {
         entry.4.push(*base_ms);
         entry.5.push(*other_ms);
     }
-    println!("size_m\tqueries\trecall\tqueries_losing\tbase_p50_ms\tbase_p95_ms\tother_p50_ms\tother_p95_ms");
+    println!(
+        "size_m\tqueries\trecall\tqueries_losing\tbase_p50_ms\tbase_p95_ms\tother_p50_ms\tother_p95_ms"
+    );
     for (size, (queries, wanted, found, losing, mut base_ms, mut other_ms)) in by_size {
-        let recall = if wanted == 0 { 1.0 } else { found as f64 / wanted as f64 };
+        let recall = if wanted == 0 {
+            1.0
+        } else {
+            found as f64 / wanted as f64
+        };
         println!(
             "{size}\t{queries}\t{recall:.4}\t{losing}\t{:.2}\t{:.2}\t{:.2}\t{:.2}",
             percentile(&mut base_ms, 0.5),

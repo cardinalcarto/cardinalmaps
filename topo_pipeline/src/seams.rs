@@ -49,7 +49,10 @@ pub fn check(files: &[(ChunkId, PathBuf)]) -> Result<Report> {
                 if line.closed {
                     continue;
                 }
-                for &(lon, lat) in [line.points.first(), line.points.last()].into_iter().flatten() {
+                for &(lon, lat) in [line.points.first(), line.points.last()]
+                    .into_iter()
+                    .flatten()
+                {
                     part.endpoints += 1;
                     let west = near(lon, w);
                     let east = near(lon, e);
@@ -59,7 +62,12 @@ pub fn check(files: &[(ChunkId, PathBuf)]) -> Result<Report> {
                         // The rim of the data stops a lattice step short of the chunk's edge,
                         // when nothing lies past it.
                         let rim = |v: i32, b: f64| (f64::from(v) - b * 1e7).abs() <= 3.0e7 / 3600.0;
-                        let next = |dx: i32, dy: i32| !present.contains(&ChunkId { x: id.x + dx, y: id.y + dy });
+                        let next = |dx: i32, dy: i32| {
+                            !present.contains(&ChunkId {
+                                x: id.x + dx,
+                                y: id.y + dy,
+                            })
+                        };
                         let at_rim = (rim(lon, e) && next(1, 0))
                             || (rim(lon, w) && next(-1, 0))
                             || (rim(lat, n) && next(0, 1))
@@ -88,7 +96,8 @@ pub fn check(files: &[(ChunkId, PathBuf)]) -> Result<Report> {
                         part.outer += 1;
                         continue;
                     }
-                    part.points.push(((line.unit as u8, line.elevation), (lon, lat)));
+                    part.points
+                        .push(((line.unit as u8, line.elevation), (lon, lat)));
                 }
             }
             Ok(part)

@@ -86,7 +86,9 @@ impl IndexerCache {
                     WofCacheItem::WayCoords(way, coords) => {
                         let packed = coords
                             .iter()
-                            .flat_map(|(lon, lat)| lon.to_le_bytes().into_iter().chain(lat.to_le_bytes()))
+                            .flat_map(|(lon, lat)| {
+                                lon.to_le_bytes().into_iter().chain(lat.to_le_bytes())
+                            })
                             .collect::<Vec<_>>();
                         way_coords_table.insert(way, packed.as_slice())?;
                     }

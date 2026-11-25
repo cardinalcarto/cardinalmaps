@@ -13,9 +13,9 @@ import org.openmaptiles.util.Utils;
  * What the {@code poi} layer does for people in the backcountry: which features it has beyond OpenMapTiles' mappings,
  * and how early they appear.
  * <p>
- * Water appears at z10, then trailheads at z11 and shelters at z12. Backcountry POIs are sparse enough
- * for that to work, and a city showing the same things is fine too, so z10-13 only has a generous limit per label grid
- * square to keep tiles from getting heavy, and {@link #priority} decides what stays.
+ * Water appears at z10, then trailheads and shelters at z11. Backcountry POIs are sparse enough for that to work, and a
+ * city showing the same things is fine too, so z10-13 only has a generous limit per label grid square to keep tiles
+ * from getting heavy, and {@link #priority} decides what stays.
  */
 final class Backcountry {
 

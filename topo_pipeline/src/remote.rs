@@ -68,30 +68,50 @@ impl Store {
         let region = match &config.region {
             Some(region) => region.clone(),
             // As in s3.us-west-000.backblazeb2.com or s3.us-east-1.amazonaws.com.
-            None => config.endpoint.split('.').nth(1).context("no region in the S3 endpoint; set `region`")?.to_owned(),
+            None => config
+                .endpoint
+                .split('.')
+                .nth(1)
+                .context("no region in the S3 endpoint; set `region`")?
+                .to_owned(),
         };
-        let endpoint = format!("https://{}", config.endpoint).parse().context("parsing the S3 endpoint")?;
+        let endpoint = format!("https://{}", config.endpoint)
+            .parse()
+            .context("parsing the S3 endpoint")?;
         let bucket = Bucket::new(endpoint, UrlStyle::Path, config.bucket.clone(), region)?;
-        let credentials = Credentials::from_env().context("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set")?;
+        let credentials = Credentials::from_env()
+            .context("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set")?;
         let agent = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_recv_response(Some(Duration::from_secs(120)))
             .timeout_recv_body(Some(Duration::from_secs(600)))
             .build()
             .into();
-        Ok(Store { bucket, credentials, agent, prefix: config.prefix.clone() })
+        Ok(Store {
+            bucket,
+            credentials,
+            agent,
+            prefix: config.prefix.clone(),
+        })
     }
 
     /// Bytes `start..end` of an object, or to its end if that comes first.
     fn range(&self, key: &str, start: u64, end: u64) -> Result<Vec<u8>> {
         retrying(&format!("reading {key}"), || {
-            let url = self.bucket.get_object(Some(&self.credentials), key).sign(SIGNED_FOR);
+            let url = self
+                .bucket
+                .get_object(Some(&self.credentials), key)
+                .sign(SIGNED_FOR);
             let mut response = self
                 .agent
                 .get(url.as_str())
                 .header("Range", format!("bytes={start}-{}", end - 1))
                 .call()?;
-            let data = response.body_mut().with_config().limit(u64::MAX).read_to_vec()?;
+            let data = response
+                .body_mut()
+                .with_config()
+                .limit(u64::MAX)
+                .read_to_vec()?;
             let wanted = end - start;
             if data.len() as u64 > wanted {
                 bail!("got {} bytes of a range of {wanted}", data.len());
@@ -112,7 +132,14 @@ impl Store {
                     action.with_continuation_token(token.as_str());
                 }
                 let url = action.sign(SIGNED_FOR);
-                let text = self.agent.get(url.as_str()).call()?.body_mut().with_config().limit(u64::MAX).read_to_string()?;
+                let text = self
+                    .agent
+                    .get(url.as_str())
+                    .call()?
+                    .body_mut()
+                    .with_config()
+                    .limit(u64::MAX)
+                    .read_to_string()?;
                 Ok(ListObjectsV2::parse_response(&text)?)
             })?;
             for object in page.contents {
@@ -144,7 +171,11 @@ impl RemoteEntry {
         let guess = self.local_offset + LOCAL_HEADER as u64 + 512 + self.compressed;
         let data = self.store.range(&self.key, self.local_offset, guess)?;
         if data.len() < LOCAL_HEADER || le32(&data, 0) != 0x0403_4b50 {
-            bail!("{}: no local file header at {}", self.key, self.local_offset);
+            bail!(
+                "{}: no local file header at {}",
+                self.key,
+                self.local_offset
+            );
         }
         let start = LOCAL_HEADER + usize::from(le16(&data, 26)) + usize::from(le16(&data, 28));
         let end = start + self.compressed as usize;
@@ -160,11 +191,17 @@ impl RemoteEntry {
             &more[..]
         };
         let mut out = Vec::with_capacity(self.uncompressed as usize);
-        DeflateDecoder::new(deflated).read_to_end(&mut out).with_context(|| format!("inflating from {}", self.key))?;
+        DeflateDecoder::new(deflated)
+            .read_to_end(&mut out)
+            .with_context(|| format!("inflating from {}", self.key))?;
         let mut crc = Crc::new();
         crc.update(&out);
         if out.len() as u64 != self.uncompressed || crc.sum() != self.crc {
-            bail!("{}: entry at {} fails its size or CRC", self.key, self.local_offset);
+            bail!(
+                "{}: entry at {} fails its size or CRC",
+                self.key,
+                self.local_offset
+            );
         }
         Ok(out)
     }
@@ -202,8 +239,11 @@ fn central_directory(directory: &[u8], suffix: &str) -> Result<Vec<Entry>> {
             if le16(directory, at + 10) != 8 {
                 bail!("{name}: not deflated");
             }
-            let (compressed, uncompressed, local_offset) =
-                (le32(directory, at + 20), le32(directory, at + 24), le32(directory, at + 42));
+            let (compressed, uncompressed, local_offset) = (
+                le32(directory, at + 20),
+                le32(directory, at + 24),
+                le32(directory, at + 42),
+            );
             if compressed == u32::MAX || uncompressed == u32::MAX || local_offset == u32::MAX {
                 bail!("{name}: zip64 entries aren't supported");
             }
@@ -223,10 +263,16 @@ fn central_directory(directory: &[u8], suffix: &str) -> Result<Vec<Entry>> {
 fn read_directory(store: &Store, key: &str, size: u64, suffix: &str) -> Result<Vec<Entry>> {
     let start = size.saturating_sub(TAIL);
     let tail = store.range(key, start, size)?;
-    let Some(end) = (0..tail.len().saturating_sub(21)).rev().find(|&i| le32(&tail, i) == 0x0605_4b50) else {
+    let Some(end) = (0..tail.len().saturating_sub(21))
+        .rev()
+        .find(|&i| le32(&tail, i) == 0x0605_4b50)
+    else {
         bail!("{key}: no end of central directory");
     };
-    let (length, offset) = (u64::from(le32(&tail, end + 12)), u64::from(le32(&tail, end + 16)));
+    let (length, offset) = (
+        u64::from(le32(&tail, end + 12)),
+        u64::from(le32(&tail, end + 16)),
+    );
     if offset == u64::from(u32::MAX) {
         bail!("{key}: zip64 archives aren't supported");
     }
@@ -294,27 +340,50 @@ impl Index {
             let fields: Vec<&str> = line.split('\t').collect();
             match fields[..] {
                 ["archive", key, size] => {
-                    index.archives.entry((key.to_owned(), size.parse().ok()?)).or_default();
+                    index
+                        .archives
+                        .entry((key.to_owned(), size.parse().ok()?))
+                        .or_default();
                 }
-                ["entry", key, size, name, compressed, uncompressed, local_offset, crc] => {
-                    index.archives.entry((key.to_owned(), size.parse().ok()?)).or_default().push(Entry {
-                        name: name.to_owned(),
-                        compressed: compressed.parse().ok()?,
-                        uncompressed: uncompressed.parse().ok()?,
-                        local_offset: local_offset.parse().ok()?,
-                        crc: crc.parse().ok()?,
-                    });
+                [
+                    "entry",
+                    key,
+                    size,
+                    name,
+                    compressed,
+                    uncompressed,
+                    local_offset,
+                    crc,
+                ] => {
+                    index
+                        .archives
+                        .entry((key.to_owned(), size.parse().ok()?))
+                        .or_default()
+                        .push(Entry {
+                            name: name.to_owned(),
+                            compressed: compressed.parse().ok()?,
+                            uncompressed: uncompressed.parse().ok()?,
+                            local_offset: local_offset.parse().ok()?,
+                            crc: crc.parse().ok()?,
+                        });
                 }
                 ["shape", lat, west, north, dx, dy, width, height, nodata] => {
-                    index.shapes.insert(lat.parse().ok()?, Shape {
-                        west_offset: west.parse().ok()?,
-                        north_offset: north.parse().ok()?,
-                        dx: dx.parse().ok()?,
-                        dy: dy.parse().ok()?,
-                        width: width.parse().ok()?,
-                        height: height.parse().ok()?,
-                        nodata: if nodata.is_empty() { None } else { Some(nodata.parse().ok()?) },
-                    });
+                    index.shapes.insert(
+                        lat.parse().ok()?,
+                        Shape {
+                            west_offset: west.parse().ok()?,
+                            north_offset: north.parse().ok()?,
+                            dx: dx.parse().ok()?,
+                            dy: dy.parse().ok()?,
+                            width: width.parse().ok()?,
+                            height: height.parse().ok()?,
+                            nodata: if nodata.is_empty() {
+                                None
+                            } else {
+                                Some(nodata.parse().ok()?)
+                            },
+                        },
+                    );
                 }
                 _ => return None,
             }
@@ -322,7 +391,10 @@ impl Index {
         };
         for line in text.lines() {
             if load(line).is_none() {
-                bail!("{}: can't read the line {line:?}; delete the file to rebuild it", path.display());
+                bail!(
+                    "{}: can't read the line {line:?}; delete the file to rebuild it",
+                    path.display()
+                );
             }
         }
         Ok(index)
@@ -356,7 +428,13 @@ impl Index {
     }
 }
 
-fn raster(store: &Arc<Store>, key: &str, entry: &Entry, corner: (i32, i32), shape: &Shape) -> Raster {
+fn raster(
+    store: &Arc<Store>,
+    key: &str,
+    entry: &Entry,
+    corner: (i32, i32),
+    shape: &Shape,
+) -> Raster {
     Raster {
         path: PathBuf::from(&entry.name),
         width: shape.width,
@@ -394,14 +472,25 @@ pub fn open_source(config: &SourceConfig, s3: &S3Config, work: &Path) -> Result<
         .map(|(key, size)| (key.clone(), *size))
         .collect();
     if archives.is_empty() {
-        bail!("source {}: no finished archives under {}", config.name, s3.prefix);
+        bail!(
+            "source {}: no finished archives under {}",
+            config.name,
+            s3.prefix
+        );
     }
     let wanted: HashSet<&(String, u64)> = archives.iter().collect();
     index.archives.retain(|archive, _| wanted.contains(archive));
 
-    let new: Vec<&(String, u64)> = archives.iter().filter(|a| !index.archives.contains_key(*a)).collect();
+    let new: Vec<&(String, u64)> = archives
+        .iter()
+        .filter(|a| !index.archives.contains_key(*a))
+        .collect();
     if !new.is_empty() {
-        eprintln!("source {}: reading the directories of {} archives", config.name, new.len());
+        eprintln!(
+            "source {}: reading the directories of {} archives",
+            config.name,
+            new.len()
+        );
         let found: Vec<_> = new
             .par_iter()
             .map(|&archive| {
@@ -417,37 +506,54 @@ pub fn open_source(config: &SourceConfig, s3: &S3Config, work: &Path) -> Result<
     let mut samples: HashMap<i32, (String, Entry, (i32, i32))> = HashMap::new();
     for ((key, _), entries) in &index.archives {
         for entry in entries {
-            let at = corner(&entry.name).with_context(|| format!("no corner in the name {}", entry.name))?;
+            let at = corner(&entry.name)
+                .with_context(|| format!("no corner in the name {}", entry.name))?;
             if !index.shapes.contains_key(&at.1) {
-                samples.entry(at.1).or_insert_with(|| (key.clone(), entry.clone(), at));
+                samples
+                    .entry(at.1)
+                    .or_insert_with(|| (key.clone(), entry.clone(), at));
             }
         }
     }
     if !samples.is_empty() {
-        eprintln!("source {}: reading a sample at {} latitudes", config.name, samples.len());
+        eprintln!(
+            "source {}: reading a sample at {} latitudes",
+            config.name,
+            samples.len()
+        );
         let shapes: Vec<(i32, Shape)> = samples
             .par_iter()
             .map(|(&lat, (key, entry, at))| {
-                let sample = raster(&store, key, entry, *at, &Shape {
-                    west_offset: 0.0,
-                    north_offset: 0.0,
-                    dx: 0.0,
-                    dy: 0.0,
-                    width: 0,
-                    height: 0,
-                    nodata: None,
-                });
+                let sample = raster(
+                    &store,
+                    key,
+                    entry,
+                    *at,
+                    &Shape {
+                        west_offset: 0.0,
+                        north_offset: 0.0,
+                        dx: 0.0,
+                        dy: 0.0,
+                        width: 0,
+                        height: 0,
+                        nodata: None,
+                    },
+                );
                 let file = sample.remote.as_ref().unwrap().fetch()?;
-                let header = parse_header(Path::new(&entry.name), file.len() as u64, Cursor::new(file))?;
-                Ok((lat, Shape {
-                    west_offset: header.west - f64::from(at.0),
-                    north_offset: header.north - f64::from(at.1),
-                    dx: header.dx,
-                    dy: header.dy,
-                    width: header.width,
-                    height: header.height,
-                    nodata: header.nodata,
-                }))
+                let header =
+                    parse_header(Path::new(&entry.name), file.len() as u64, Cursor::new(file))?;
+                Ok((
+                    lat,
+                    Shape {
+                        west_offset: header.west - f64::from(at.0),
+                        north_offset: header.north - f64::from(at.1),
+                        dx: header.dx,
+                        dy: header.dy,
+                        width: header.width,
+                        height: header.height,
+                        nodata: header.nodata,
+                    },
+                ))
             })
             .collect::<Result<_>>()?;
         index.shapes.extend(shapes);
@@ -457,7 +563,8 @@ pub fn open_source(config: &SourceConfig, s3: &S3Config, work: &Path) -> Result<
     let mut rasters = Vec::new();
     for ((key, _), entries) in &index.archives {
         for entry in entries {
-            let at = corner(&entry.name).with_context(|| format!("no corner in the name {}", entry.name))?;
+            let at = corner(&entry.name)
+                .with_context(|| format!("no corner in the name {}", entry.name))?;
             rasters.push(raster(&store, key, entry, at, &index.shapes[&at.1]));
         }
     }
@@ -471,37 +578,47 @@ mod tests {
 
     #[test]
     fn corners_come_from_file_names() {
-        assert_eq!(corner("N045W125_N050W120/ALPSMLC30_N047W123_DSM.tif"), Some((-123, 47)));
-        assert_eq!(corner("S005E010_N000E015/ALPSMLC30_S001E014_DSM.tif"), Some((14, -1)));
+        assert_eq!(
+            corner("N045W125_N050W120/ALPSMLC30_N047W123_DSM.tif"),
+            Some((-123, 47))
+        );
+        assert_eq!(
+            corner("S005E010_N000E015/ALPSMLC30_S001E014_DSM.tif"),
+            Some((14, -1))
+        );
         assert_eq!(corner("a/ALPSMLC30_DSM.tif"), None);
     }
 
     #[test]
     fn central_directory_entries_are_filtered_and_read() {
         let mut directory = Vec::new();
-        let mut add = |name: &str, method: u16, crc: u32, compressed: u32, uncompressed: u32, offset: u32| {
-            directory.extend(0x0201_4b50u32.to_le_bytes());
-            directory.extend([0; 6]);
-            directory.extend(method.to_le_bytes());
-            directory.extend([0; 4]);
-            directory.extend(crc.to_le_bytes());
-            directory.extend(compressed.to_le_bytes());
-            directory.extend(uncompressed.to_le_bytes());
-            directory.extend((name.len() as u16).to_le_bytes());
-            directory.extend([0; 12]);
-            directory.extend(offset.to_le_bytes());
-            directory.extend(name.as_bytes());
-        };
+        let mut add =
+            |name: &str, method: u16, crc: u32, compressed: u32, uncompressed: u32, offset: u32| {
+                directory.extend(0x0201_4b50u32.to_le_bytes());
+                directory.extend([0; 6]);
+                directory.extend(method.to_le_bytes());
+                directory.extend([0; 4]);
+                directory.extend(crc.to_le_bytes());
+                directory.extend(compressed.to_le_bytes());
+                directory.extend(uncompressed.to_le_bytes());
+                directory.extend((name.len() as u16).to_le_bytes());
+                directory.extend([0; 12]);
+                directory.extend(offset.to_le_bytes());
+                directory.extend(name.as_bytes());
+            };
         add("x/a_MSK.tif", 8, 1, 2, 3, 4);
         add("x/a_DSM.tif", 8, 5, 6, 7, 8);
         let entries = central_directory(&directory, "_DSM.tif").unwrap();
-        assert_eq!(entries, vec![Entry {
-            name: "x/a_DSM.tif".to_owned(),
-            compressed: 6,
-            uncompressed: 7,
-            local_offset: 8,
-            crc: 5,
-        }]);
+        assert_eq!(
+            entries,
+            vec![Entry {
+                name: "x/a_DSM.tif".to_owned(),
+                compressed: 6,
+                uncompressed: 7,
+                local_offset: 8,
+                crc: 5,
+            }]
+        );
     }
 
     #[test]
@@ -510,14 +627,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("index.tsv");
         let mut index = Index::default();
-        index.archives.insert(("a.zip".to_owned(), 9), vec![Entry {
-            name: "x/ALPSMLC30_N047W123_DSM.tif".to_owned(),
-            compressed: 1,
-            uncompressed: 2,
-            local_offset: 3,
-            crc: 4,
-        }]);
-        index.archives.insert(("empty.zip".to_owned(), 1), Vec::new());
+        index.archives.insert(
+            ("a.zip".to_owned(), 9),
+            vec![Entry {
+                name: "x/ALPSMLC30_N047W123_DSM.tif".to_owned(),
+                compressed: 1,
+                uncompressed: 2,
+                local_offset: 3,
+                crc: 4,
+            }],
+        );
+        index
+            .archives
+            .insert(("empty.zip".to_owned(), 1), Vec::new());
         let shape = Shape {
             west_offset: 0.0,
             north_offset: 1.0,

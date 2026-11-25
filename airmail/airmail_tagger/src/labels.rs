@@ -66,7 +66,9 @@ impl Tag {
     #[must_use]
     pub fn band(self) -> Option<&'static str> {
         match self {
-            Tag::Neighbourhood | Tag::Locality | Tag::County | Tag::Region | Tag::Country => Some(self.as_str()),
+            Tag::Neighbourhood | Tag::Locality | Tag::County | Tag::Region | Tag::Country => {
+                Some(self.as_str())
+            }
             _ => None,
         }
     }

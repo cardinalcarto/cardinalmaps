@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
+use crate::language::Language;
 use anyhow::{Result, bail};
 use geo::{Geometry, Point};
-use crate::language::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::categories::iso_639_3;
@@ -28,7 +28,13 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::Poi, Kind::Address, Kind::Admin, Kind::Street, Kind::Postcode];
+    pub const ALL: [Kind; 5] = [
+        Kind::Poi,
+        Kind::Address,
+        Kind::Admin,
+        Kind::Street,
+        Kind::Postcode,
+    ];
 
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -97,7 +103,11 @@ impl OsmRef {
             None | Some("") => None,
             Some(v) => Some(v.parse()?),
         };
-        Ok(Self { osm_type, id, version })
+        Ok(Self {
+            osm_type,
+            id,
+            version,
+        })
     }
 }
 
@@ -158,7 +168,8 @@ pub fn iso_country_code(code: &str) -> Option<String> {
     if !first.is_ascii_uppercase() || !second.is_ascii_uppercase() {
         return None;
     }
-    let user_assigned = matches!(code.as_str(), "AA" | "ZZ") || (first == b'Q' && second >= b'M') || first == b'X';
+    let user_assigned =
+        matches!(code.as_str(), "AA" | "ZZ") || (first == b'Q' && second >= b'M') || first == b'X';
     (!user_assigned || code == "XK").then_some(code)
 }
 
@@ -177,7 +188,11 @@ pub enum PlaceId {
 /// A postcode's key: `<country>/<postcode>`, uppercase, without spaces.
 #[must_use]
 pub fn postcode_key(country: &str, postcode: &str) -> String {
-    let code: String = postcode.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_uppercase();
+    let code: String = postcode
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_uppercase();
     format!("{}/{code}", country.to_uppercase())
 }
 
@@ -186,21 +201,30 @@ impl PlaceId {
     /// If `s` isn't a result ID.
     pub fn parse(s: &str) -> Result<Self> {
         let number = |n: &str| -> Option<u64> {
-            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then(|| n.parse().ok()).flatten()
+            (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| n.parse().ok())
+                .flatten()
         };
         let parsed = if let Some(id) = s.strip_prefix("poi:") {
             number(id).map(PlaceId::Poi)
         } else if let Some(id) = s.strip_prefix("wof:") {
             number(id).map(PlaceId::Wof)
-        } else if let Some((osm_type, id)) = s.strip_prefix("osm:").and_then(|rest| rest.split_once('/')) {
+        } else if let Some((osm_type, id)) =
+            s.strip_prefix("osm:").and_then(|rest| rest.split_once('/'))
+        {
             let osm_type = match osm_type {
                 "node" => Some(OsmType::Node),
                 "way" => Some(OsmType::Way),
                 "relation" => Some(OsmType::Relation),
                 _ => None,
             };
-            osm_type.zip(number(id).and_then(|id| i64::try_from(id).ok())).map(|(t, id)| PlaceId::Osm(t, id))
-        } else if let Some((country, code)) = s.strip_prefix("postcode:").and_then(|rest| rest.split_once('/')) {
+            osm_type
+                .zip(number(id).and_then(|id| i64::try_from(id).ok()))
+                .map(|(t, id)| PlaceId::Osm(t, id))
+        } else if let Some((country, code)) = s
+            .strip_prefix("postcode:")
+            .and_then(|rest| rest.split_once('/'))
+        {
             let valid = country.len() == 2
                 && country.bytes().all(|b| b.is_ascii_uppercase())
                 && !code.is_empty()
@@ -234,7 +258,14 @@ impl std::fmt::Display for PlaceId {
 pub fn is_containing_admin(placetype: &str) -> bool {
     !matches!(
         placetype,
-        "continent" | "empire" | "ocean" | "marinearea" | "planet" | "timezone" | "marketarea" | "campus"
+        "continent"
+            | "empire"
+            | "ocean"
+            | "marinearea"
+            | "planet"
+            | "timezone"
+            | "marketarea"
+            | "campus"
     )
 }
 
@@ -301,12 +332,18 @@ impl TileId {
     /// `y` in 28 bits each, enough for zoom 28.
     #[must_use]
     pub fn pack(self) -> u64 {
-        (u64::from(self.z) << 56) | (u64::from(self.x & 0x0fff_ffff) << 28) | u64::from(self.y & 0x0fff_ffff)
+        (u64::from(self.z) << 56)
+            | (u64::from(self.x & 0x0fff_ffff) << 28)
+            | u64::from(self.y & 0x0fff_ffff)
     }
 
     #[must_use]
     pub fn unpack(packed: u64) -> Self {
-        Self { z: (packed >> 56) as u8, x: ((packed >> 28) & 0x0fff_ffff) as u32, y: (packed & 0x0fff_ffff) as u32 }
+        Self {
+            z: (packed >> 56) as u8,
+            x: ((packed >> 28) & 0x0fff_ffff) as u32,
+            y: (packed & 0x0fff_ffff) as u32,
+        }
     }
 }
 
@@ -373,7 +410,12 @@ impl ToIndexPoi {
     /// A document with the shape `geometry`, simplified and normalized, or
     /// `None` if it has no usable shape.
     #[must_use]
-    pub fn new(kind: Kind, names: Vec<String>, geometry: Geometry<f64>, tags: Vec<(String, String)>) -> Option<Self> {
+    pub fn new(
+        kind: Kind,
+        names: Vec<String>,
+        geometry: Geometry<f64>,
+        tags: Vec<(String, String)>,
+    ) -> Option<Self> {
         let geometry = geometry::simplify(geometry::normalize(geometry)?, geometry::MAX_VERTICES);
         let center = geometry::representative_point(&geometry)?;
         Some(Self {
@@ -401,7 +443,10 @@ impl ToIndexPoi {
     /// The tag's value, if it has the tag.
     #[must_use]
     pub fn tag(&self, key: &str) -> Option<&str> {
-        self.tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.tags
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Its stable POI ID, from its `cardinal:poi_id` tag.
@@ -413,7 +458,8 @@ impl ToIndexPoi {
     /// Gives it a stable POI ID, of the feature it was read from in a tile.
     pub fn set_pointer(&mut self, pointer: Pointer) {
         self.tags.retain(|(k, _)| k != "cardinal:poi_id");
-        self.tags.push(("cardinal:poi_id".to_string(), pointer.poi_id.to_string()));
+        self.tags
+            .push(("cardinal:poi_id".to_string(), pointer.poi_id.to_string()));
         self.tile = Some(pointer.tile);
     }
 }
@@ -429,8 +475,16 @@ pub struct SchemafiedPoi {
 
 impl From<ToIndexPoi> for SchemafiedPoi {
     fn from(poi: ToIndexPoi) -> Self {
-        let roads = poi.road.as_deref().map(|road| road_forms(road, &poi.languages)).unwrap_or_default();
-        Self { names: poi.names.clone(), roads, poi }
+        let roads = poi
+            .road
+            .as_deref()
+            .map(|road| road_forms(road, &poi.languages))
+            .unwrap_or_default();
+        Self {
+            names: poi.names.clone(),
+            roads,
+            poi,
+        }
     }
 }
 
@@ -466,8 +520,13 @@ pub enum AdminBand {
 }
 
 impl AdminBand {
-    pub const ALL: [AdminBand; 5] =
-        [AdminBand::Neighbourhood, AdminBand::Locality, AdminBand::County, AdminBand::Region, AdminBand::Country];
+    pub const ALL: [AdminBand; 5] = [
+        AdminBand::Neighbourhood,
+        AdminBand::Locality,
+        AdminBand::County,
+        AdminBand::Region,
+        AdminBand::Country,
+    ];
 
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -485,7 +544,9 @@ impl AdminBand {
     #[must_use]
     pub fn of(placetype: &str) -> Option<Self> {
         match placetype {
-            "microhood" | "neighbourhood" | "macrohood" | "borough" => Some(AdminBand::Neighbourhood),
+            "microhood" | "neighbourhood" | "macrohood" | "borough" => {
+                Some(AdminBand::Neighbourhood)
+            }
             "locality" | "localadmin" => Some(AdminBand::Locality),
             "county" | "macrocounty" => Some(AdminBand::County),
             "region" | "macroregion" => Some(AdminBand::Region),
@@ -501,9 +562,15 @@ impl AdminBand {
 pub fn osm_display_name<'a>(tags: &'a [(String, String)], lang: Option<&str>) -> Option<&'a str> {
     let get = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
     if let Some(lang) = lang {
-        let primary = lang.split(['-', '_']).next().unwrap_or_default().to_lowercase();
+        let primary = lang
+            .split(['-', '_'])
+            .next()
+            .unwrap_or_default()
+            .to_lowercase();
         let two_letter = match primary.len() {
-            3 => isolang::Language::from_639_3(&primary).and_then(|l| l.to_639_1()).map(str::to_string),
+            3 => isolang::Language::from_639_3(&primary)
+                .and_then(|l| l.to_639_1())
+                .map(str::to_string),
             _ => Some(primary.clone()),
         };
         for code in two_letter.iter().chain(std::iter::once(&primary)) {
@@ -520,22 +587,53 @@ mod test {
     use super::*;
 
     fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn tile_ids_pack() {
-        for tile in [TileId { z: 14, x: 2_624, y: 5_722 }, TileId { z: 0, x: 0, y: 0 }, TileId { z: 28, x: (1 << 28) - 1, y: 7 }] {
+        for tile in [
+            TileId {
+                z: 14,
+                x: 2_624,
+                y: 5_722,
+            },
+            TileId { z: 0, x: 0, y: 0 },
+            TileId {
+                z: 28,
+                x: (1 << 28) - 1,
+                y: 7,
+            },
+        ] {
             assert_eq!(TileId::unpack(tile.pack()), tile);
         }
-        assert_eq!(TileId { z: 14, x: 2_624, y: 5_722 }.to_string(), "14/2624/5722");
+        assert_eq!(
+            TileId {
+                z: 14,
+                x: 2_624,
+                y: 5_722
+            }
+            .to_string(),
+            "14/2624/5722"
+        );
     }
 
     #[test]
     fn osm_ref_round_trips() {
         for r in [
-            OsmRef { osm_type: OsmType::Relation, id: 5843919, version: Some(31) },
-            OsmRef { osm_type: OsmType::Node, id: 1, version: None },
+            OsmRef {
+                osm_type: OsmType::Relation,
+                id: 5843919,
+                version: Some(31),
+            },
+            OsmRef {
+                osm_type: OsmType::Node,
+                id: 1,
+                version: None,
+            },
         ] {
             assert_eq!(OsmRef::decode(&r.encode()).unwrap(), r);
         }
@@ -543,7 +641,11 @@ mod test {
 
     #[test]
     fn osm_display_name_prefers_the_language() {
-        let t = tags(&[("name", "Genève"), ("name:de", "Genf"), ("name:it", "Ginevra")]);
+        let t = tags(&[
+            ("name", "Genève"),
+            ("name:de", "Genf"),
+            ("name:it", "Ginevra"),
+        ]);
         assert_eq!(osm_display_name(&t, Some("de-CH")), Some("Genf"));
         assert_eq!(osm_display_name(&t, Some("ita")), Some("Ginevra"));
         assert_eq!(osm_display_name(&t, Some("fr")), Some("Genève"));
@@ -579,7 +681,10 @@ mod test {
             area(11, "microhood", 0.1),
         ];
         let ids = |places: Vec<&WofPlace>| -> Vec<u64> {
-            one_per_placetype(places).into_iter().map(|place| place.id).collect()
+            one_per_placetype(places)
+                .into_iter()
+                .map(|place| place.id)
+                .collect()
         };
         assert_eq!(ids(places.iter().collect()), [11, 5, 2, 7, 8, 1]);
         assert_eq!(ids(places.iter().rev().collect()), [11, 5, 2, 7, 8, 1]);
@@ -616,10 +721,34 @@ mod test {
 
     #[test]
     fn place_ids_round_trip() {
-        for id in ["poi:51234", "wof:101730401", "osm:node/2470190871", "osm:way/1", "osm:relation/5843919", "postcode:CA/M2M1C8", "postcode:US/10010"] {
+        for id in [
+            "poi:51234",
+            "wof:101730401",
+            "osm:node/2470190871",
+            "osm:way/1",
+            "osm:relation/5843919",
+            "postcode:CA/M2M1C8",
+            "postcode:US/10010",
+        ] {
             assert_eq!(PlaceId::parse(id).unwrap().to_string(), id);
         }
-        for bad in ["", "poi:", "poi:-1", "poi:1x", "wof:+5", "osm:node", "osm:area/1", "osm:node/", "node/1", "POI:1", "postcode:", "postcode:CA/", "postcode:ca/M2M", "postcode:CAN/M2M", "postcode:US/1 2"] {
+        for bad in [
+            "",
+            "poi:",
+            "poi:-1",
+            "poi:1x",
+            "wof:+5",
+            "osm:node",
+            "osm:area/1",
+            "osm:node/",
+            "node/1",
+            "POI:1",
+            "postcode:",
+            "postcode:CA/",
+            "postcode:ca/M2M",
+            "postcode:CAN/M2M",
+            "postcode:US/1 2",
+        ] {
             assert!(PlaceId::parse(bad).is_err(), "{bad}");
         }
     }

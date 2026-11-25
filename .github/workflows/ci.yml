@@ -1,0 +1,84 @@
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep the Rust test matrix within hosted runner disk limits.
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [airmail, crates, poi_service, topo_pipeline, wof_service, valinor]
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.98 --profile minimal --component rustfmt
+      - run: rustup default 1.98
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libzstd-dev libsqlite3-mod-spatialite protobuf-compiler libzmq3-dev libssl-dev libxkbcommon-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }}
+      - run: scripts/check "${{ matrix.workspace }}"
+
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.98 --profile minimal
+      - run: rustup default 1.98
+      - run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config libzstd-dev libsqlite3-mod-spatialite protobuf-compiler libzmq3-dev libssl-dev libxkbcommon-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
+      - run: scripts/check flutter
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get update && sudo apt-get install -y jq curl
+      - run: scripts/check python
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: data_pipeline/go.mod
+          cache-dependency-path: data_pipeline/go.sum
+      - run: scripts/check go
+
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+          cache-dependency-path: planetiler-openmaptiles/pom.xml
+      - run: scripts/check java

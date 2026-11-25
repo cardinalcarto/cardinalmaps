@@ -39,7 +39,12 @@ impl Rect {
         (self.y1 - self.y0) as usize
     }
     pub fn grow(&self, by: i64) -> Rect {
-        Rect { x0: self.x0 - by, y0: self.y0 - by, x1: self.x1 + by, y1: self.y1 + by }
+        Rect {
+            x0: self.x0 - by,
+            y0: self.y0 - by,
+            x1: self.x1 + by,
+            y1: self.y1 + by,
+        }
     }
 }
 
@@ -53,7 +58,11 @@ pub struct Grid {
 
 impl Grid {
     pub fn new(rect: Rect, refine: i64) -> Grid {
-        Grid { rect, refine, values: vec![f32::NAN; rect.width() * rect.height()] }
+        Grid {
+            rect,
+            refine,
+            values: vec![f32::NAN; rect.width() * rect.height()],
+        }
     }
     #[inline]
     pub fn at(&self, col: usize, row: usize) -> f32 {
@@ -109,7 +118,8 @@ pub fn read_header(path: &Path) -> Result<Raster> {
 
 /// Reads a raster's georeferencing from its file, of `bytes` bytes, named `path`.
 pub fn parse_header<R: Read + Seek>(path: &Path, bytes: u64, reader: R) -> Result<Raster> {
-    let mut decoder = Decoder::new(reader).with_context(|| format!("reading {}", path.display()))?;
+    let mut decoder =
+        Decoder::new(reader).with_context(|| format!("reading {}", path.display()))?;
     let (width, height) = decoder.dimensions()?;
     let scale = decoder
         .find_tag(Tag::ModelPixelScaleTag)?
@@ -132,7 +142,10 @@ pub fn parse_header<R: Read + Seek>(path: &Path, bytes: u64, reader: R) -> Resul
         .transpose()?
         .unwrap_or_default();
     let key = |id: u64| {
-        keys.chunks_exact(4).skip(1).find(|entry| entry[0] == id && entry[1] == 0).map(|entry| entry[3])
+        keys.chunks_exact(4)
+            .skip(1)
+            .find(|entry| entry[0] == id && entry[1] == 0)
+            .map(|entry| entry[3])
     };
     // GTModelTypeGeoKey: 2 is geographic.
     if key(1024) != Some(2) {
@@ -150,7 +163,10 @@ pub fn parse_header<R: Read + Seek>(path: &Path, bytes: u64, reader: R) -> Resul
     let north = tie[4] + (tie[1] + shift) * dy;
 
     let nodata = match decoder.find_tag(Tag::GdalNodata)? {
-        Some(value) => value.into_string().ok().and_then(|s| s.trim_matches('\0').trim().parse().ok()),
+        Some(value) => value
+            .into_string()
+            .ok()
+            .and_then(|s| s.trim_matches('\0').trim().parse().ok()),
         None => None,
     };
     Ok(Raster {
@@ -184,7 +200,10 @@ pub fn read_values(raster: &Raster) -> Result<Vec<f32>> {
         || !close(real.dy, raster.dy)
         || real.nodata != raster.nodata
     {
-        bail!("{}: its header doesn't match what was inferred: {real:?} vs {raster:?}", raster.path.display());
+        bail!(
+            "{}: its header doesn't match what was inferred: {real:?} vs {raster:?}",
+            raster.path.display()
+        );
     }
     decode_values(raster, Cursor::new(&file))
 }
@@ -236,7 +255,11 @@ struct CacheInner {
 
 impl RasterCache {
     pub fn new(limit: u64) -> RasterCache {
-        RasterCache { limit, inner: Mutex::default(), loading: Mutex::default() }
+        RasterCache {
+            limit,
+            inner: Mutex::default(),
+            loading: Mutex::default(),
+        }
     }
 
     fn cached(&self, raster: &Raster) -> Option<Arc<Vec<f32>>> {
@@ -252,7 +275,13 @@ impl RasterCache {
         if let Some(values) = self.cached(raster) {
             return Ok(values);
         }
-        let lock = self.loading.lock().unwrap().entry(raster.path.clone()).or_default().clone();
+        let lock = self
+            .loading
+            .lock()
+            .unwrap()
+            .entry(raster.path.clone())
+            .or_default()
+            .clone();
         let _reading = lock.lock().unwrap();
         // Another thread may have just finished.
         if let Some(values) = self.cached(raster) {
@@ -263,11 +292,19 @@ impl RasterCache {
         let mut inner = self.inner.lock().unwrap();
         inner.clock += 1;
         let clock = inner.clock;
-        if inner.entries.insert(raster.path.clone(), (values.clone(), clock)).is_none() {
+        if inner
+            .entries
+            .insert(raster.path.clone(), (values.clone(), clock))
+            .is_none()
+        {
             inner.bytes += size;
         }
         while inner.bytes > self.limit && inner.entries.len() > 1 {
-            let oldest = inner.entries.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone());
+            let oldest = inner
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(k, _)| k.clone());
             if let Some(path) = oldest {
                 if let Some((old, _)) = inner.entries.remove(&path) {
                     inner.bytes -= (old.len() * 4) as u64;
@@ -303,7 +340,11 @@ fn find_files(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry.path();
         if entry.file_type()?.is_dir() {
             find_files(&path, suffix, out)?;
-        } else if path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(suffix)) {
+        } else if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(suffix))
+        {
             out.push(path);
         }
     }
@@ -319,10 +360,18 @@ impl Source {
         find_files(&config.dir, &config.suffix, &mut paths)?;
         paths.sort();
         if paths.is_empty() {
-            bail!("source {}: no *{} under {}", config.name, config.suffix, config.dir.display());
+            bail!(
+                "source {}: no *{} under {}",
+                config.name,
+                config.suffix,
+                config.dir.display()
+            );
         }
         use rayon::prelude::*;
-        let rasters = paths.par_iter().map(|p| read_header(p)).collect::<Result<Vec<_>>>()?;
+        let rasters = paths
+            .par_iter()
+            .map(|p| read_header(p))
+            .collect::<Result<Vec<_>>>()?;
         Source::new(config.clone(), rasters)
     }
 
@@ -335,7 +384,12 @@ impl Source {
                 }
             }
         }
-        Ok(Source { refine: config.refine()?, config, rasters, index })
+        Ok(Source {
+            refine: config.refine()?,
+            config,
+            rasters,
+            index,
+        })
     }
 
     /// The source's rasters that overlap a lon/lat box, in a stable order.
@@ -388,7 +442,8 @@ impl Source {
         for row in 0..rect.height() {
             let from = (row + m) * width + m;
             let to = row * rect.width();
-            out.values[to..to + rect.width()].copy_from_slice(&grid.values[from..from + rect.width()]);
+            out.values[to..to + rect.width()]
+                .copy_from_slice(&grid.values[from..from + rect.width()]);
             out_weights[to..to + rect.width()].copy_from_slice(&weights[from..from + rect.width()]);
         }
         Ok((out, out_weights))
@@ -524,32 +579,35 @@ pub fn gaussian(grid: &mut Grid, sigma: f64) {
         }
     });
     let tmp_ref = &tmp;
-    grid.values.par_chunks_mut(w).enumerate().for_each(|(row, out)| {
-        for col in 0..w {
-            let center = tmp_ref[row * w + col];
-            if center.is_nan() {
-                continue;
-            }
-            let (mut sum, mut total) = (center * kernel[0], kernel[0]);
-            for d in 1..=radius {
-                if row >= d {
-                    let v = tmp_ref[(row - d) * w + col];
-                    if !v.is_nan() {
-                        sum += v * kernel[d];
-                        total += kernel[d];
+    grid.values
+        .par_chunks_mut(w)
+        .enumerate()
+        .for_each(|(row, out)| {
+            for col in 0..w {
+                let center = tmp_ref[row * w + col];
+                if center.is_nan() {
+                    continue;
+                }
+                let (mut sum, mut total) = (center * kernel[0], kernel[0]);
+                for d in 1..=radius {
+                    if row >= d {
+                        let v = tmp_ref[(row - d) * w + col];
+                        if !v.is_nan() {
+                            sum += v * kernel[d];
+                            total += kernel[d];
+                        }
+                    }
+                    if row + d < h {
+                        let v = tmp_ref[(row + d) * w + col];
+                        if !v.is_nan() {
+                            sum += v * kernel[d];
+                            total += kernel[d];
+                        }
                     }
                 }
-                if row + d < h {
-                    let v = tmp_ref[(row + d) * w + col];
-                    if !v.is_nan() {
-                        sum += v * kernel[d];
-                        total += kernel[d];
-                    }
-                }
+                out[col] = sum / total;
             }
-            out[col] = sum / total;
-        }
-    });
+        });
 }
 
 /// For each point, how far it is inside the data (0 at the edge, 1 at `feather` cells or
@@ -558,11 +616,18 @@ pub fn gaussian(grid: &mut Grid, sigma: f64) {
 pub fn feather_weights(grid: &Grid, feather: u32) -> Vec<f32> {
     let (w, h) = (grid.rect.width(), grid.rect.height());
     if feather == 0 {
-        return grid.values.iter().map(|v| if v.is_nan() { 0.0 } else { 1.0 }).collect();
+        return grid
+            .values
+            .iter()
+            .map(|v| if v.is_nan() { 0.0 } else { 1.0 })
+            .collect();
     }
     let cap = feather * 3;
-    let mut dist: Vec<u32> =
-        grid.values.iter().map(|v| if v.is_nan() { 0 } else { cap }).collect();
+    let mut dist: Vec<u32> = grid
+        .values
+        .iter()
+        .map(|v| if v.is_nan() { 0 } else { cap })
+        .collect();
     let relax = |dist: &mut [u32], i: usize, j: usize, cost: u32| {
         let through = dist[j].saturating_add(cost);
         if through < dist[i] {

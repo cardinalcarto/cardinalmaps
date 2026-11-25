@@ -30,7 +30,9 @@ pub fn expand_abbreviations(text: &str) -> String {
         let lower = bare.to_ascii_lowercase();
         let stem = lower.strip_suffix("str");
         match stem {
-            Some(stem) if stem.chars().all(char::is_alphabetic) && stem.len() >= MIN_COMPOUND_STEM => {
+            Some(stem)
+                if stem.chars().all(char::is_alphabetic) && stem.len() >= MIN_COMPOUND_STEM =>
+            {
                 out.push_str(&bare[..stem.len()]);
                 out.push_str("strasse");
             }
@@ -67,7 +69,11 @@ pub fn variants(text: &str) -> Vec<String> {
             word.to_string()
         })
         .collect();
-    if changed { vec![words.join(" ")] } else { Vec::new() }
+    if changed {
+        vec![words.join(" ")]
+    } else {
+        Vec::new()
+    }
 }
 
 /// The number of an ordinal like `54th` or `1st`.

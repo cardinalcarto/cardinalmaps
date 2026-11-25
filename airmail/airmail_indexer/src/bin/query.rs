@@ -82,7 +82,9 @@ fn format_hit(hit: &SearchHit) -> String {
     let mut details: Vec<String> = hit
         .tags
         .iter()
-        .filter(|(k, v)| categories::is_category_tag(k, v) || k == "cuisine" || k.starts_with("diet:"))
+        .filter(|(k, v)| {
+            categories::is_category_tag(k, v) || k == "cuisine" || k.starts_with("diet:")
+        })
         .map(|(k, v)| format!("{k}={v}"))
         .collect();
     details.sort();

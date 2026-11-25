@@ -41,7 +41,9 @@ pub struct Postcodes {
 impl Postcodes {
     /// Notes the postcodes of an address or POI.
     pub fn add(&mut self, poi: &ToIndexPoi) {
-        let (Some(postcodes), Some(country)) = (&poi.postcode, &poi.country_code) else { return };
+        let (Some(postcodes), Some(country)) = (&poi.postcode, &poi.country_code) else {
+            return;
+        };
         if !matches!(poi.kind, Kind::Address | Kind::Poi) {
             return;
         }
@@ -49,7 +51,9 @@ impl Postcodes {
             if code.is_empty()
                 || code.chars().count() > MAX_POSTCODE_LEN
                 || !code.chars().any(|c| c.is_ascii_digit())
-                || !code.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-')
+                || !code
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == ' ' || c == '-')
             {
                 continue;
             }
@@ -120,10 +124,17 @@ impl Postcodes {
                 Geometry::Polygon(hull)
             } else {
                 let n = points.len() as f64;
-                Geometry::Point(Point::new(points.iter().map(|p| p.x()).sum::<f64>() / n, points.iter().map(|p| p.y()).sum::<f64>() / n))
+                Geometry::Point(Point::new(
+                    points.iter().map(|p| p.x()).sum::<f64>() / n,
+                    points.iter().map(|p| p.y()).sum::<f64>() / n,
+                ))
             };
             let mut names = vec![postcode.display.clone()];
-            let compact: String = postcode.display.chars().filter(|c| !c.is_whitespace()).collect();
+            let compact: String = postcode
+                .display
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
             if compact != postcode.display {
                 names.push(compact);
             }
@@ -148,7 +159,13 @@ mod test {
     use super::*;
 
     fn address(postcode: &str, at: (f64, f64)) -> ToIndexPoi {
-        let mut poi = ToIndexPoi::new(Kind::Address, vec![], Geometry::Point(Point::new(at.0, at.1)), vec![]).unwrap();
+        let mut poi = ToIndexPoi::new(
+            Kind::Address,
+            vec![],
+            Geometry::Point(Point::new(at.0, at.1)),
+            vec![],
+        )
+        .unwrap();
         poi.postcode = Some(postcode.into());
         poi.country_code = Some("CA".into());
         poi.admin_ids = vec![1, 2];
@@ -171,7 +188,10 @@ mod test {
         assert_eq!(first.names, vec!["M2M 1C8", "M2M1C8"]);
         assert_eq!(first.tag("cardinal:postcode_id"), Some("CA/M2M1C8"));
         assert!(matches!(first.geometry, Geometry::Polygon(_)));
-        assert_eq!(first.admin_names, vec![(AdminBand::Locality, "Toronto".to_string())]);
+        assert_eq!(
+            first.admin_names,
+            vec![(AdminBand::Locality, "Toronto".to_string())]
+        );
         assert!(matches!(pois[1].geometry, Geometry::Point(_)));
     }
 }

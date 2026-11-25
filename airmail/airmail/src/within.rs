@@ -38,7 +38,11 @@ impl<C: Collector> Collector for Within<C> {
     type Fruit = C::Fruit;
     type Child = WithinSegment<C::Child>;
 
-    fn for_segment(&self, segment_local_id: u32, segment: &SegmentReader) -> tantivy::Result<Self::Child> {
+    fn for_segment(
+        &self,
+        segment_local_id: u32,
+        segment: &SegmentReader,
+    ) -> tantivy::Result<Self::Child> {
         Ok(WithinSegment {
             inner: self.inner.for_segment(segment_local_id, segment)?,
             rects: self.rects.clone(),
@@ -55,7 +59,10 @@ impl<C: Collector> Collector for Within<C> {
         self.inner.requires_scoring()
     }
 
-    fn merge_fruits(&self, fruits: Vec<<C::Child as SegmentCollector>::Fruit>) -> tantivy::Result<Self::Fruit> {
+    fn merge_fruits(
+        &self,
+        fruits: Vec<<C::Child as SegmentCollector>::Fruit>,
+    ) -> tantivy::Result<Self::Fruit> {
         self.inner.merge_fruits(fruits)
     }
 }
@@ -97,10 +104,18 @@ impl<S> WithinSegment<S> {
                 Err(_) => return true,
             }
         }
-        let Some(Ok(stored)) = self.store.as_ref().map(|store| store.get::<TantivyDocument>(doc)) else {
+        let Some(Ok(stored)) = self
+            .store
+            .as_ref()
+            .map(|store| store.get::<TantivyDocument>(doc))
+        else {
             return true;
         };
-        match stored.get_first(self.geometry).and_then(|v| v.as_bytes()).map(geometry::from_wkb) {
+        match stored
+            .get_first(self.geometry)
+            .and_then(|v| v.as_bytes())
+            .map(geometry::from_wkb)
+        {
             Some(Ok(shape)) => geometry::intersects_any(&shape, &self.rects),
             _ => true,
         }

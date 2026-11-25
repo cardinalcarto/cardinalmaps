@@ -107,7 +107,10 @@ pub fn country<'a>(ids: impl IntoIterator<Item = &'a u64>) -> Option<u64> {
 /// every searchable name in `languages` (spoken where it is), English, and
 /// the default names, by band.
 #[must_use]
-pub fn containing<'a>(areas: impl IntoIterator<Item = (u64, &'a str, &'a [WofName])>, languages: &[String]) -> (Vec<u64>, Vec<(AdminBand, String)>) {
+pub fn containing<'a>(
+    areas: impl IntoIterator<Item = (u64, &'a str, &'a [WofName])>,
+    languages: &[String],
+) -> (Vec<u64>, Vec<(AdminBand, String)>) {
     let mut ids = Vec::new();
     let mut names = BTreeSet::new();
     for (id, placetype, area_names) in areas {
@@ -115,9 +118,13 @@ pub fn containing<'a>(areas: impl IntoIterator<Item = (u64, &'a str, &'a [WofNam
             continue;
         }
         ids.push(id);
-        let Some(band) = AdminBand::of(placetype) else { continue };
+        let Some(band) = AdminBand::of(placetype) else {
+            continue;
+        };
         for name in area_names {
-            if name.is_searchable() && (name.lang == "und" || name.lang == "eng" || languages.contains(&name.lang)) {
+            if name.is_searchable()
+                && (name.lang == "und" || name.lang == "eng" || languages.contains(&name.lang))
+            {
                 names.insert((band, name.name.clone()));
             }
         }
@@ -127,7 +134,13 @@ pub fn containing<'a>(areas: impl IntoIterator<Item = (u64, &'a str, &'a [WofNam
 
 /// What results show of a place, from its names, or `None` if it has none.
 #[must_use]
-pub fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64>, country: Option<String>) -> Option<WofPlace> {
+pub fn place(
+    id: u64,
+    placetype: &str,
+    names: &[WofName],
+    population: Option<u64>,
+    country: Option<String>,
+) -> Option<WofPlace> {
     let full = || names.iter().filter(|n| !n.abbr);
     let default_name = full()
         .find(|n| n.lang == "und" && n.tag == "default")
@@ -137,7 +150,9 @@ pub fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64
         .clone();
     let mut preferred = BTreeMap::new();
     for name in full().filter(|n| n.tag == "preferred") {
-        preferred.entry(name.lang.clone()).or_insert_with(|| name.name.clone());
+        preferred
+            .entry(name.lang.clone())
+            .or_insert_with(|| name.name.clone());
     }
     let abbreviation = names
         .iter()
@@ -164,16 +179,35 @@ pub fn place(id: u64, placetype: &str, names: &[WofName], population: Option<u64
 /// `ancestor` gives the places in its hierarchy (`None` for one that isn't
 /// known, which still counts as containing it), and `languages` are those
 /// spoken in its country (see `country`).
-pub fn admin_document<'a>(record: &WofRecord, ancestor: impl Fn(u64) -> Option<&'a WofRecord>, languages: &[String]) -> Option<ToIndexPoi> {
+pub fn admin_document<'a>(
+    record: &WofRecord,
+    ancestor: impl Fn(u64) -> Option<&'a WofRecord>,
+    languages: &[String],
+) -> Option<ToIndexPoi> {
     place(record.id, &record.placetype, &record.names, None, None)?;
     // Its shape if it has one, else its label point.
-    let shape = record.boundary.clone().or_else(|| record.label.map(Geometry::Point))?;
+    let shape = record
+        .boundary
+        .clone()
+        .or_else(|| record.label.map(Geometry::Point))?;
 
     // It's searched by the names of the places containing it in the
     // languages spoken there, English, and their default names.
-    let ancestors: Vec<(u64, Option<&WofRecord>)> = record.ancestors.iter().map(|id| (*id, ancestor(*id))).collect();
-    let (containing, admin_names) =
-        containing(ancestors.iter().map(|(id, a)| (*id, a.map_or("", |a| a.placetype.as_str()), a.map_or(&[][..], |a| a.names.as_slice()))), languages);
+    let ancestors: Vec<(u64, Option<&WofRecord>)> = record
+        .ancestors
+        .iter()
+        .map(|id| (*id, ancestor(*id)))
+        .collect();
+    let (containing, admin_names) = containing(
+        ancestors.iter().map(|(id, a)| {
+            (
+                *id,
+                a.map_or("", |a| a.placetype.as_str()),
+                a.map_or(&[][..], |a| a.names.as_slice()),
+            )
+        }),
+        languages,
+    );
     let city_importance = ancestors
         .iter()
         .filter_map(|(_, a)| *a)
@@ -183,15 +217,25 @@ pub fn admin_document<'a>(record: &WofRecord, ancestor: impl Fn(u64) -> Option<&
 
     // Variant names (often historical) find a place, but aren't its name.
     let searchable = |variant: bool| -> BTreeSet<String> {
-        record.names.iter().filter(|n| n.is_searchable() && (n.tag == "variant") == variant).map(|n| n.name.clone()).collect()
+        record
+            .names
+            .iter()
+            .filter(|n| n.is_searchable() && (n.tag == "variant") == variant)
+            .map(|n| n.name.clone())
+            .collect()
     };
     let mut own = searchable(false);
-    let mut variants: Vec<String> = searchable(true).into_iter().filter(|n| !own.contains(n)).collect();
+    let mut variants: Vec<String> = searchable(true)
+        .into_iter()
+        .filter(|n| !own.contains(n))
+        .collect();
     if own.is_empty() {
         // A place known only by variants is known by them.
         own.extend(variants.drain(..));
     }
-    let size = crate::geometry::bbox(&shape).map_or(0.0, |[west, south, east, north]| (east - west) * (north - south));
+    let size = crate::geometry::bbox(&shape).map_or(0.0, |[west, south, east, north]| {
+        (east - west) * (north - south)
+    });
     let mut doc = ToIndexPoi::new(Kind::Admin, own.into_iter().collect(), shape, Vec::new())?;
     doc.variant_names = variants;
     if let Some(label) = record.label {
@@ -205,7 +249,14 @@ pub fn admin_document<'a>(record: &WofRecord, ancestor: impl Fn(u64) -> Option<&
     doc.admin_names = admin_names;
     let country = record.country.as_deref().and_then(iso_country_code);
     doc.country_code = country.clone();
-    doc.wof = place(record.id, &record.placetype, &record.names, record.population, country).map(|place| WofPlace { size, ..place });
+    doc.wof = place(
+        record.id,
+        &record.placetype,
+        &record.names,
+        record.population,
+        country,
+    )
+    .map(|place| WofPlace { size, ..place });
     Some(doc)
 }
 
@@ -214,7 +265,12 @@ mod test {
     use super::*;
 
     fn name(lang: &str, tag: &str, abbr: bool, name: &str) -> WofName {
-        WofName { lang: lang.into(), tag: tag.into(), abbr, name: name.into() }
+        WofName {
+            lang: lang.into(),
+            tag: tag.into(),
+            abbr,
+            name: name.into(),
+        }
     }
 
     #[test]
@@ -226,7 +282,14 @@ mod test {
             name("eng", "variant", false, "ZRH"),
             name("deu", "preferred", false, "Zürich"),
         ];
-        let place = place(85682309, "region", &names, Some(1_500_000), Some("CH".into())).unwrap();
+        let place = place(
+            85682309,
+            "region",
+            &names,
+            Some(1_500_000),
+            Some("CH".into()),
+        )
+        .unwrap();
         assert_eq!(place.default_name, "Zürich");
         assert_eq!(place.names.get("eng").map(String::as_str), Some("Zurich"));
         assert_eq!(place.abbreviation.as_deref(), Some("ZH"));
@@ -243,33 +306,59 @@ mod test {
         let switzerland = WofRecord {
             id: 85633051,
             placetype: "country".into(),
-            names: vec![name("und", "default", false, "Schweiz"), name("fra", "preferred", false, "Suisse"), name("jpn", "preferred", false, "スイス")],
+            names: vec![
+                name("und", "default", false, "Schweiz"),
+                name("fra", "preferred", false, "Suisse"),
+                name("jpn", "preferred", false, "スイス"),
+            ],
             languages: vec!["deu".into(), "fra".into()],
             ..WofRecord::default()
         };
         let zurich = WofRecord {
             id: 101748463,
             placetype: "locality".into(),
-            names: vec![name("und", "default", false, "Zürich"), name("eng", "variant", false, "Turicum"), name("eng", "colloquial", false, "Zurich City")],
+            names: vec![
+                name("und", "default", false, "Zürich"),
+                name("eng", "variant", false, "Turicum"),
+                name("eng", "colloquial", false, "Zurich City"),
+            ],
             ancestors: vec![85633051, 999],
             population: Some(400_000),
             country: Some("ch".into()),
             label: Some(Point::new(8.54, 47.37)),
-            boundary: Some(Geometry::Polygon(geo::Rect::new(geo::coord! { x: 8.45, y: 47.32 }, geo::coord! { x: 8.63, y: 47.43 }).to_polygon())),
+            boundary: Some(Geometry::Polygon(
+                geo::Rect::new(
+                    geo::coord! { x: 8.45, y: 47.32 },
+                    geo::coord! { x: 8.63, y: 47.43 },
+                )
+                .to_polygon(),
+            )),
             ..WofRecord::default()
         };
         let lookup = |id: u64| (id == switzerland.id).then_some(&switzerland);
-        let languages = &lookup(country(std::iter::once(&zurich.id).chain(&zurich.ancestors)).unwrap()).unwrap().languages;
+        let languages =
+            &lookup(country(std::iter::once(&zurich.id).chain(&zurich.ancestors)).unwrap())
+                .unwrap()
+                .languages;
         let doc = admin_document(&zurich, lookup, languages).unwrap();
         assert_eq!(doc.names, vec!["Zürich"]);
         assert_eq!(doc.variant_names, vec!["Turicum"]);
         assert_eq!(doc.center, Point::new(8.54, 47.37));
         // An ancestor that isn't known still contains it.
         assert_eq!(doc.admin_ids, vec![85633051, 999]);
-        assert_eq!(doc.admin_names, vec![(AdminBand::Country, "Schweiz".to_string()), (AdminBand::Country, "Suisse".to_string())]);
+        assert_eq!(
+            doc.admin_names,
+            vec![
+                (AdminBand::Country, "Schweiz".to_string()),
+                (AdminBand::Country, "Suisse".to_string())
+            ]
+        );
         assert_eq!(doc.country_code.as_deref(), Some("CH"));
         let wof = doc.wof.unwrap();
-        assert_eq!((wof.id, wof.default_name.as_str(), wof.population), (101748463, "Zürich", Some(400_000)));
+        assert_eq!(
+            (wof.id, wof.default_name.as_str(), wof.population),
+            (101748463, "Zürich", Some(400_000))
+        );
         assert!(wof.size > 0.0);
         assert!(doc.importance > 0.0);
     }

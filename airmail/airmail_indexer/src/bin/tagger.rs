@@ -28,17 +28,17 @@ use airmail::gazetteer::IndexGazetteer;
 use airmail::index::{AirmailIndex, SearchHit};
 use airmail::poi::WofPlace;
 use airmail::tagger_data::{Example, Generator, sample};
+use airmail_tagger::crf::{Lattice, fit_scale};
 use airmail_tagger::features::{Extractor, Gazetteer, Query, Vocabulary};
 use airmail_tagger::labels::Tag;
 use airmail_tagger::lexicon::Lexicon;
 use airmail_tagger::text::{fold, words};
-use airmail_tagger::crf::{Lattice, fit_scale};
 use airmail_tagger::{Encoded, Interner, Label, Model, TokenFeatures, Trainer};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
 
 #[path = "tagger/score.rs"]
 mod score;
@@ -168,7 +168,11 @@ enum Command {
 
 /// A query's words from text, as the tagger reads it.
 fn query_of(text: &str, typing: bool, focus: Option<[f64; 2]>) -> Query {
-    let mut query = Query { typing, focus, ..Query::default() };
+    let mut query = Query {
+        typing,
+        focus,
+        ..Query::default()
+    };
     for (i, section) in text.split(',').enumerate() {
         let folded = fold(section);
         for (j, (_, word)) in words(&folded).into_iter().enumerate() {
@@ -180,7 +184,12 @@ fn query_of(text: &str, typing: bool, focus: Option<[f64; 2]>) -> Query {
 }
 
 /// Features of examples, computed in parallel.
-fn featurize(index: &AirmailIndex, lexicon: &Lexicon, vocabulary: &Vocabulary, examples: &[Example]) -> Vec<(Vec<TokenFeatures>, Vec<Label>)> {
+fn featurize(
+    index: &AirmailIndex,
+    lexicon: &Lexicon,
+    vocabulary: &Vocabulary,
+    examples: &[Example],
+) -> Vec<(Vec<TokenFeatures>, Vec<Label>)> {
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let chunk = examples.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
@@ -189,7 +198,10 @@ fn featurize(index: &AirmailIndex, lexicon: &Lexicon, vocabulary: &Vocabulary, e
             .map(|chunk| {
                 scope.spawn(move || {
                     let gazetteer = IndexGazetteer::new(index).expect("searcher");
-                    let extractor = Extractor { lexicon, vocabulary };
+                    let extractor = Extractor {
+                        lexicon,
+                        vocabulary,
+                    };
                     chunk
                         .iter()
                         .enumerate()
@@ -205,7 +217,10 @@ fn featurize(index: &AirmailIndex, lexicon: &Lexicon, vocabulary: &Vocabulary, e
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().expect("featurize")).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("featurize"))
+            .collect()
     })
 }
 
@@ -225,8 +240,17 @@ fn sources(indexes: &[PathBuf], stride: u32, seed: u64, start: Instant) -> Resul
         .map(|path| {
             let index = AirmailIndex::open_read_only(path.to_str().expect("path"))?;
             let (docs, admins) = sample(&index, stride, seed as u32)?;
-            eprintln!("Sampled {} documents of {} in {:?}", docs.len(), path.display(), start.elapsed());
-            Ok(Source { index, docs, admins })
+            eprintln!(
+                "Sampled {} documents of {} in {:?}",
+                docs.len(),
+                path.display(),
+                start.elapsed()
+            );
+            Ok(Source {
+                index,
+                docs,
+                admins,
+            })
         })
         .collect()
 }
@@ -249,7 +273,11 @@ fn ranges(sources: &[Source]) -> Vec<Range> {
         let n = s.docs.len();
         let per = n.div_ceil(RANGES_PER_SOURCE).max(1);
         for start in (0..n).step_by(per) {
-            ranges.push(Range { source, docs: start..(start + per).min(n), number: ranges.len() });
+            ranges.push(Range {
+                source,
+                docs: start..(start + per).min(n),
+                number: ranges.len(),
+            });
         }
     }
     ranges
@@ -258,7 +286,14 @@ fn ranges(sources: &[Source]) -> Vec<Range> {
 /// Calls `each(example, held_out)` for every example made from a range's
 /// documents, the same every time for the same arguments. A tenth of the
 /// documents are held out.
-fn range_examples(generator: &mut Generator, sources: &[Source], range: &Range, copies: usize, seed: u64, mut each: impl FnMut(Example, bool)) {
+fn range_examples(
+    generator: &mut Generator,
+    sources: &[Source],
+    range: &Range,
+    copies: usize,
+    seed: u64,
+    mut each: impl FnMut(Example, bool),
+) {
     generator.reseed(seed ^ (range.number as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let source = &sources[range.source];
     let docs = &source.docs;
@@ -280,8 +315,14 @@ fn range_examples(generator: &mut Generator, sources: &[Source], range: &Range, 
 
 /// `run(state, range)` for every range, on a thread per core, each thread
 /// with its own `init()` state: the states, and the results in range order.
-fn by_range<S: Send, R: Send>(ranges: &[Range], init: impl Fn() -> S + Sync, run: impl Fn(&mut S, &Range) -> R + Sync) -> (Vec<S>, Vec<R>) {
-    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZero::get).min(ranges.len().max(1));
+fn by_range<S: Send, R: Send>(
+    ranges: &[Range],
+    init: impl Fn() -> S + Sync,
+    run: impl Fn(&mut S, &Range) -> R + Sync,
+) -> (Vec<S>, Vec<R>) {
+    let threads = std::thread::available_parallelism()
+        .map_or(4, std::num::NonZero::get)
+        .min(ranges.len().max(1));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let (states, mut done): (Vec<S>, Vec<Vec<(usize, R)>>) = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..threads)
@@ -290,13 +331,18 @@ fn by_range<S: Send, R: Send>(ranges: &[Range], init: impl Fn() -> S + Sync, run
                     let (mut state, mut done) = (init(), Vec::new());
                     loop {
                         let job = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(range) = ranges.get(job) else { return (state, done) };
+                        let Some(range) = ranges.get(job) else {
+                            return (state, done);
+                        };
                         done.push((job, run(&mut state, range)));
                     }
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().expect("a range panicked")).unzip()
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("a range panicked"))
+            .unzip()
     });
     let mut done: Vec<(usize, R)> = done.drain(..).flatten().collect();
     done.sort_by_key(|(job, _)| *job);
@@ -320,17 +366,24 @@ fn count(sources: &[Source], ranges: &[Range], copies: usize, seed: u64) -> (Cou
         || (Generator::new(seed), Counts::default()),
         |(generator, counts), range| {
             let mut held = 0;
-            range_examples(generator, sources, range, copies, seed, |example, held_out| {
-                if held_out {
-                    held += 1;
-                } else {
-                    counts.training += 1;
-                    for word in &example.query.words {
-                        counts.vocabulary.add(word);
+            range_examples(
+                generator,
+                sources,
+                range,
+                copies,
+                seed,
+                |example, held_out| {
+                    if held_out {
+                        held += 1;
+                    } else {
+                        counts.training += 1;
+                        for word in &example.query.words {
+                            counts.vocabulary.add(word);
+                        }
+                        counts.description.add(&example);
                     }
-                    counts.description.add(&example);
-                }
-            });
+                },
+            );
             held
         },
     );
@@ -359,18 +412,29 @@ fn held_out(sources: &[Source], copies: usize, seed: u64) -> Vec<Vec<Example>> {
     let ranges = ranges(sources);
     let (_, held) = count(sources, &ranges, copies, seed);
     let steps = held_out_steps(sources, &ranges, &held);
-    let (_, kept) = by_range(&ranges, || Generator::new(seed), |generator, range| {
-        let (mut seen, mut kept) = (0, Vec::new());
-        range_examples(generator, sources, range, copies, seed, |example, held_out| {
-            if held_out {
-                if seen % steps[range.source] == 0 {
-                    kept.push(example);
-                }
-                seen += 1;
-            }
-        });
-        kept
-    });
+    let (_, kept) = by_range(
+        &ranges,
+        || Generator::new(seed),
+        |generator, range| {
+            let (mut seen, mut kept) = (0, Vec::new());
+            range_examples(
+                generator,
+                sources,
+                range,
+                copies,
+                seed,
+                |example, held_out| {
+                    if held_out {
+                        if seen % steps[range.source] == 0 {
+                            kept.push(example);
+                        }
+                        seen += 1;
+                    }
+                },
+            );
+            kept
+        },
+    );
     let mut per_source = vec![Vec::new(); sources.len()];
     for (range, kept) in ranges.iter().zip(kept) {
         per_source[range.source].extend(kept);
@@ -396,8 +460,15 @@ impl Buckets {
         std::fs::create_dir_all(dir)?;
         let n = examples.div_ceil(BUCKET_EXAMPLES).max(1);
         let paths: Vec<PathBuf> = (0..n).map(|i| dir.join(format!("bucket-{i}"))).collect();
-        let writers = paths.iter().map(|p| Ok(BufWriter::with_capacity(1 << 20, File::create(p)?))).collect::<Result<_>>()?;
-        Ok(Self { paths, writers, rng: StdRng::seed_from_u64(seed) })
+        let writers = paths
+            .iter()
+            .map(|p| Ok(BufWriter::with_capacity(1 << 20, File::create(p)?)))
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            paths,
+            writers,
+            rng: StdRng::seed_from_u64(seed),
+        })
     }
 
     /// Writes an example to a bucket at random: its token count, labels,
@@ -488,32 +559,63 @@ fn encode_all(
     let (sender, receiver) = std::sync::mpsc::sync_channel::<Batch>(256);
     let kept = std::thread::scope(|scope| -> Result<Vec<Vec<Example>>> {
         let workers = scope.spawn(move || {
-            let init = || (Generator::new(seed), None::<(usize, IndexGazetteer)>, sender.clone());
+            let init = || {
+                (
+                    Generator::new(seed),
+                    None::<(usize, IndexGazetteer)>,
+                    sender.clone(),
+                )
+            };
             let (_, kept) = by_range(ranges, init, |(generator, gazetteer, sender), range| {
                 if gazetteer.as_ref().is_none_or(|(s, _)| *s != range.source) {
-                    *gazetteer = Some((range.source, IndexGazetteer::new(&sources[range.source].index).expect("searcher")));
+                    *gazetteer = Some((
+                        range.source,
+                        IndexGazetteer::new(&sources[range.source].index).expect("searcher"),
+                    ));
                 }
                 let gazetteer = &gazetteer.as_ref().expect("a gazetteer").1;
                 let (mut seen, mut kept) = (0, Vec::new());
-                let mut batch = Batch { interner: Interner::default(), examples: Vec::new() };
-                range_examples(generator, sources, range, copies, seed, |example, held_out| {
-                    if held_out {
-                        if seen % steps[range.source] == 0 {
-                            kept.push(example);
+                let mut batch = Batch {
+                    interner: Interner::default(),
+                    examples: Vec::new(),
+                };
+                range_examples(
+                    generator,
+                    sources,
+                    range,
+                    copies,
+                    seed,
+                    |example, held_out| {
+                        if held_out {
+                            if seen % steps[range.source] == 0 {
+                                kept.push(example);
+                            }
+                            seen += 1;
+                            return;
                         }
-                        seen += 1;
-                        return;
-                    }
-                    let areas = gazetteer.areas(&example.query);
-                    let tokens = extractor.features(&example.query, &areas).iter().map(|f| batch.interner.encode(f)).collect();
-                    batch.examples.push((tokens, example.tags.iter().map(|t| t.label()).collect()));
-                    if batch.examples.len() >= BATCH_EXAMPLES {
-                        let full = std::mem::replace(&mut batch, Batch { interner: Interner::default(), examples: Vec::new() });
-                        // Only fails if the writer has stopped, which it says why.
-                        let _ = sender.send(full);
-                        gazetteer.forget_if_over(MOST_CACHED);
-                    }
-                });
+                        let areas = gazetteer.areas(&example.query);
+                        let tokens = extractor
+                            .features(&example.query, &areas)
+                            .iter()
+                            .map(|f| batch.interner.encode(f))
+                            .collect();
+                        batch
+                            .examples
+                            .push((tokens, example.tags.iter().map(|t| t.label()).collect()));
+                        if batch.examples.len() >= BATCH_EXAMPLES {
+                            let full = std::mem::replace(
+                                &mut batch,
+                                Batch {
+                                    interner: Interner::default(),
+                                    examples: Vec::new(),
+                                },
+                            );
+                            // Only fails if the writer has stopped, which it says why.
+                            let _ = sender.send(full);
+                            gazetteer.forget_if_over(MOST_CACHED);
+                        }
+                    },
+                );
                 let _ = sender.send(batch);
                 kept
             });
@@ -527,7 +629,11 @@ fn encode_all(
                 buckets.add(&tokens, &labels)?;
                 done += 1;
                 if done % 1_000_000 == 0 {
-                    eprintln!("  featurized {done} of {training} examples, {} features, {:?}", interner.len(), start.elapsed());
+                    eprintln!(
+                        "  featurized {done} of {training} examples, {} features, {:?}",
+                        interner.len(),
+                        start.elapsed()
+                    );
                 }
             }
         }
@@ -549,8 +655,12 @@ const MAX_CALIBRATION: usize = 20_000;
 fn calibrate(model: &mut Model, test_set: &[(Vec<TokenFeatures>, Vec<Label>)]) {
     model.set_scale(1.0);
     let every = test_set.len().div_ceil(MAX_CALIBRATION).max(1);
-    let labelled: Vec<(Lattice, Vec<Label>)> =
-        test_set.iter().filter(|(features, _)| !features.is_empty()).step_by(every).map(|(features, truth)| (Lattice::new(&*model, features), truth.clone())).collect();
+    let labelled: Vec<(Lattice, Vec<Label>)> = test_set
+        .iter()
+        .filter(|(features, _)| !features.is_empty())
+        .step_by(every)
+        .map(|(features, truth)| (Lattice::new(&*model, features), truth.clone()))
+        .collect();
     let summary = |scale: f64| -> (f64, f64, f64) {
         let (mut loss, mut confidence, mut right) = (0.0, 0.0, 0usize);
         for (lattice, truth) in &labelled {
@@ -573,7 +683,10 @@ fn calibrate(model: &mut Model, test_set: &[(Vec<TokenFeatures>, Vec<Label>)]) {
             100.0 * accuracy
         );
     }
-    eprintln!("Scale: {scale:.4}, fitted on {} held-out queries", labelled.len());
+    eprintln!(
+        "Scale: {scale:.4}, fitted on {} held-out queries",
+        labelled.len()
+    );
     model.set_scale(scale);
 }
 
@@ -582,7 +695,15 @@ fn calibrate(model: &mut Model, test_set: &[(Vec<TokenFeatures>, Vec<Label>)]) {
 /// writes their features as numbers to buckets on disk (under `work`,
 /// removed after), which each epoch reads back a bucket at a time. Both
 /// passes make examples on every core.
-fn train(indexes: Vec<PathBuf>, out: PathBuf, stride: u32, epochs: usize, copies: usize, min_updates: u32, seed: u64) -> Result<()> {
+fn train(
+    indexes: Vec<PathBuf>,
+    out: PathBuf,
+    stride: u32,
+    epochs: usize,
+    copies: usize,
+    min_updates: u32,
+    seed: u64,
+) -> Result<()> {
     let start = Instant::now();
     let sources = sources(&indexes, stride, seed, start)?;
     let ranges = ranges(&sources);
@@ -590,17 +711,36 @@ fn train(indexes: Vec<PathBuf>, out: PathBuf, stride: u32, epochs: usize, copies
     let (counts, held) = count(&sources, &ranges, copies, seed);
     let unaligned = airmail::tagger_data::unaligned();
     eprintln!("{unaligned} formatted examples left out, their words not all traced to their parts");
-    eprintln!("{} training examples, {} held out, in {:?}", counts.training, held.iter().sum::<usize>(), start.elapsed());
+    eprintln!(
+        "{} training examples, {} held out, in {:?}",
+        counts.training,
+        held.iter().sum::<usize>(),
+        start.elapsed()
+    );
     counts.description.print();
     let vocabulary = counts.vocabulary;
 
     let work = out.with_extension("examples");
     let mut buckets = Buckets::create(&work, counts.training, seed)?;
     let lexicon = Lexicon::new();
-    let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
+    let extractor = Extractor {
+        lexicon: &lexicon,
+        vocabulary: &vocabulary,
+    };
     let steps = held_out_steps(&sources, &ranges, &held);
     let mut interner = Interner::default();
-    let held_out = encode_all(&sources, &ranges, &steps, copies, seed, &extractor, &mut interner, &mut buckets, counts.training, start)?;
+    let held_out = encode_all(
+        &sources,
+        &ranges,
+        &steps,
+        copies,
+        seed,
+        &extractor,
+        &mut interner,
+        &mut buckets,
+        counts.training,
+        start,
+    )?;
     let paths = buckets.finish()?;
     eprintln!("{} distinct features", interner.len());
     eprintln!("Features in {:?}", start.elapsed());
@@ -622,15 +762,28 @@ fn train(indexes: Vec<PathBuf>, out: PathBuf, stride: u32, epochs: usize, copies
             let mut examples = read_bucket(&paths[b])?;
             examples.shuffle(&mut rng);
             seen += examples.len();
-            right += examples.iter().filter(|(tokens, labels)| trainer.train(tokens, labels)).count();
+            right += examples
+                .iter()
+                .filter(|(tokens, labels)| trainer.train(tokens, labels))
+                .count();
         }
-        eprintln!("Epoch {epoch}: {:.1}% of training examples right before updating, {:?}", 100.0 * right as f64 / seen.max(1) as f64, start.elapsed());
+        eprintln!(
+            "Epoch {epoch}: {:.1}% of training examples right before updating, {:?}",
+            100.0 * right as f64 / seen.max(1) as f64,
+            start.elapsed()
+        );
     }
     std::fs::remove_dir_all(&work)?;
     let mut model = trainer.finish(&interner);
-    eprintln!("Model: {:?} state and state-transition features", model.num_features());
+    eprintln!(
+        "Model: {:?} state and state-transition features",
+        model.num_features()
+    );
     // Written before calibrating too, so nothing after training can lose it.
-    let known: Vec<(String, u32)> = vocabulary.known().map(|(w, c)| (w.to_string(), c)).collect();
+    let known: Vec<(String, u32)> = vocabulary
+        .known()
+        .map(|(w, c)| (w.to_string(), c))
+        .collect();
     model.write(&mut BufWriter::new(File::create(&out)?), &known)?;
     calibrate(&mut model, &test_set);
     report(&model, &test_set, &held_out);
@@ -651,14 +804,20 @@ impl Description {
     fn add(&mut self, example: &Example) {
         self.examples += 1;
         let has_area = example.tags.iter().any(|t| t.band().is_some());
-        let subject = example.tags.iter().find(|t| t.band().is_none() && **t != Tag::Near && **t != Tag::Other);
+        let subject = example
+            .tags
+            .iter()
+            .find(|t| t.band().is_none() && **t != Tag::Near && **t != Tag::Other);
         let shape = match (subject.is_some(), has_area) {
             (true, false) => "bare",
             (true, true) => "with areas",
             (false, _) => "areas only",
         };
         *self.shapes.entry(shape).or_default() += 1;
-        *self.subjects.entry(subject.map_or("area", |t| t.as_str())).or_default() += 1;
+        *self
+            .subjects
+            .entry(subject.map_or("area", |t| t.as_str()))
+            .or_default() += 1;
         if example.query.typing {
             *self.shapes.entry("being typed").or_default() += 1;
         }
@@ -686,7 +845,14 @@ impl Description {
         }
         let mut subjects: Vec<_> = self.subjects.iter().collect();
         subjects.sort_by(|a, b| b.1.cmp(a.1));
-        eprintln!("  by subject: {}", subjects.iter().map(|(s, n)| format!("{s} {:.1}%", share(**n))).collect::<Vec<_>>().join(", "));
+        eprintln!(
+            "  by subject: {}",
+            subjects
+                .iter()
+                .map(|(s, n)| format!("{s} {:.1}%", share(**n)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
 
@@ -727,11 +893,26 @@ fn report(model: &Model, test_set: &[(Vec<TokenFeatures>, Vec<Label>)], examples
         }
         let precision = tp as f64 / guessed.max(1) as f64;
         let recall = tp as f64 / actual.max(1) as f64;
-        eprintln!("  {:<14} precision {:.3} recall {:.3} ({actual} words)", tag.as_str(), precision, recall);
+        eprintln!(
+            "  {:<14} precision {:.3} recall {:.3} ({actual} words)",
+            tag.as_str(),
+            precision,
+            recall
+        );
     }
     for (query, guess, truth) in wrong {
-        let show = |labels: &[Label]| labels.iter().map(|l| Tag::of_label(*l).as_str()).collect::<Vec<_>>().join(" ");
-        eprintln!("  wrong: {query:?}\n    got  {}\n    want {}", show(&guess), show(&truth));
+        let show = |labels: &[Label]| {
+            labels
+                .iter()
+                .map(|l| Tag::of_label(*l).as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        eprintln!(
+            "  wrong: {query:?}\n    got  {}\n    want {}",
+            show(&guess),
+            show(&truth)
+        );
     }
 }
 
@@ -740,51 +921,73 @@ fn parse_focus(focus: &str) -> Option<[f64; 2]> {
     Some([lon.trim().parse().ok()?, lat.trim().parse().ok()?])
 }
 
-fn tag(index: PathBuf, model: PathBuf, typing: bool, focus: Option<String>, text: Option<String>) -> Result<()> {
+fn tag(
+    index: PathBuf,
+    model: PathBuf,
+    typing: bool,
+    focus: Option<String>,
+    text: Option<String>,
+) -> Result<()> {
     let index = AirmailIndex::open_read_only(index.to_str().expect("path"))?;
     let (model, known) = Model::read(&mut BufReader::new(File::open(model)?))?;
     let vocabulary = Vocabulary::from_counts(known.into_iter().collect());
     let lexicon = Lexicon::new();
     let mut focus = focus.map(|f| parse_focus(&f).expect("--focus lon,lat"));
-    let tag_one = |text: &str, typing: bool, focus: Option<[f64; 2]>, areas_too: bool| -> Result<()> {
-        let started = Instant::now();
-        let query = query_of(text, typing, focus);
-        let gazetteer = IndexGazetteer::new(&index)?;
-        let areas = gazetteer.areas(&query);
-        let features = Extractor { lexicon: &lexicon, vocabulary: &vocabulary }.features(&query, &areas);
-        let (labels, _) = model.tag(&features);
-        let marginals = model.marginals(&features);
-        let best = model.best(&features, 3);
-        let elapsed = started.elapsed();
-        for ((word, label), probabilities) in query.words.iter().zip(labels).zip(marginals) {
-            let p = probabilities[usize::from(label)];
-            println!("  {word:<20} {:<14} {p:.3}", Tag::of_label(label).as_str());
-        }
-        let lattice = airmail_tagger::crf::Lattice::new(&model, &features);
-        for (path, probability) in best {
-            let tags: Vec<&str> = path.iter().map(|l| Tag::of_label(*l).as_str()).collect();
-            println!("  {probability:.3}  (score {:.1})  {}", lattice.path_score(&path), tags.join(" "));
-        }
-        if areas_too {
-            for area in &areas {
-                let mut km = area.distance_km.map_or(String::new(), |km| format!(", {km:.0} km away"));
-                if !area.inside.is_empty() {
-                    let parents: Vec<String> =
-                        area.inside.iter().map(|(s, e, band)| format!("{band} \"{}\"", query.words[*s..*e].join(" "))).collect();
-                    km.push_str(&format!(", in the {}", parents.join(" and the ")));
-                }
+    let tag_one =
+        |text: &str, typing: bool, focus: Option<[f64; 2]>, areas_too: bool| -> Result<()> {
+            let started = Instant::now();
+            let query = query_of(text, typing, focus);
+            let gazetteer = IndexGazetteer::new(&index)?;
+            let areas = gazetteer.areas(&query);
+            let features = Extractor {
+                lexicon: &lexicon,
+                vocabulary: &vocabulary,
+            }
+            .features(&query, &areas);
+            let (labels, _) = model.tag(&features);
+            let marginals = model.marginals(&features);
+            let best = model.best(&features, 3);
+            let elapsed = started.elapsed();
+            for ((word, label), probabilities) in query.words.iter().zip(labels).zip(marginals) {
+                let p = probabilities[usize::from(label)];
+                println!("  {word:<20} {:<14} {p:.3}", Tag::of_label(label).as_str());
+            }
+            let lattice = airmail_tagger::crf::Lattice::new(&model, &features);
+            for (path, probability) in best {
+                let tags: Vec<&str> = path.iter().map(|l| Tag::of_label(*l).as_str()).collect();
                 println!(
-                    "  gazetteer: \"{}\" {} ({:?}, importance {:.2}{km})",
-                    query.words[area.start..area.end].join(" "),
-                    area.band,
-                    area.quality,
-                    area.importance
+                    "  {probability:.3}  (score {:.1})  {}",
+                    lattice.path_score(&path),
+                    tags.join(" ")
                 );
             }
-            println!("  ({elapsed:.1?})");
-        }
-        Ok(())
-    };
+            if areas_too {
+                for area in &areas {
+                    let mut km = area
+                        .distance_km
+                        .map_or(String::new(), |km| format!(", {km:.0} km away"));
+                    if !area.inside.is_empty() {
+                        let parents: Vec<String> = area
+                            .inside
+                            .iter()
+                            .map(|(s, e, band)| {
+                                format!("{band} \"{}\"", query.words[*s..*e].join(" "))
+                            })
+                            .collect();
+                        km.push_str(&format!(", in the {}", parents.join(" and the ")));
+                    }
+                    println!(
+                        "  gazetteer: \"{}\" {} ({:?}, importance {:.2}{km})",
+                        query.words[area.start..area.end].join(" "),
+                        area.band,
+                        area.quality,
+                        area.importance
+                    );
+                }
+                println!("  ({elapsed:.1?})");
+            }
+            Ok(())
+        };
     if let Some(text) = text {
         return tag_one(&text, typing, focus, false);
     }
@@ -799,7 +1002,9 @@ fn repl(
     focus: &mut Option<[f64; 2]>,
     tag_one: impl Fn(&str, bool, Option<[f64; 2]>, bool) -> Result<()>,
 ) -> Result<()> {
-    eprintln!("Type a query; :typing toggles the last word being unfinished, :focus lon,lat sets a focus (:focus clears it), Ctrl-D quits.");
+    eprintln!(
+        "Type a query; :typing toggles the last word being unfinished, :focus lon,lat sets a focus (:focus clears it), Ctrl-D quits."
+    );
     let mut editor = rustyline::DefaultEditor::new()?;
     loop {
         let mode = match (typing, *focus) {
@@ -808,10 +1013,16 @@ fn repl(
             (false, Some([lon, lat])) => format!("near {lon},{lat}"),
             (false, None) => String::new(),
         };
-        let prompt = if mode.is_empty() { "> ".to_string() } else { format!("[{mode}] > ") };
+        let prompt = if mode.is_empty() {
+            "> ".to_string()
+        } else {
+            format!("[{mode}] > ")
+        };
         let line = match editor.readline(&prompt) {
             Ok(line) => line,
-            Err(rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof) => return Ok(()),
+            Err(
+                rustyline::error::ReadlineError::Interrupted | rustyline::error::ReadlineError::Eof,
+            ) => return Ok(()),
             Err(e) => return Err(e.into()),
         };
         if !line.trim().is_empty() {
@@ -847,12 +1058,21 @@ impl Tagger {
     fn open(index: &std::path::Path, model: &std::path::Path) -> Result<Self> {
         let index = AirmailIndex::open_read_only(index.to_str().expect("path"))?;
         let (model, known) = Model::read(&mut BufReader::new(File::open(model)?))?;
-        Ok(Self { index, model, vocabulary: Vocabulary::from_counts(known.into_iter().collect()), lexicon: Lexicon::new() })
+        Ok(Self {
+            index,
+            model,
+            vocabulary: Vocabulary::from_counts(known.into_iter().collect()),
+            lexicon: Lexicon::new(),
+        })
     }
 
     fn features(&self, query: &Query) -> Result<Vec<TokenFeatures>> {
         let areas = IndexGazetteer::new(&self.index)?.areas(query);
-        Ok(Extractor { lexicon: &self.lexicon, vocabulary: &self.vocabulary }.features(query, &areas))
+        Ok(Extractor {
+            lexicon: &self.lexicon,
+            vocabulary: &self.vocabulary,
+        }
+        .features(query, &areas))
     }
 }
 
@@ -864,11 +1084,22 @@ fn eval(index: PathBuf, model: PathBuf, tsv: PathBuf) -> Result<()> {
             continue;
         }
         let mut columns = line.split('\t');
-        let (Some(text), Some(flags), Some(tags)) = (columns.next(), columns.next(), columns.next()) else { continue };
+        let (Some(text), Some(flags), Some(tags)) =
+            (columns.next(), columns.next(), columns.next())
+        else {
+            continue;
+        };
         let query = query_of(text, flags.contains("typing"), None);
-        let want: Vec<Tag> = tags.split_whitespace().map(|t| Tag::parse(t).unwrap_or_else(|| panic!("tag {t}"))).collect();
+        let want: Vec<Tag> = tags
+            .split_whitespace()
+            .map(|t| Tag::parse(t).unwrap_or_else(|| panic!("tag {t}")))
+            .collect();
         if want.len() != query.words.len() {
-            eprintln!("skipping {text:?}: {} words, {} tags", query.words.len(), want.len());
+            eprintln!(
+                "skipping {text:?}: {} words, {} tags",
+                query.words.len(),
+                want.len()
+            );
             continue;
         }
         let (got, _) = tagger.model.tag(&tagger.features(&query)?);
@@ -880,8 +1111,17 @@ fn eval(index: PathBuf, model: PathBuf, tsv: PathBuf) -> Result<()> {
         if right == want.len() {
             right_queries += 1;
         } else {
-            let show = |tags: &[Tag]| tags.iter().map(|t| t.as_str()).collect::<Vec<_>>().join(" ");
-            println!("WRONG {text:?}\n  got  {}\n  want {}", show(&got), show(&want));
+            let show = |tags: &[Tag]| {
+                tags.iter()
+                    .map(|t| t.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            println!(
+                "WRONG {text:?}\n  got  {}\n  want {}",
+                show(&got),
+                show(&want)
+            );
         }
     }
     println!("{right_queries}/{queries} queries, {right_words}/{words} words right");
@@ -890,16 +1130,59 @@ fn eval(index: PathBuf, model: PathBuf, tsv: PathBuf) -> Result<()> {
 
 fn main() -> Result<()> {
     match Args::parse().command {
-        Command::Train { index, out, stride, epochs, copies, min_updates, seed } => {
-            train(index, out, stride, epochs, copies, min_updates, seed)
-        }
-        Command::Tag { index, model, typing, focus, query } => tag(index, model, typing, focus, query),
+        Command::Train {
+            index,
+            out,
+            stride,
+            epochs,
+            copies,
+            min_updates,
+            seed,
+        } => train(index, out, stride, epochs, copies, min_updates, seed),
+        Command::Tag {
+            index,
+            model,
+            typing,
+            focus,
+            query,
+        } => tag(index, model, typing, focus, query),
         Command::Eval { index, model, tsv } => eval(index, model, tsv),
-        Command::Score { index, model, stride, copies, seed, max, tsv, json } => {
-            score::score(&index, &model, stride, copies, seed, max, tsv.as_deref(), json.as_deref())
-        }
-        Command::Usage { index, model, out, stride, copies, seed, every } => score::usage(&index, &model, stride, copies, seed, every, &out),
-        Command::Calibrate { index, model, out, stride, copies, seed } => {
+        Command::Score {
+            index,
+            model,
+            stride,
+            copies,
+            seed,
+            max,
+            tsv,
+            json,
+        } => score::score(
+            &index,
+            &model,
+            stride,
+            copies,
+            seed,
+            max,
+            tsv.as_deref(),
+            json.as_deref(),
+        ),
+        Command::Usage {
+            index,
+            model,
+            out,
+            stride,
+            copies,
+            seed,
+            every,
+        } => score::usage(&index, &model, stride, copies, seed, every, &out),
+        Command::Calibrate {
+            index,
+            model,
+            out,
+            stride,
+            copies,
+            seed,
+        } => {
             let start = Instant::now();
             let (mut model, known) = Model::read(&mut BufReader::new(File::open(model)?))?;
             let vocabulary = Vocabulary::from_counts(known.iter().cloned().collect());
@@ -913,14 +1196,24 @@ fn main() -> Result<()> {
             model.write(&mut BufWriter::new(File::create(out)?), &known)?;
             Ok(())
         }
-        Command::Examples { index, stride, seed } => {
+        Command::Examples {
+            index,
+            stride,
+            seed,
+        } => {
             let sources = sources(&[index], stride, seed, Instant::now())?;
             let ranges = ranges(&sources);
-            let (_, examples) = by_range(&ranges, || Generator::new(seed), |generator, range| {
-                let mut examples = Vec::new();
-                range_examples(generator, &sources, range, 1, seed, |example, _| examples.push(example));
-                examples
-            });
+            let (_, examples) = by_range(
+                &ranges,
+                || Generator::new(seed),
+                |generator, range| {
+                    let mut examples = Vec::new();
+                    range_examples(generator, &sources, range, 1, seed, |example, _| {
+                        examples.push(example)
+                    });
+                    examples
+                },
+            );
             for example in examples.iter().flatten() {
                 let words: Vec<String> = example
                     .query
@@ -928,17 +1221,36 @@ fn main() -> Result<()> {
                     .iter()
                     .zip(&example.tags)
                     .zip(&example.query.section_starts)
-                    .map(|((w, t), comma)| format!("{}{w}/{}", if *comma { ", " } else { "" }, t.as_str()))
+                    .map(|((w, t), comma)| {
+                        format!("{}{w}/{}", if *comma { ", " } else { "" }, t.as_str())
+                    })
                     .collect();
-                println!("{}{}", words.join(" "), if example.query.typing { "  (typing)" } else { "" });
+                println!(
+                    "{}{}",
+                    words.join(" "),
+                    if example.query.typing {
+                        "  (typing)"
+                    } else {
+                        ""
+                    }
+                );
             }
             Ok(())
         }
-        Command::Convert { model, out, min_weight } => {
+        Command::Convert {
+            model,
+            out,
+            min_weight,
+        } => {
             let (model, extra) = Model::read(&mut BufReader::new(File::open(model)?))?;
             let mut magnitudes = model.weight_magnitudes();
             magnitudes.sort_by(f32::total_cmp);
-            let quantile = |q: f64| magnitudes.get(((magnitudes.len() as f64 - 1.0) * q) as usize).copied().unwrap_or(0.0);
+            let quantile = |q: f64| {
+                magnitudes
+                    .get(((magnitudes.len() as f64 - 1.0) * q) as usize)
+                    .copied()
+                    .unwrap_or(0.0)
+            };
             eprintln!(
                 "{:?} features, {} weights; magnitudes at 10%, 25%, 50%, 75%, 90%: {:.4} {:.4} {:.4} {:.4} {:.4}",
                 model.num_features(),
@@ -952,7 +1264,11 @@ fn main() -> Result<()> {
             let model = match min_weight {
                 Some(min) => {
                     let pruned = model.pruned(min);
-                    eprintln!("Pruned below {min}: {:?} features, {} weights", pruned.num_features(), pruned.weight_magnitudes().len());
+                    eprintln!(
+                        "Pruned below {min}: {:?} features, {} weights",
+                        pruned.num_features(),
+                        pruned.weight_magnitudes().len()
+                    );
                     pruned
                 }
                 None => model,

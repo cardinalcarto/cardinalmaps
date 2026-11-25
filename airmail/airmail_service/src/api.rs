@@ -6,7 +6,7 @@ use std::sync::Arc;
 use airmail::{
     categories::{CategoryModels, QueryCategories},
     index::{AirmailIndex, SearchHit, SearchRequest},
-    poi::{Kind, PlaceId, WofPlace, osm_display_name, one_per_placetype, postcode_key},
+    poi::{Kind, PlaceId, WofPlace, one_per_placetype, osm_display_name, postcode_key},
 };
 use axum::{
     Json,
@@ -94,8 +94,14 @@ impl RawParams {
         let lang = self.get("lang");
         if let Some(lang) = &lang {
             let valid = lang.split('-').enumerate().all(|(i, part)| {
-                let len_ok = if i == 0 { (2..=8).contains(&part.len()) } else { (1..=8).contains(&part.len()) };
-                len_ok && part.chars().all(|c| c.is_ascii_alphanumeric()) && (i > 0 || part.chars().all(|c| c.is_ascii_alphabetic()))
+                let len_ok = if i == 0 {
+                    (2..=8).contains(&part.len())
+                } else {
+                    (1..=8).contains(&part.len())
+                };
+                len_ok
+                    && part.chars().all(|c| c.is_ascii_alphanumeric())
+                    && (i > 0 || part.chars().all(|c| c.is_ascii_alphabetic()))
             });
             if !valid {
                 self.fail("lang", "not a BCP 47 language tag");
@@ -116,7 +122,11 @@ impl RawParams {
     }
 
     fn finish(self) -> Result<(), Problem> {
-        if self.invalid.is_empty() { Ok(()) } else { Err(Problem::invalid_params(self.invalid)) }
+        if self.invalid.is_empty() {
+            Ok(())
+        } else {
+            Err(Problem::invalid_params(self.invalid))
+        }
     }
 }
 
@@ -148,40 +158,50 @@ impl SearchParams {
         let prefix = boolean("prefix");
         let typos = boolean("typos");
 
-        let bbox = params.get("bbox").and_then(|value| match parse_bbox(&value) {
-            Ok(bbox) => Some(bbox),
-            Err(reason) => {
-                params.fail("bbox", reason);
-                None
-            }
-        });
+        let bbox = params
+            .get("bbox")
+            .and_then(|value| match parse_bbox(&value) {
+                Ok(bbox) => Some(bbox),
+                Err(reason) => {
+                    params.fail("bbox", reason);
+                    None
+                }
+            });
 
-        let focus = params.get("focus").and_then(|value| match parse_focus(&value) {
-            Ok(focus) => Some(focus),
-            Err(reason) => {
-                params.fail("focus", reason);
-                None
-            }
-        });
+        let focus = params
+            .get("focus")
+            .and_then(|value| match parse_focus(&value) {
+                Ok(focus) => Some(focus),
+                Err(reason) => {
+                    params.fail("focus", reason);
+                    None
+                }
+            });
 
-        let viewport = params.get("viewport").and_then(|value| match parse_bbox(&value) {
-            Ok(viewport) => Some(viewport),
-            Err(reason) => {
-                params.fail("viewport", reason);
-                None
-            }
-        });
+        let viewport = params
+            .get("viewport")
+            .and_then(|value| match parse_bbox(&value) {
+                Ok(viewport) => Some(viewport),
+                Err(reason) => {
+                    params.fail("viewport", reason);
+                    None
+                }
+            });
 
-        let location = params.get("location").and_then(|value| match parse_focus(&value) {
-            Ok(location) => Some(location),
-            Err(reason) => {
-                params.fail("location", reason);
-                None
-            }
-        });
+        let location = params
+            .get("location")
+            .and_then(|value| match parse_focus(&value) {
+                Ok(location) => Some(location),
+                Err(reason) => {
+                    params.fail("location", reason);
+                    None
+                }
+            });
 
         let within = params.get("within").and_then(|value| {
-            let id = value.strip_prefix("wof:").and_then(|id| id.parse::<u64>().ok());
+            let id = value
+                .strip_prefix("wof:")
+                .and_then(|id| id.parse::<u64>().ok());
             if id.is_none() {
                 params.fail("within", "must be wof:<id>");
             }
@@ -194,7 +214,9 @@ impl SearchParams {
                 match Kind::parse(part) {
                     Some(kind) if !kinds.contains(&kind) => kinds.push(kind),
                     Some(_) => params.fail("kind", "lists a kind more than once"),
-                    None => params.fail("kind", "must list poi, address, admin, street or postcode"),
+                    None => {
+                        params.fail("kind", "must list poi, address, admin, street or postcode")
+                    }
                 }
             }
         }
@@ -203,7 +225,9 @@ impl SearchParams {
         if let Some(value) = params.get("tags") {
             for tag in value.split(',') {
                 match tag.split_once('=') {
-                    Some((k, v)) if !k.is_empty() && !v.is_empty() && !v.contains('=') => tags.push(tag.to_string()),
+                    Some((k, v)) if !k.is_empty() && !v.is_empty() && !v.contains('=') => {
+                        tags.push(tag.to_string())
+                    }
                     _ => params.fail("tags", "must list key=value tags"),
                 }
             }
@@ -223,7 +247,21 @@ impl SearchParams {
         let geometry = params.geometry();
 
         params.finish()?;
-        Ok(Self { q, lang, prefix, typos, bbox, within, kinds, tags, limit, geometry, focus, viewport, location })
+        Ok(Self {
+            q,
+            lang,
+            prefix,
+            typos,
+            bbox,
+            within,
+            kinds,
+            tags,
+            limit,
+            geometry,
+            focus,
+            viewport,
+            location,
+        })
     }
 }
 
@@ -259,7 +297,8 @@ impl PlaceParams {
         let geometry = params.geometry();
         params.finish()?;
         // Reported above if missing.
-        let id = id.ok_or_else(|| Problem::invalid_params(vec![("id".into(), "required".into())]))?;
+        let id =
+            id.ok_or_else(|| Problem::invalid_params(vec![("id".into(), "required".into())]))?;
         Ok(Self { id, lang, geometry })
     }
 }
@@ -267,7 +306,11 @@ impl PlaceParams {
 fn parse_focus(value: &str) -> Result<[f64; 2], &'static str> {
     let numbers: Vec<f64> = value
         .split(',')
-        .map(|n| n.trim().parse::<f64>().map_err(|_| "must be two numbers: lon,lat"))
+        .map(|n| {
+            n.trim()
+                .parse::<f64>()
+                .map_err(|_| "must be two numbers: lon,lat")
+        })
         .collect::<Result<_, _>>()?;
     let [lon, lat] = numbers[..] else {
         return Err("must be two numbers: lon,lat");
@@ -313,7 +356,10 @@ pub async fn search(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>)
         Err(problem) => return problem.into_response(),
     };
     let state = state.clone();
-    let result = tokio::task::spawn_blocking(move || run_search(&params, &state)).await.map_err(anyhow::Error::from).and_then(|result| result);
+    let result = tokio::task::spawn_blocking(move || run_search(&params, &state))
+        .await
+        .map_err(anyhow::Error::from)
+        .and_then(|result| result);
     match result {
         Ok(body) => Json(body).into_response(),
         Err(e) => Problem::internal(&e).into_response(),
@@ -321,7 +367,10 @@ pub async fn search(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>)
 }
 
 fn run_search(params: &SearchParams, state: &AppState) -> anyhow::Result<Value> {
-    let model = params.lang.as_deref().and_then(|lang| state.categories.get(lang));
+    let model = params
+        .lang
+        .as_deref()
+        .and_then(|lang| state.categories.get(lang));
     let request = SearchRequest {
         // A space at the end says the last word is finished.
         text: params.q.trim_start(),
@@ -348,7 +397,11 @@ fn search_response(
     model: Option<&airmail::categories::CategoryModel>,
 ) -> Value {
     let lang = params.lang.as_deref();
-    let kinds = if params.kinds.is_empty() { Kind::ALL.to_vec() } else { params.kinds.clone() };
+    let kinds = if params.kinds.is_empty() {
+        Kind::ALL.to_vec()
+    } else {
+        params.kinds.clone()
+    };
     let query = json!({
         "text": params.q,
         "lang": params.lang,
@@ -365,8 +418,11 @@ fn search_response(
         "category_language": model.map(|m| m.language()),
         "categories": results.categories.as_ref().map(categories_json),
     });
-    let results: Vec<Value> =
-        results.hits.iter().map(|hit| result_json(hit, &results.admins, lang, params.geometry)).collect();
+    let results: Vec<Value> = results
+        .hits
+        .iter()
+        .map(|hit| result_json(hit, &results.admins, lang, params.geometry))
+        .collect();
     json!({ "query": query, "results": results })
 }
 
@@ -393,24 +449,47 @@ pub async fn place(RawQuery(raw): RawQuery, State(state): State<Arc<AppState>>) 
 /// the OSM element and the last version of it with this identity, and the
 /// replication checkpoint (`as_of`) that's as of.
 fn not_found_place(id: &PlaceId, status: Option<&PoiStatus>) -> Problem {
-    let mut problem = Problem::new(StatusCode::NOT_FOUND, "Not Found", Some(format!("There's no place {id}.")));
-    let (PlaceId::Poi(poi_id), Some(status)) = (id, status) else { return problem };
+    let mut problem = Problem::new(
+        StatusCode::NOT_FOUND,
+        "Not Found",
+        Some(format!("There's no place {id}.")),
+    );
+    let (PlaceId::Poi(poi_id), Some(status)) = (id, status) else {
+        return problem;
+    };
     let (found, as_of) = status.lookup(*poi_id);
     let ext = &mut problem.extensions;
-    ext.insert("as_of".into(), json!({ "sequence": as_of.sequence, "timestamp": rfc3339(as_of.timestamp) }));
+    ext.insert(
+        "as_of".into(),
+        json!({ "sequence": as_of.sequence, "timestamp": rfc3339(as_of.timestamp) }),
+    );
     match found {
         Status::Unknown => {
             ext.insert("state".into(), json!("unknown"));
-            problem.detail = Some(format!("No place had the ID {id} as of OpenStreetMap replication sequence {}.", as_of.sequence));
+            problem.detail = Some(format!(
+                "No place had the ID {id} as of OpenStreetMap replication sequence {}.",
+                as_of.sequence
+            ));
         }
-        Status::Known { state, osm_type, osm_id, version } => {
+        Status::Known {
+            state,
+            osm_type,
+            osm_id,
+            version,
+        } => {
             ext.insert("state".into(), json!(state.as_str()));
             ext.insert("version".into(), json!(version));
             ext.insert("osm".into(), json!({ "type": osm_type, "id": osm_id }));
             problem.detail = Some(match state {
-                crate::poi_status::State::Active => format!("{id} isn't in this index, though it's a place in OpenStreetMap."),
-                crate::poi_status::State::Inactive => format!("{id} was deleted from OpenStreetMap or isn't a place anymore."),
-                crate::poi_status::State::Replaced => format!("{id}'s OpenStreetMap element is another place now."),
+                crate::poi_status::State::Active => {
+                    format!("{id} isn't in this index, though it's a place in OpenStreetMap.")
+                }
+                crate::poi_status::State::Inactive => {
+                    format!("{id} was deleted from OpenStreetMap or isn't a place anymore.")
+                }
+                crate::poi_status::State::Replaced => {
+                    format!("{id}'s OpenStreetMap element is another place now.")
+                }
             });
         }
     }
@@ -419,7 +498,10 @@ fn not_found_place(id: &PlaceId, status: Option<&PoiStatus>) -> Problem {
 
 fn categories_json(categories: &QueryCategories) -> Value {
     let scored = |values: &[(String, f32)]| -> Vec<Value> {
-        values.iter().map(|(value, p)| json!({ "value": value, "confidence": p.clamp(0.0, 1.0) })).collect()
+        values
+            .iter()
+            .map(|(value, p)| json!({ "value": value, "confidence": p.clamp(0.0, 1.0) }))
+            .collect()
     };
     json!({
         "categories": scored(&categories.categories),
@@ -443,7 +525,12 @@ fn ring(line: &geo::LineString<f64>) -> Value {
 }
 
 fn polygon(polygon: &geo::Polygon<f64>) -> Value {
-    Value::Array(std::iter::once(polygon.exterior()).chain(polygon.interiors()).map(ring).collect())
+    Value::Array(
+        std::iter::once(polygon.exterior())
+            .chain(polygon.interiors())
+            .map(ring)
+            .collect(),
+    )
 }
 
 /// A geometry as GeoJSON. Stored geometries are only these kinds.
@@ -459,7 +546,8 @@ fn geometry_json(geometry: &Geometry<f64>) -> Value {
             json!({ "type": "MultiPolygon", "coordinates": m.0.iter().map(polygon).collect::<Vec<_>>() })
         }
         other => geometry_json(&Geometry::Point(
-            airmail::geometry::representative_point(other).unwrap_or_else(|| geo::Point::new(0.0, 0.0)),
+            airmail::geometry::representative_point(other)
+                .unwrap_or_else(|| geo::Point::new(0.0, 0.0)),
         )),
     }
 }
@@ -467,23 +555,48 @@ fn geometry_json(geometry: &Geometry<f64>) -> Value {
 /// Name keys to show when a POI has no `name`, most preferred first.
 const FALLBACK_NAME_KEYS: [&str; 4] = ["official_name", "alt_name", "short_name", "loc_name"];
 
-fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&str>, mode: GeometryMode) -> Value {
+fn result_json(
+    hit: &SearchHit,
+    admins: &HashMap<u64, WofPlace>,
+    lang: Option<&str>,
+    mode: GeometryMode,
+) -> Value {
     let name = match hit.kind {
         Kind::Admin => hit.wof.as_ref().map(|w| w.display_name(lang).to_string()),
         Kind::Postcode => hit.tag("postal_code").map(str::to_string),
         Kind::Poi | Kind::Street => osm_display_name(&hit.tags, lang)
             .or_else(|| FALLBACK_NAME_KEYS.iter().find_map(|key| hit.tag(key)))
-            .or_else(|| hit.tags.iter().find(|(k, _)| k.contains("name")).map(|(_, v)| v.as_str()))
+            .or_else(|| {
+                hit.tags
+                    .iter()
+                    .find(|(k, _)| k.contains("name"))
+                    .map(|(_, v)| v.as_str())
+            })
             .map(str::to_string),
         Kind::Address => None,
     };
-    let address_parts = [("housenumber", "addr:housenumber"), ("street", "addr:street"), ("unit", "addr:unit"), ("postcode", "addr:postcode")];
+    let address_parts = [
+        ("housenumber", "addr:housenumber"),
+        ("street", "addr:street"),
+        ("unit", "addr:unit"),
+        ("postcode", "addr:postcode"),
+    ];
     let address = if address_parts.iter().any(|(_, key)| hit.tag(key).is_some()) {
-        Value::Object(address_parts.iter().map(|(field, key)| (field.to_string(), json!(hit.tag(key)))).collect())
+        Value::Object(
+            address_parts
+                .iter()
+                .map(|(field, key)| (field.to_string(), json!(hit.tag(key))))
+                .collect(),
+        )
     } else {
         Value::Null
     };
-    let containing = one_per_placetype(hit.admin_ids.iter().filter_map(|id| admins.get(id)).collect());
+    let containing = one_per_placetype(
+        hit.admin_ids
+            .iter()
+            .filter_map(|id| admins.get(id))
+            .collect(),
+    );
     // Its own if it's an administrative area, else the most specific
     // containing area's, so places in Puerto Rico are in PR rather than US.
     let country_code = hit
@@ -497,7 +610,9 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
         format!("wof:{}", wof.id)
     } else if let Some(osm) = &hit.osm {
         format!("osm:{}/{}", osm.osm_type.as_str(), osm.id)
-    } else if let (Kind::Postcode, Some(country), Some(code)) = (hit.kind, &country_code, hit.tag("postal_code")) {
+    } else if let (Kind::Postcode, Some(country), Some(code)) =
+        (hit.kind, &country_code, hit.tag("postal_code"))
+    {
         PlaceId::Postcode(postcode_key(country, code)).to_string()
     } else {
         String::new()
@@ -517,14 +632,23 @@ fn result_json(hit: &SearchHit, admins: &HashMap<u64, WofPlace>, lang: Option<&s
     let (geometry, bbox) = match mode {
         GeometryMode::Shape => (
             geometry_json(&hit.geometry),
-            airmail::geometry::bbox(&hit.geometry).map(|b| b.map(round)).unwrap_or([0.0; 4]),
+            airmail::geometry::bbox(&hit.geometry)
+                .map(|b| b.map(round))
+                .unwrap_or([0.0; 4]),
         ),
         GeometryMode::Point => {
             let (x, y) = (round(hit.center.x()), round(hit.center.y()));
-            (json!({ "type": "Point", "coordinates": [x, y] }), [x, y, x, y])
+            (
+                json!({ "type": "Point", "coordinates": [x, y] }),
+                [x, y, x, y],
+            )
         }
     };
-    let tags: serde_json::Map<String, Value> = hit.tags.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
+    let tags: serde_json::Map<String, Value> = hit
+        .tags
+        .iter()
+        .map(|(k, v)| (k.clone(), json!(v)))
+        .collect();
     json!({
         "id": id,
         "kind": hit.kind,
@@ -605,14 +729,25 @@ mod test {
 
     #[test]
     fn reports_every_invalid_parameter() {
-        let problem = SearchParams::parse("q=&limit=0&bbox=1,2,3&within=4&prefix=yes&kind=place").unwrap_err();
-        let names: Vec<&str> = problem.invalid_params.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, vec!["q", "prefix", "bbox", "within", "kind", "limit"]);
+        let problem = SearchParams::parse("q=&limit=0&bbox=1,2,3&within=4&prefix=yes&kind=place")
+            .unwrap_err();
+        let names: Vec<&str> = problem
+            .invalid_params
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["q", "prefix", "bbox", "within", "kind", "limit"]
+        );
     }
 
     #[test]
     fn parses_focus() {
-        assert_eq!(SearchParams::parse("q=x&focus=8.54,47.37").unwrap().focus, Some([8.54, 47.37]));
+        assert_eq!(
+            SearchParams::parse("q=x&focus=8.54,47.37").unwrap().focus,
+            Some([8.54, 47.37])
+        );
         assert_eq!(SearchParams::parse("q=x").unwrap().focus, None);
         for bad in ["8.54", "8.54,47.37,1", "181,0", "0,-91", "a,b", "NaN,0", ""] {
             let problem = SearchParams::parse(&format!("q=x&focus={bad}")).unwrap_err();
@@ -626,7 +761,11 @@ mod test {
         assert_eq!(params.id, PlaceId::Osm(airmail::poi::OsmType::Way, 12));
         assert_eq!(params.geometry, GeometryMode::Point);
         let problem = PlaceParams::parse("lang=1").unwrap_err();
-        let names: Vec<&str> = problem.invalid_params.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<&str> = problem
+            .invalid_params
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(names, vec!["id", "lang"]);
         assert!(PlaceParams::parse("id=poi:abc").is_err());
     }

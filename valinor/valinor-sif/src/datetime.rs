@@ -8,6 +8,7 @@
 //!
 //! Time zone rules come from the IANA time zone database via `jiff`
 //! (the system's copy where there is one, as on Linux and Android).
+//! The bundled database supplies legacy names omitted by some system databases.
 //! Mainline reads the same database with Howard Hinnant's `date` library,
 //! so the two agree wherever their database versions do.
 
@@ -17,7 +18,7 @@ use std::sync::OnceLock;
 
 use jiff::Timestamp;
 use jiff::civil::Weekday;
-use jiff::tz::TimeZone;
+use jiff::tz::{self, TimeZone, TimeZoneDatabase};
 use valhalla_graphtile::graph_tile::{DayType, RestrictionDateTime, TimeDomain};
 
 use zones::{DENSE_ZONE_NAMES, EXTRA_ZONE_NAMES};
@@ -56,8 +57,17 @@ pub fn time_zone(index: u32) -> Option<&'static TimeZone> {
     static ZONES: [OnceLock<Option<TimeZone>>; ZONE_INDEX_LIMIT] =
         [const { OnceLock::new() }; ZONE_INDEX_LIMIT];
     let slot = ZONES.get(usize::try_from(index).ok()?)?;
-    slot.get_or_init(|| time_zone_name(index).and_then(|name| TimeZone::get(name).ok()))
+    slot.get_or_init(|| time_zone_name(index).and_then(|name| lookup_time_zone(tz::db(), name)))
         .as_ref()
+}
+
+fn lookup_time_zone(database: &TimeZoneDatabase, name: &str) -> Option<TimeZone> {
+    // Prefer current system rules, but keep the names used by existing Valhalla tiles
+    // resolvable even on distributions that omit legacy zones.
+    database
+        .get(name)
+        .or_else(|_| TimeZoneDatabase::bundled().get(name))
+        .ok()
 }
 
 /// A date and time range that a restriction applies in,
@@ -538,7 +548,7 @@ mod tests {
         );
         assert!(time_zone(0).is_none());
         assert!(time_zone(500).is_none());
-        // Every zone mainline names is in the database, apart from ones newer than it.
+        // Every zone mainline names must resolve using the system or bundled database.
         let missing: Vec<_> = (1..ZONE_INDEX_LIMIT)
             .filter_map(|i| {
                 let i = u32::try_from(i).ok()?;
@@ -546,7 +556,18 @@ mod tests {
                 time_zone(i).is_none().then_some(name)
             })
             .collect();
-        assert!(missing.len() <= 1, "missing zones: {missing:?}");
+        assert!(missing.is_empty(), "missing zones: {missing:?}");
+    }
+
+    #[test]
+    fn zones_resolve_without_system_data() {
+        let database = TimeZoneDatabase::none();
+        let missing: Vec<_> = (1..ZONE_INDEX_LIMIT)
+            .filter_map(|i| time_zone_name(i as u32))
+            .filter(|name| lookup_time_zone(&database, name).is_none())
+            .collect();
+        assert!(missing.is_empty(), "missing bundled zones: {missing:?}");
+        assert!(lookup_time_zone(&database, "Invalid/Zone").is_none());
     }
 
     #[test]

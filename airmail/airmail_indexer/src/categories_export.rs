@@ -118,7 +118,10 @@ impl CategoriesExportSink {
 impl PoiSink for CategoriesExportSink {
     type Prepared = Option<TrainingPoi>;
 
-    fn preparer(&self) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static {
+    fn preparer(
+        &self,
+    ) -> impl Fn(ToIndexPoi, &[String]) -> Result<Self::Prepared> + Clone + Send + Sync + 'static
+    {
         |poi, languages| Ok(TrainingPoi::new(&poi.tags, languages))
     }
 

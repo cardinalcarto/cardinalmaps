@@ -49,7 +49,10 @@ impl Row {
         match self.weights.iter_mut().find(|(c, _)| *c == column) {
             Some((_, weight)) => weight.add(delta, clock),
             None => {
-                let mut weight = Averaged { last: clock, ..Averaged::default() };
+                let mut weight = Averaged {
+                    last: clock,
+                    ..Averaged::default()
+                };
                 weight.add(delta, clock);
                 self.weights.push((column, weight));
             }
@@ -142,7 +145,9 @@ impl Table {
 
     /// The row of a feature updated at least `min_updates` times.
     fn row(&self, feature: u32, min_updates: u32) -> Option<&Row> {
-        self.rows.get(feature as usize).filter(|row| row.updates >= min_updates)
+        self.rows
+            .get(feature as usize)
+            .filter(|row| row.updates >= min_updates)
     }
 }
 
@@ -264,8 +269,12 @@ impl Trainer {
                 .enumerate()
                 .filter(|(_, row)| row.updates >= min_updates)
                 .map(|(id, row)| {
-                    let mut weights: Vec<(u32, f32)> =
-                        row.weights.iter().map(|(c, w)| (*c, w.average(clock) as f32)).filter(|(_, w)| *w != 0.0).collect();
+                    let mut weights: Vec<(u32, f32)> = row
+                        .weights
+                        .iter()
+                        .map(|(c, w)| (*c, w.average(clock) as f32))
+                        .filter(|(_, w)| *w != 0.0)
+                        .collect();
                     weights.sort_by_key(|(c, _)| *c);
                     (interner.names()[id].clone(), weights)
                 })
@@ -274,7 +283,12 @@ impl Trainer {
             kept
         };
         let trans = self.trans.iter().map(|w| w.average(clock) as f32).collect();
-        Model::from_rows(self.labels, rows(self.state, self.min_updates), rows(self.state_trans, self.min_updates), trans)
+        Model::from_rows(
+            self.labels,
+            rows(self.state, self.min_updates),
+            rows(self.state_trans, self.min_updates),
+            trans,
+        )
     }
 }
 
@@ -300,7 +314,10 @@ mod test {
                 _ => *labels.last().unwrap_or(&0),
             });
         }
-        let tokens = words.iter().map(|w| token(&[&format!("word|{w}"), "bias"], &[&format!("word|{w}")])).collect();
+        let tokens = words
+            .iter()
+            .map(|w| token(&[&format!("word|{w}"), "bias"], &[&format!("word|{w}")]))
+            .collect();
         (tokens, labels)
     }
 
@@ -318,8 +335,10 @@ mod test {
         .map(|w| example(w))
         .collect();
         let mut interner = Interner::default();
-        let encoded: Vec<(Vec<Encoded>, Vec<Label>)> =
-            data.iter().map(|(t, l)| (t.iter().map(|t| interner.encode(t)).collect(), l.clone())).collect();
+        let encoded: Vec<(Vec<Encoded>, Vec<Label>)> = data
+            .iter()
+            .map(|(t, l)| (t.iter().map(|t| interner.encode(t)).collect(), l.clone()))
+            .collect();
         let mut trainer = Trainer::new(vec!["A".into(), "B".into()], 1);
         for _ in 0..20 {
             for (tokens, labels) in &encoded {
@@ -359,7 +378,16 @@ mod test {
         assert_eq!((b.id("y"), b.id("z")), (0, 1));
         let map = a.absorb(&b);
         assert_eq!(map, vec![1, 2]);
-        assert_eq!(Encoded { state: vec![0, 1], transition: vec![1] }.remap(&map), Encoded { state: vec![1, 2], transition: vec![2] });
+        assert_eq!(
+            Encoded {
+                state: vec![0, 1],
+                transition: vec![1]
+            }
+            .remap(&map),
+            Encoded {
+                state: vec![1, 2],
+                transition: vec![2]
+            }
+        );
     }
 }
-

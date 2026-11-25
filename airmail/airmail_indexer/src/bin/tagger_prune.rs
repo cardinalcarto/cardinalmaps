@@ -102,18 +102,38 @@ fn mb(n: usize) -> f64 {
 }
 
 fn read(path: &Path) -> Result<(Model, Vec<(String, u32)>)> {
-    Model::read(&mut BufReader::new(File::open(path).with_context(|| format!("opening {}", path.display()))?)).with_context(|| format!("reading {}", path.display()))
+    Model::read(&mut BufReader::new(
+        File::open(path).with_context(|| format!("opening {}", path.display()))?,
+    ))
+    .with_context(|| format!("reading {}", path.display()))
 }
 
 fn stats(path: &Path) -> Result<()> {
     let (model, vocabulary) = read(path)?;
     let file = std::fs::metadata(path)?.len() as usize;
-    println!("{}: {:.2} MB, {}", path.display(), mb(file), if model.is_packed() { "packed" } else { "plain" });
-    for ((name, (keys, columns, weights)), features) in ["state", "state-transition"].iter().zip(model.sizes()).zip([model.num_features().0, model.num_features().1]) {
-        println!("  {name}: {features} features; strings {:.2} MB, columns {:.2} MB, weights {:.2} MB", mb(keys), mb(columns), mb(weights));
+    println!(
+        "{}: {:.2} MB, {}",
+        path.display(),
+        mb(file),
+        if model.is_packed() { "packed" } else { "plain" }
+    );
+    for ((name, (keys, columns, weights)), features) in ["state", "state-transition"]
+        .iter()
+        .zip(model.sizes())
+        .zip([model.num_features().0, model.num_features().1])
+    {
+        println!(
+            "  {name}: {features} features; strings {:.2} MB, columns {:.2} MB, weights {:.2} MB",
+            mb(keys),
+            mb(columns),
+            mb(weights)
+        );
     }
     let (state, transition) = model.rows();
-    let rare = vocabulary.iter().filter(|(_, c)| *c <= airmail_tagger::features::RARE_WORD_COUNT).count();
+    let rare = vocabulary
+        .iter()
+        .filter(|(_, c)| *c <= airmail_tagger::features::RARE_WORD_COUNT)
+        .count();
     println!("  vocabulary: {} words ({rare} rare)", vocabulary.len());
     for (name, rows) in [("state", &state), ("state-transition", &transition)] {
         let mut by_kind: BTreeMap<String, Vec<&Row>> = BTreeMap::new();
@@ -122,14 +142,20 @@ fn stats(path: &Path) -> Result<()> {
         }
         let mut kinds: Vec<(String, Vec<&Row>)> = by_kind.into_iter().collect();
         kinds.sort_by_key(|(_, rows)| std::cmp::Reverse(rows.len()));
-        println!("  {name} features by kind: features, weights, FST of their own MB, median |w|, share of rows with max |w| < 0.5, < 2");
+        println!(
+            "  {name} features by kind: features, weights, FST of their own MB, median |w|, share of rows with max |w| < 0.5, < 2"
+        );
         for (kind, rows) in kinds {
-            let mut magnitudes: Vec<f32> = rows.iter().flat_map(|(_, w)| w.iter().map(|(_, v)| v.abs())).collect();
+            let mut magnitudes: Vec<f32> = rows
+                .iter()
+                .flat_map(|(_, w)| w.iter().map(|(_, v)| v.abs()))
+                .collect();
             magnitudes.sort_by(f32::total_cmp);
             let weights = magnitudes.len();
             let max = |row: &&Row| row.1.iter().fold(0f32, |m, (_, v)| m.max(v.abs()));
             #[allow(clippy::cast_precision_loss)]
-            let share = |t: f32| rows.iter().filter(|r| max(r) < t).count() as f64 / rows.len() as f64;
+            let share =
+                |t: f32| rows.iter().filter(|r| max(r) < t).count() as f64 / rows.len() as f64;
             println!(
                 "    {kind:<14} {:>9} {:>10} {:>7.2} {:>8.3} {:>6.3} {:>6.3}",
                 rows.len(),
@@ -169,14 +195,24 @@ type Usage = (HashMap<String, u64>, HashMap<String, u64>);
 
 fn read_usage(path: &Path) -> Result<Usage> {
     let (mut state, mut transition) = (HashMap::new(), HashMap::new());
-    for line in BufReader::new(File::open(path).with_context(|| format!("opening {}", path.display()))?).lines() {
+    for line in
+        BufReader::new(File::open(path).with_context(|| format!("opening {}", path.display()))?)
+            .lines()
+    {
         let line = line?;
         if line.starts_with('#') {
             continue;
         }
         let mut parts = line.splitn(3, '\t');
-        let (Some(kind), Some(count), Some(feature)) = (parts.next(), parts.next(), parts.next()) else { bail!("bad usage line {line:?}") };
-        let map = if kind == "s" { &mut state } else { &mut transition };
+        let (Some(kind), Some(count), Some(feature)) = (parts.next(), parts.next(), parts.next())
+        else {
+            bail!("bad usage line {line:?}")
+        };
+        let map = if kind == "s" {
+            &mut state
+        } else {
+            &mut transition
+        };
         map.insert(feature.to_string(), count.parse()?);
     }
     Ok((state, transition))
@@ -195,7 +231,10 @@ fn kept(rows: Vec<Row>, settings: &Settings, usage: Option<&HashMap<String, u64>
             }
             let weights: Vec<(u32, f32)> = weights
                 .into_iter()
-                .filter(|(_, w)| w.abs() >= settings.min_weight && count.is_none_or(|c| c * w.abs() >= settings.min_impact))
+                .filter(|(_, w)| {
+                    w.abs() >= settings.min_weight
+                        && count.is_none_or(|c| c * w.abs() >= settings.min_impact)
+                })
                 .collect();
             (!weights.is_empty()).then_some((feature, weights))
         })
@@ -216,13 +255,18 @@ fn prune(path: &Path, out: &Path, settings: &Settings, usage: Option<&Usage>) ->
     let (state, transition) = model.rows();
     let state = kept(state, settings, usage.map(|u| &u.0));
     let transition = kept(transition, settings, usage.map(|u| &u.1));
-    let pruned = model.with_rows(state, transition).packed(settings.bits, settings.transition_bits);
+    let pruned = model
+        .with_rows(state, transition)
+        .packed(settings.bits, settings.transition_bits);
     let vocabulary: Vec<(String, u32)> = if settings.keep_vocabulary {
         vocabulary
     } else {
         let (state, transition) = pruned.rows();
         let (a, b) = (named(&state), named(&transition));
-        vocabulary.into_iter().filter(|(w, _)| a.contains(w.as_str()) || b.contains(w.as_str())).collect()
+        vocabulary
+            .into_iter()
+            .filter(|(w, _)| a.contains(w.as_str()) || b.contains(w.as_str()))
+            .collect()
     };
     let mut bytes = Vec::new();
     pruned.write(&mut bytes, &vocabulary)?;
@@ -231,7 +275,8 @@ fn prune(path: &Path, out: &Path, settings: &Settings, usage: Option<&Usage>) ->
     if again.num_features() != pruned.num_features() {
         bail!("the pruned model reads back differently");
     }
-    BufWriter::new(File::create(out).with_context(|| format!("writing {}", out.display()))?).write_all(&bytes)?;
+    BufWriter::new(File::create(out).with_context(|| format!("writing {}", out.display()))?)
+        .write_all(&bytes)?;
     let before = std::fs::metadata(path)?.len() as usize;
     println!(
         "{}: {:.1} MB -> {:.1} MB ({:?} features, {} weights, {} vocabulary words)",
@@ -261,10 +306,22 @@ fn compare(a: &Path, b: &Path) -> Result<()> {
         }
         abs.sort_by(f32::total_cmp);
         rel.sort_by(f32::total_cmp);
-        let q = |v: &[f32], p: f64| v.get(((v.len().max(1) - 1) as f64 * p) as usize).copied().unwrap_or(0.0);
+        let q = |v: &[f32], p: f64| {
+            v.get(((v.len().max(1) - 1) as f64 * p) as usize)
+                .copied()
+                .unwrap_or(0.0)
+        };
         println!(
             "{name}: {} weights; |error| at 50/90/99/max: {:.4} {:.4} {:.4} {:.4}; relative {:.4} {:.4} {:.4} {:.4}",
-            abs.len(), q(&abs, 0.5), q(&abs, 0.9), q(&abs, 0.99), q(&abs, 1.0), q(&rel, 0.5), q(&rel, 0.9), q(&rel, 0.99), q(&rel, 1.0)
+            abs.len(),
+            q(&abs, 0.5),
+            q(&abs, 0.9),
+            q(&abs, 0.99),
+            q(&abs, 1.0),
+            q(&rel, 0.5),
+            q(&rel, 0.9),
+            q(&rel, 0.99),
+            q(&rel, 1.0)
         );
     }
     Ok(())
@@ -274,13 +331,33 @@ fn main() -> Result<()> {
     match Args::parse().command {
         Command::Stats { model } => stats(&model),
         Command::Compare { a, b } => compare(&a, &b),
-        Command::Prune { model, out, min_weight, usage, min_count, min_impact, bits, transition_bits, keep_vocabulary } => {
-            let (Some(bits), Some(transition_bits)) = (Bits::of(bits), Bits::of(transition_bits)) else { bail!("bits are 16 or 8") };
+        Command::Prune {
+            model,
+            out,
+            min_weight,
+            usage,
+            min_count,
+            min_impact,
+            bits,
+            transition_bits,
+            keep_vocabulary,
+        } => {
+            let (Some(bits), Some(transition_bits)) = (Bits::of(bits), Bits::of(transition_bits))
+            else {
+                bail!("bits are 16 or 8")
+            };
             if usage.is_none() && (min_count > 0.0 || min_impact > 0.0) {
                 bail!("--min-count and --min-impact need --usage");
             }
             let usage = usage.map(|u| read_usage(&u)).transpose()?;
-            let settings = Settings { min_weight, min_count, min_impact, bits, transition_bits, keep_vocabulary };
+            let settings = Settings {
+                min_weight,
+                min_count,
+                min_impact,
+                bits,
+                transition_bits,
+                keep_vocabulary,
+            };
             prune(&model, &out, &settings, usage.as_ref())
         }
     }

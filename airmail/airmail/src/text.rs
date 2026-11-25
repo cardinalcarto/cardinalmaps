@@ -22,7 +22,11 @@ impl tantivy::tokenizer::Tokenizer for Tokenizer {
         } else {
             Words::Other(words(text).into_iter())
         };
-        WordStream { words, token: Token::default(), next: 0 }
+        WordStream {
+            words,
+            token: Token::default(),
+            next: 0,
+        }
     }
 }
 
@@ -56,7 +60,9 @@ impl TokenStream for WordStream<'_> {
         token.position_length = 1;
         token.text.clear();
         if word.is_ascii() {
-            token.text.extend(word.bytes().map(|b| char::from(b.to_ascii_lowercase())));
+            token
+                .text
+                .extend(word.bytes().map(|b| char::from(b.to_ascii_lowercase())));
         } else {
             token.text.push_str(&word.to_lowercase());
         }
@@ -115,7 +121,11 @@ mod test {
             while stream.advance() {
                 tokens.push(stream.token().clone());
             }
-            assert_eq!(format!("{tokens:?}"), format!("{:?}", listed(text)), "{text:?}");
+            assert_eq!(
+                format!("{tokens:?}"),
+                format!("{:?}", listed(text)),
+                "{text:?}"
+            );
         }
     }
 }

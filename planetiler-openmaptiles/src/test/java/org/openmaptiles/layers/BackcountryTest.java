@@ -41,9 +41,9 @@ class BackcountryTest extends AbstractLayerTest {
     "man_made,spring_box,spring,spring_box,10",
     "man_made,water_tap,water_tap,water_tap,10",
     "amenity,water_point,water_point,water_point,10",
-    "tourism,wilderness_hut,lodging,wilderness_hut,10",
-    "emergency,mountain_rescue,emergency,mountain_rescue,10",
-    "emergency,rescue_box,emergency,rescue_box,10",
+    "tourism,wilderness_hut,lodging,wilderness_hut,11",
+    "emergency,mountain_rescue,emergency,mountain_rescue,11",
+    "emergency,rescue_box,emergency,rescue_box,11",
     "highway,trailhead,trailhead,trailhead,11",
     "emergency,phone,emergency,phone,12",
     "emergency,access_point,emergency,access_point,12",
@@ -65,13 +65,13 @@ class BackcountryTest extends AbstractLayerTest {
   }
 
   @Test
-  void waterAndShelterAppearAtTheWidestZooms() {
+  void waterAndShelterAppearAtLowZooms() {
     assertEquals(10, minZoom(Map.of("amenity", "drinking_water")));
-    assertEquals(10, minZoom(Map.of("amenity", "shelter", "name", "Lake Shelter")));
-    assertEquals(10, minZoom(Map.of("amenity", "shelter")));
-    assertEquals(10, minZoom(Map.of("amenity", "shelter", "shelter_type", "lean_to")));
-    assertEquals(10, minZoom(Map.of("amenity", "shelter", "shelter_type", "basic_hut")));
-    assertEquals(10, minZoom(Map.of("tourism", "alpine_hut")));
+    assertEquals(11, minZoom(Map.of("amenity", "shelter", "name", "Lake Shelter")));
+    assertEquals(11, minZoom(Map.of("amenity", "shelter")));
+    assertEquals(11, minZoom(Map.of("amenity", "shelter", "shelter_type", "lean_to")));
+    assertEquals(11, minZoom(Map.of("amenity", "shelter", "shelter_type", "basic_hut")));
+    assertEquals(11, minZoom(Map.of("tourism", "alpine_hut")));
   }
 
   @Test

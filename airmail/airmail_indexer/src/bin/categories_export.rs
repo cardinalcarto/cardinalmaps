@@ -59,8 +59,13 @@ async fn main() -> Result<()> {
     let (poi_sender, poi_receiver) = crossbeam::channel::bounded(16384);
     let indexer_cache = importer.indexer_cache();
     let parse = spawn_blocking(move || {
-        OsmPbf::new(&args.pbf, Vec::<ParseOsmTypes>::new(), poi_sender, indexer_cache)
-            .parse_osm()
+        OsmPbf::new(
+            &args.pbf,
+            Vec::<ParseOsmTypes>::new(),
+            poi_sender,
+            indexer_cache,
+        )
+        .parse_osm()
         .inspect_err(|e| warn!("Error parsing OSM: {e}"))
     });
     let import = spawn(async move { importer.run_import(poi_receiver, sink).await });

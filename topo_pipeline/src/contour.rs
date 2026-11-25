@@ -65,7 +65,10 @@ const METERS_PER_UNIT: f64 = 111_319.49 / 1e7;
 /// Traces every level of `grid` and returns the lines inside `keep`.
 pub fn contours(grid: &Grid, keep: Keep, params: &Params) -> Vec<Line> {
     let mut lines = Vec::new();
-    for (unit, interval) in [(Unit::Meters, params.interval_m), (Unit::Feet, params.interval_ft)] {
+    for (unit, interval) in [
+        (Unit::Meters, params.interval_m),
+        (Unit::Feet, params.interval_ft),
+    ] {
         let mut segments = segments(grid, unit, interval);
         segments.sort_unstable_by_key(|s| (s.elevation, s.from));
         for level in segments.chunk_by(|a, b| a.elevation == b.elevation) {
@@ -132,9 +135,19 @@ fn segments(grid: &Grid, unit: Unit, interval: u32) -> Vec<Segment> {
                 };
                 let elevation = k as i32 * interval as i32;
                 let cell = (row * w + col) as u32;
-                out.push(Segment { elevation, from: a.0, to: a.1, cell });
+                out.push(Segment {
+                    elevation,
+                    from: a.0,
+                    to: a.1,
+                    cell,
+                });
                 if let Some(b) = b {
-                    out.push(Segment { elevation, from: b.0, to: b.1, cell });
+                    out.push(Segment {
+                        elevation,
+                        from: b.0,
+                        to: b.1,
+                        cell,
+                    });
                 }
             }
         }
@@ -154,15 +167,25 @@ fn crossing(grid: &Grid, edge: u64, level: f64) -> (i32, i32) {
     let (index, dir) = ((edge / 2) as usize, edge & 1);
     let (col, row) = (index % w, index / w);
     let a = f64::from(grid.at(col, row));
-    let b = f64::from(if dir == 0 { grid.at(col + 1, row) } else { grid.at(col, row + 1) });
+    let b = f64::from(if dir == 0 {
+        grid.at(col + 1, row)
+    } else {
+        grid.at(col, row + 1)
+    });
     let t = (level - a) / (b - a);
-    let (mut x, mut y) = ((grid.rect.x0 + col as i64) as f64, (grid.rect.y0 + row as i64) as f64);
+    let (mut x, mut y) = (
+        (grid.rect.x0 + col as i64) as f64,
+        (grid.rect.y0 + row as i64) as f64,
+    );
     if dir == 0 {
         x += t;
     } else {
         y += t;
     }
-    ((Grid::lon(x, grid.refine) * 1e7).round() as i32, (Grid::lat(y, grid.refine) * 1e7).round() as i32)
+    (
+        (Grid::lon(x, grid.refine) * 1e7).round() as i32,
+        (Grid::lat(y, grid.refine) * 1e7).round() as i32,
+    )
 }
 
 fn trace_level(
@@ -201,7 +224,9 @@ fn trace_level(
         if incoming.binary_search(&segments[start].from).is_err() {
             let (edges, cells) = walk(start, &mut visited);
             let points = edges.iter().map(|&e| crossing(grid, e, level)).collect();
-            emit(grid, unit, elevation, points, cells, false, keep, params, out);
+            emit(
+                grid, unit, elevation, points, cells, false, keep, params, out,
+            );
         }
     }
     // What remains are loops.
@@ -210,7 +235,9 @@ fn trace_level(
             let (edges, cells) = walk(start, &mut visited);
             let points: Vec<_> = edges.iter().map(|&e| crossing(grid, e, level)).collect();
             if length_m(&points) >= params.min_loop_m {
-                emit(grid, unit, elevation, points, cells, true, keep, params, out);
+                emit(
+                    grid, unit, elevation, points, cells, true, keep, params, out,
+                );
             }
         }
     }
@@ -248,7 +275,12 @@ fn emit(
     let flags: Vec<bool> = cells.iter().map(|&c| kept(c)).collect();
     if closed && flags.iter().all(|&k| k) {
         if let Some(points) = finish(points, true, params) {
-            out.push(Line { unit, elevation, closed: true, points });
+            out.push(Line {
+                unit,
+                elevation,
+                closed: true,
+                points,
+            });
         }
         return;
     }
@@ -278,7 +310,12 @@ fn emit(
             i += 1;
         }
         if let Some(points) = finish(points[start..=i].to_vec(), false, params) {
-            out.push(Line { unit, elevation, closed: false, points });
+            out.push(Line {
+                unit,
+                elevation,
+                closed: false,
+                points,
+            });
         }
     }
 }
@@ -292,13 +329,18 @@ fn finish(mut points: Vec<(i32, i32)>, closed: bool, params: &Params) -> Option<
     if points.len() < enough {
         return None;
     }
-    Some(if params.round_corners { round_corners(&points, closed) } else { points })
+    Some(if params.round_corners {
+        round_corners(&points, closed)
+    } else {
+        points
+    })
 }
 
 /// One pass of Chaikin's corner cutting. An open line keeps its ends, so chunks still meet.
 pub fn round_corners(points: &[(i32, i32)], closed: bool) -> Vec<(i32, i32)> {
     let cut = |a: (i32, i32), b: (i32, i32), t: f64| {
-        let along = |a: i32, b: i32| (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as i32;
+        let along =
+            |a: i32, b: i32| (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as i32;
         (along(a.0, b.0), along(a.1, b.1))
     };
     let mut out = Vec::with_capacity(points.len() * 2);
@@ -380,5 +422,10 @@ pub fn simplify(points: &[(i32, i32)], closed: bool, tolerance_m: f64) -> Vec<(i
             stack.push((worst, b));
         }
     }
-    points.iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| *p).collect()
+    points
+        .iter()
+        .zip(keep)
+        .filter(|(_, k)| *k)
+        .map(|(p, _)| *p)
+        .collect()
 }
