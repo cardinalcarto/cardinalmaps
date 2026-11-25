@@ -29,7 +29,9 @@ impl Memo {
         if let Some(ancestor) = self.ancestors.lock().unwrap().get(&id) {
             return Ok(ancestor.clone());
         }
-        let properties = wof.properties(id, &["wof:population", "wof:population_rank"]).await?;
+        let properties = wof
+            .properties(id, &["wof:population", "wof:population_rank"])
+            .await?;
         let ancestor = Arc::new(WofRecord {
             id,
             placetype: wof.placetype(id).await?.unwrap_or_default(),
@@ -52,7 +54,10 @@ impl Memo {
             .map(|langs| langs.split(',').map(|l| l.trim().to_string()).collect())
             .unwrap_or_default();
         let languages = Arc::new(languages);
-        self.languages.lock().unwrap().insert(country, languages.clone());
+        self.languages
+            .lock()
+            .unwrap()
+            .insert(country, languages.clone());
         Ok(languages)
     }
 }
@@ -80,7 +85,10 @@ pub async fn load_wof(wof: &WhosOnFirst, writer: &mut AirmailIndexWriter) -> Res
                 writer.add_poi(SchemafiedPoi::from(admin), "wof")?;
                 count += 1;
                 if count % 100_000 == 0 {
-                    info!("{count} places indexed in {} seconds", start.elapsed().as_secs());
+                    info!(
+                        "{count} places indexed in {} seconds",
+                        start.elapsed().as_secs()
+                    );
                 }
             }
             (_, Ok(None)) => {}
@@ -93,14 +101,29 @@ pub async fn load_wof(wof: &WhosOnFirst, writer: &mut AirmailIndexWriter) -> Res
 
 /// A place as a document, or `None` if it has no name or no location (see
 /// `airmail::wof::admin_document`).
-async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Result<Option<ToIndexPoi>> {
+async fn admin(
+    wof: &WhosOnFirst,
+    memo: &Memo,
+    id: u64,
+    placetype: String,
+) -> Result<Option<ToIndexPoi>> {
     let names = wof.names(id).await?;
     if place(id, &placetype, &names, None, None).is_none() {
         return Ok(None);
     }
     let ancestors = wof.ancestors(id).await?;
     // SpatiaLite databases have `wof:country` as `alpha2`.
-    let properties = wof.properties(id, &["wof:population", "wof:population_rank", "alpha2", "wof:country"]).await?;
+    let properties = wof
+        .properties(
+            id,
+            &[
+                "wof:population",
+                "wof:population_rank",
+                "alpha2",
+                "wof:country",
+            ],
+        )
+        .await?;
     let mut geometries = wof.geometries(id).await?;
     let label = ["label_position", "reversegeo_position", "centroid"]
         .into_iter()
@@ -127,19 +150,31 @@ async fn admin(wof: &WhosOnFirst, memo: &Memo, id: u64, placetype: String) -> Re
         ancestors,
         population: population(&properties),
         population_rank: population_rank(&properties),
-        country: properties.get("alpha2").or_else(|| properties.get("wof:country")).cloned(),
+        country: properties
+            .get("alpha2")
+            .or_else(|| properties.get("wof:country"))
+            .cloned(),
         languages: Vec::new(),
         label,
         boundary,
     };
-    Ok(admin_document(&record, |ancestor| known.get(&ancestor).map(|a| &**a), &languages))
+    Ok(admin_document(
+        &record,
+        |ancestor| known.get(&ancestor).map(|a| &**a),
+        &languages,
+    ))
 }
 
 /// A place's `wof:population`, which Who's On First sometimes writes as a decimal.
 fn population(properties: &HashMap<String, String>) -> Option<u64> {
-    properties.get("wof:population").and_then(|p| p.parse::<f64>().ok()).map(|p| p as u64)
+    properties
+        .get("wof:population")
+        .and_then(|p| p.parse::<f64>().ok())
+        .map(|p| p as u64)
 }
 
 fn population_rank(properties: &HashMap<String, String>) -> Option<u32> {
-    properties.get("wof:population_rank").and_then(|r| r.parse().ok())
+    properties
+        .get("wof:population_rank")
+        .and_then(|r| r.parse().ok())
 }

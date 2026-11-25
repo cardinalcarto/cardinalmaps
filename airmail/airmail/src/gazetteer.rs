@@ -6,17 +6,17 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
-use airmail_tagger::features::{AreaMatch, Gazetteer, Query, Quality};
+use airmail_tagger::features::{AreaMatch, Gazetteer, Quality, Query};
 use geo::{Distance, Haversine, Point};
-use tantivy::collector::TopDocs;
 use levenshtein_automata::{DFA, LevenshteinAutomatonBuilder, SINK_STATE};
+use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, TermQuery};
 use tantivy::schema::IndexRecordOption;
 use tantivy::{Order, Searcher, Term};
 
 use crate::index::{
-    AirmailIndex, FIELD_ADMIN_IDS, FIELD_AREA_NAME, FIELD_CENTER, FIELD_IMPORTANCE, FIELD_KIND, FIELD_NAME, FIELD_NAME_EXACT, FIELD_STREET,
-    FIELD_WOF_ID, admin_field, area_key,
+    AirmailIndex, FIELD_ADMIN_IDS, FIELD_AREA_NAME, FIELD_CENTER, FIELD_IMPORTANCE, FIELD_KIND,
+    FIELD_NAME, FIELD_NAME_EXACT, FIELD_STREET, FIELD_WOF_ID, admin_field, area_key,
 };
 use crate::poi::AdminBand;
 
@@ -62,7 +62,9 @@ pub struct IndexGazetteer<'a> {
 /// The band of matches that are places' exact names rather than areas':
 /// `fred meyer` is many stores' name, `ballard fred meyer` none's.
 pub const NAME_BAND: &str = airmail_tagger::features::NAME_BAND;
-pub use airmail_tagger::features::{POSTCODE_ALONE, POSTCODE_BAND, POSTCODE_IN_AREA_BESIDE, POSTCODE_NOT_IN_AREA_BESIDE};
+pub use airmail_tagger::features::{
+    POSTCODE_ALONE, POSTCODE_BAND, POSTCODE_IN_AREA_BESIDE, POSTCODE_NOT_IN_AREA_BESIDE,
+};
 
 /// How many places have a name, as a match's importance, so that its
 /// buckets are 1, 2 to 9, 10 to 99 and 100 or more.
@@ -120,7 +122,11 @@ impl tantivy_fst::Automaton for NearMisses<'_> {
             NearMiss::Band if byte == b'/' => NearMiss::First(0),
             NearMiss::Band => NearMiss::Band,
             NearMiss::First(i) if byte == self.first[i] => {
-                if i + 1 == self.first.len() { NearMiss::Rest(self.rest.initial_state()) } else { NearMiss::First(i + 1) }
+                if i + 1 == self.first.len() {
+                    NearMiss::Rest(self.rest.initial_state())
+                } else {
+                    NearMiss::First(i + 1)
+                }
             }
             NearMiss::Rest(s) => NearMiss::Rest(self.rest.transition(s, byte)),
             NearMiss::First(_) | NearMiss::Dead => NearMiss::Dead,
@@ -132,8 +138,12 @@ impl tantivy_fst::Automaton for NearMisses<'_> {
 /// make, so made once.
 fn builder(distance: u8) -> &'static LevenshteinAutomatonBuilder {
     static BUILDERS: OnceLock<[LevenshteinAutomatonBuilder; 2]> = OnceLock::new();
-    &BUILDERS.get_or_init(|| [LevenshteinAutomatonBuilder::new(1, true), LevenshteinAutomatonBuilder::new(2, true)])
-        [usize::from(distance.clamp(1, 2) - 1)]
+    &BUILDERS.get_or_init(|| {
+        [
+            LevenshteinAutomatonBuilder::new(1, true),
+            LevenshteinAutomatonBuilder::new(2, true),
+        ]
+    })[usize::from(distance.clamp(1, 2) - 1)]
 }
 
 impl<'a> IndexGazetteer<'a> {
@@ -177,14 +187,21 @@ impl<'a> IndexGazetteer<'a> {
     /// The importance of the best-known area a query matches and the centers
     /// of the best-known few, if any match.
     fn best(&self, query: &dyn tantivy::query::Query) -> Option<(f32, Vec<Point<f64>>)> {
-        let collector = TopDocs::with_limit(CANDIDATES).order_by_fast_field::<f64>(FIELD_IMPORTANCE, Order::Desc);
+        let collector = TopDocs::with_limit(CANDIDATES)
+            .order_by_fast_field::<f64>(FIELD_IMPORTANCE, Order::Desc);
         let found = self.searcher.search(query, &collector).ok()?;
         let importance = found.first()?.0.unwrap_or(0.0) as f32;
         let centers = found
             .iter()
             .filter_map(|(_, address)| {
-                let column = self.searcher.segment_reader(address.segment_ord).fast_fields().u64(FIELD_CENTER).ok()?;
-                let center = s2::latlng::LatLng::from(s2::cellid::CellID(column.first(address.doc_id)?));
+                let column = self
+                    .searcher
+                    .segment_reader(address.segment_ord)
+                    .fast_fields()
+                    .u64(FIELD_CENTER)
+                    .ok()?;
+                let center =
+                    s2::latlng::LatLng::from(s2::cellid::CellID(column.first(address.doc_id)?));
                 Some(Point::new(center.lng.deg(), center.lat.deg()))
             })
             .collect();
@@ -208,11 +225,17 @@ impl<'a> IndexGazetteer<'a> {
         if let Some(known) = self.known_words.borrow().get(word) {
             return *known;
         }
-        let fields = std::iter::once(FIELD_NAME).chain(std::iter::once(FIELD_STREET)).chain(AdminBand::ALL.map(admin_field));
+        let fields = std::iter::once(FIELD_NAME)
+            .chain(std::iter::once(FIELD_STREET))
+            .chain(AdminBand::ALL.map(admin_field));
         let known = fields.into_iter().any(|field| {
-            self.searcher.doc_freq(&Term::from_field_text(self.index.field(field), word)).is_ok_and(|f| f > 0)
+            self.searcher
+                .doc_freq(&Term::from_field_text(self.index.field(field), word))
+                .is_ok_and(|f| f > 0)
         });
-        self.known_words.borrow_mut().insert(word.to_string(), known);
+        self.known_words
+            .borrow_mut()
+            .insert(word.to_string(), known);
         known
     }
 
@@ -224,8 +247,10 @@ impl<'a> IndexGazetteer<'a> {
             return found.clone();
         }
         let mut found = None;
-        let terms: Vec<Term> =
-            area_terms(self.index, band, name).into_iter().filter(|t| self.searcher.doc_freq(t).is_ok_and(|f| f > 0)).collect();
+        let terms: Vec<Term> = area_terms(self.index, band, name)
+            .into_iter()
+            .filter(|t| self.searcher.doc_freq(t).is_ok_and(|f| f > 0))
+            .collect();
         if !terms.is_empty() {
             found = self.best(&*any_of(terms)).map(|b| (Quality::Exact, b));
         }
@@ -243,22 +268,34 @@ impl<'a> IndexGazetteer<'a> {
         let unknown = || name.split(' ').any(|word| !self.known(word));
         // Nor for the word being typed: cut short, it's not misspelled.
         if found.is_none() && !typing && distance > 0 && words <= MAX_TYPO_SPAN && unknown() {
-            found = self.near_misses(name, distance).get(&band).and_then(|keys| {
-                let nearest = keys.iter().map(|(_, d)| *d).min()?;
-                let quality = if nearest <= 1 { Quality::Typo } else { Quality::Typos };
-                let terms = keys
-                    .iter()
-                    .filter(|(_, d)| *d == nearest)
-                    .take(MAX_TYPO_KEYS)
-                    .map(|(key, _)| -> Box<dyn tantivy::query::Query> {
-                        let term = Term::from_field_text(self.index.field(FIELD_AREA_NAME), key);
-                        Box::new(TermQuery::new(term, IndexRecordOption::Basic))
-                    })
-                    .collect();
-                self.best(&BooleanQuery::union(terms)).map(|b| (quality, b))
-            });
+            found = self
+                .near_misses(name, distance)
+                .get(&band)
+                .and_then(|keys| {
+                    let nearest = keys.iter().map(|(_, d)| *d).min()?;
+                    let quality = if nearest <= 1 {
+                        Quality::Typo
+                    } else {
+                        Quality::Typos
+                    };
+                    let terms = keys
+                        .iter()
+                        .filter(|(_, d)| *d == nearest)
+                        .take(MAX_TYPO_KEYS)
+                        .map(|(key, _)| -> Box<dyn tantivy::query::Query> {
+                            let term =
+                                Term::from_field_text(self.index.field(FIELD_AREA_NAME), key);
+                            Box::new(TermQuery::new(term, IndexRecordOption::Basic))
+                        })
+                        .collect();
+                    self.best(&BooleanQuery::union(terms)).map(|b| (quality, b))
+                });
         }
-        let found = found.map(|(quality, (importance, centers))| Found { quality, importance, centers });
+        let found = found.map(|(quality, (importance, centers))| Found {
+            quality,
+            importance,
+            centers,
+        });
         self.cache.borrow_mut().insert(key, found.clone());
         found
     }
@@ -269,14 +306,23 @@ impl IndexGazetteer<'_> {
     /// with `area`, one in an area of that band and name: libpostal's
     /// postcodes and their admin contexts, from the index.
     fn postcode(&self, code: &str, area: Option<(AdminBand, &str)>) -> bool {
-        let key = (code.to_string(), area.map(|(band, name)| (band, name.to_string())));
+        let key = (
+            code.to_string(),
+            area.map(|(band, name)| (band, name.to_string())),
+        );
         if let Some(found) = self.postcodes.borrow().get(&key) {
             return *found;
         }
         let mut terms: Vec<Box<dyn tantivy::query::Query>> = vec![
-            Box::new(TermQuery::new(Term::from_field_text(self.index.field(FIELD_NAME_EXACT), code), IndexRecordOption::Basic)),
             Box::new(TermQuery::new(
-                Term::from_field_text(self.index.field(FIELD_KIND), crate::poi::Kind::Postcode.as_str()),
+                Term::from_field_text(self.index.field(FIELD_NAME_EXACT), code),
+                IndexRecordOption::Basic,
+            )),
+            Box::new(TermQuery::new(
+                Term::from_field_text(
+                    self.index.field(FIELD_KIND),
+                    crate::poi::Kind::Postcode.as_str(),
+                ),
                 IndexRecordOption::Basic,
             )),
         ];
@@ -286,7 +332,13 @@ impl IndexGazetteer<'_> {
                 terms.push(Box::new(TermQuery::new(term, IndexRecordOption::Basic)));
             }
         }
-        let found = self.searcher.search(&BooleanQuery::intersection(terms), &tantivy::collector::Count).is_ok_and(|n| n > 0);
+        let found = self
+            .searcher
+            .search(
+                &BooleanQuery::intersection(terms),
+                &tantivy::collector::Count,
+            )
+            .is_ok_and(|n| n > 0);
         self.postcodes.borrow_mut().insert(key, found);
         found
     }
@@ -303,20 +355,33 @@ impl IndexGazetteer<'_> {
             let rest = chars.as_str();
             let dfa = builder(distance).build_dfa(rest);
             let mut buffer = [0; 4];
-            let automaton = NearMisses { first: first.encode_utf8(&mut buffer).as_bytes().to_vec(), rest: &dfa };
+            let automaton = NearMisses {
+                first: first.encode_utf8(&mut buffer).as_bytes().to_vec(),
+                rest: &dfa,
+            };
             let field = self.index.field(FIELD_AREA_NAME);
             let mut keys = std::collections::BTreeSet::new();
             for segment in self.searcher.segment_readers() {
-                let Ok(inverted) = segment.inverted_index(field) else { continue };
-                let Ok(mut stream) = inverted.terms().search(&automaton).into_stream() else { continue };
+                let Ok(inverted) = segment.inverted_index(field) else {
+                    continue;
+                };
+                let Ok(mut stream) = inverted.terms().search(&automaton).into_stream() else {
+                    continue;
+                };
                 while stream.advance() {
                     keys.insert(stream.key().to_vec());
                 }
             }
             for key in keys {
-                let Ok(key) = String::from_utf8(key) else { continue };
-                let Some((band, name)) = key.split_once('/') else { continue };
-                let Some(band) = AdminBand::ALL.into_iter().find(|b| b.as_str() == band) else { continue };
+                let Ok(key) = String::from_utf8(key) else {
+                    continue;
+                };
+                let Some((band, name)) = key.split_once('/') else {
+                    continue;
+                };
+                let Some(band) = AdminBand::ALL.into_iter().find(|b| b.as_str() == band) else {
+                    continue;
+                };
                 let rest_of_name = name.char_indices().nth(1).map_or("", |(i, _)| &name[i..]);
                 let edits = match dfa.eval(rest_of_name) {
                     levenshtein_automata::Distance::Exact(d) => d,
@@ -325,7 +390,9 @@ impl IndexGazetteer<'_> {
                 found.entry(band).or_default().push((key.clone(), edits));
             }
         }
-        self.typos.borrow_mut().insert(word.to_string(), found.clone());
+        self.typos
+            .borrow_mut()
+            .insert(word.to_string(), found.clone());
         found
     }
 }
@@ -361,9 +428,16 @@ impl Gazetteer for IndexGazetteer<'_> {
                     });
                 }
                 for band in AdminBand::ALL {
-                    let Some(found) = self.lookup(&name, band, typing, end - start) else { continue };
+                    let Some(found) = self.lookup(&name, band, typing, end - start) else {
+                        continue;
+                    };
                     let distance_km = focus.and_then(|focus| {
-                        found.centers.iter().map(|c| Haversine.distance(focus, *c) / 1000.0).reduce(f64::min).map(|km| km as f32)
+                        found
+                            .centers
+                            .iter()
+                            .map(|c| Haversine.distance(focus, *c) / 1000.0)
+                            .reduce(f64::min)
+                            .map(|km| km as f32)
                     });
                     matches.push(AreaMatch {
                         start,
@@ -395,13 +469,29 @@ fn written_out() -> &'static HashMap<String, Vec<String>> {
         for kind in ["synonyms", "personal_titles"] {
             for (_, contents) in airmail_tagger::dictionaries::of_type(kind) {
                 for line in contents.lines() {
-                    let forms: Vec<String> = line.split('|').map(|f| crate::text::fold(f.trim()).trim_end_matches('.').to_string()).collect();
-                    let Some((full, abbreviations)) = forms.split_first() else { continue };
+                    let forms: Vec<String> = line
+                        .split('|')
+                        .map(|f| {
+                            crate::text::fold(f.trim())
+                                .trim_end_matches('.')
+                                .to_string()
+                        })
+                        .collect();
+                    let Some((full, abbreviations)) = forms.split_first() else {
+                        continue;
+                    };
                     if full.is_empty() || full.contains(' ') {
                         continue;
                     }
-                    for abbreviation in abbreviations.iter().filter(|a| !a.is_empty() && !a.contains(' ') && *a != full) {
-                        *counts.entry(abbreviation.clone()).or_default().entry(full.clone()).or_default() += 1;
+                    for abbreviation in abbreviations
+                        .iter()
+                        .filter(|a| !a.is_empty() && !a.contains(' ') && *a != full)
+                    {
+                        *counts
+                            .entry(abbreviation.clone())
+                            .or_default()
+                            .entry(full.clone())
+                            .or_default() += 1;
                     }
                 }
             }
@@ -413,7 +503,10 @@ fn written_out() -> &'static HashMap<String, Vec<String>> {
             .map(|(abbreviation, fulls)| {
                 let mut fulls: Vec<(String, usize)> = fulls.into_iter().collect();
                 fulls.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-                (abbreviation, fulls.into_iter().map(|(full, _)| full).collect())
+                (
+                    abbreviation,
+                    fulls.into_iter().map(|(full, _)| full).collect(),
+                )
             })
             .collect()
     })
@@ -432,8 +525,13 @@ impl IndexGazetteer<'_> {
         let field = self.index.field(FIELD_AREA_NAME);
         let mut keys = std::collections::BTreeSet::new();
         for segment in self.searcher.segment_readers() {
-            let Ok(inverted) = segment.inverted_index(field) else { continue };
-            let Ok(mut stream) = inverted.terms().range().ge(prefix.as_bytes()).into_stream() else { continue };
+            let Ok(inverted) = segment.inverted_index(field) else {
+                continue;
+            };
+            let Ok(mut stream) = inverted.terms().range().ge(prefix.as_bytes()).into_stream()
+            else {
+                continue;
+            };
             let mut taken = 0;
             while taken < MAX_PREFIX_KEYS && stream.advance() {
                 let key = stream.key();
@@ -476,14 +574,25 @@ fn forms(name: &str) -> Vec<String> {
 
 /// The gazetteer's keys of a name's forms in a band.
 fn area_terms(index: &AirmailIndex, band: AdminBand, name: &str) -> Vec<Term> {
-    forms(name).iter().map(|form| Term::from_field_text(index.field(FIELD_AREA_NAME), &area_key(band, form))).collect()
+    forms(name)
+        .iter()
+        .map(|form| Term::from_field_text(index.field(FIELD_AREA_NAME), &area_key(band, form)))
+        .collect()
 }
 
 /// Any of the terms.
 fn any_of(terms: Vec<Term>) -> Box<dyn tantivy::query::Query> {
-    let mut queries: Vec<Box<dyn tantivy::query::Query>> =
-        terms.into_iter().map(|t| Box::new(TermQuery::new(t, IndexRecordOption::Basic)) as Box<dyn tantivy::query::Query>).collect();
-    if queries.len() == 1 { queries.pop().expect("one") } else { Box::new(BooleanQuery::union(queries)) }
+    let mut queries: Vec<Box<dyn tantivy::query::Query>> = terms
+        .into_iter()
+        .map(|t| {
+            Box::new(TermQuery::new(t, IndexRecordOption::Basic)) as Box<dyn tantivy::query::Query>
+        })
+        .collect();
+    if queries.len() == 1 {
+        queries.pop().expect("one")
+    } else {
+        Box::new(BooleanQuery::union(queries))
+    }
 }
 
 /// The most words of other areas' names between an area and one it's in.
@@ -500,7 +609,8 @@ impl IndexGazetteer<'_> {
         if let Some(found) = self.ancestors.borrow().get(&key) {
             return found.clone();
         }
-        let collector = TopDocs::with_limit(MAX_CHILDREN).order_by_fast_field::<f64>(FIELD_IMPORTANCE, Order::Desc);
+        let collector = TopDocs::with_limit(MAX_CHILDREN)
+            .order_by_fast_field::<f64>(FIELD_IMPORTANCE, Order::Desc);
         let field = self.index.field(FIELD_ADMIN_IDS);
         let mut ids: Vec<u64> = self
             .searcher
@@ -508,7 +618,11 @@ impl IndexGazetteer<'_> {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(_, address)| self.searcher.doc::<tantivy::TantivyDocument>(address).ok())
-            .flat_map(|doc| doc.get_all(field).filter_map(|v| tantivy::schema::Value::as_u64(&v)).collect::<Vec<_>>())
+            .flat_map(|doc| {
+                doc.get_all(field)
+                    .filter_map(|v| tantivy::schema::Value::as_u64(&v))
+                    .collect::<Vec<_>>()
+            })
             .collect();
         ids.sort_unstable();
         ids.dedup();
@@ -519,7 +633,10 @@ impl IndexGazetteer<'_> {
     /// Whether one of the best-known areas of a band and name is in an area
     /// of another band and name.
     fn is_within(&self, child: (AdminBand, &str), parent: (AdminBand, &str)) -> bool {
-        let key = ((child.0, child.1.to_string()), (parent.0, parent.1.to_string()));
+        let key = (
+            (child.0, child.1.to_string()),
+            (parent.0, parent.1.to_string()),
+        );
         if let Some(found) = self.within.borrow().get(&key) {
             return *found;
         }
@@ -529,9 +646,16 @@ impl IndexGazetteer<'_> {
             let field = self.index.field(FIELD_WOF_ID);
             // Term queries, not a `TermSetQuery`, which builds an FST of the
             // terms and a bitset of every document each time.
-            let ids = any_of(ancestors.iter().map(|id| Term::from_field_u64(field, *id)).collect());
+            let ids = any_of(
+                ancestors
+                    .iter()
+                    .map(|id| Term::from_field_u64(field, *id))
+                    .collect(),
+            );
             let query = BooleanQuery::intersection(vec![named, ids]);
-            self.searcher.search(&query, &tantivy::collector::Count).is_ok_and(|n| n > 0)
+            self.searcher
+                .search(&query, &tantivy::collector::Count)
+                .is_ok_and(|n| n > 0)
         };
         self.within.borrow_mut().insert(key, found);
         found
@@ -544,20 +668,29 @@ impl IndexGazetteer<'_> {
     /// ny`).
     fn containment(&self, query: &Query, matches: &mut [AreaMatch]) {
         let band_of = |m: &AreaMatch| AdminBand::ALL.into_iter().find(|b| b.as_str() == m.band);
-        let exact: Vec<(usize, usize, AdminBand)> =
-            matches.iter().filter(|m| m.quality == Quality::Exact).filter_map(|m| Some((m.start, m.end, band_of(m)?))).collect();
+        let exact: Vec<(usize, usize, AdminBand)> = matches
+            .iter()
+            .filter(|m| m.quality == Quality::Exact)
+            .filter_map(|m| Some((m.start, m.end, band_of(m)?)))
+            .collect();
         // Whether every word of `from..to` is in an area's name.
-        let named = |from: usize, to: usize| (from..to).all(|w| exact.iter().any(|(s, e, _)| *s <= w && w < *e));
+        let named = |from: usize, to: usize| {
+            (from..to).all(|w| exact.iter().any(|(s, e, _)| *s <= w && w < *e))
+        };
         for m in matches.iter_mut().filter(|m| m.quality == Quality::Exact) {
             let Some(band) = band_of(m) else { continue };
             let child = query.words[m.start..m.end].join(" ");
             let parents = exact.iter().filter(|(s, e, b)| {
-                *b > band && ((*s >= m.end && *s - m.end <= MAX_BETWEEN && named(m.end, *s)) || (*e <= m.start && m.start - *e <= MAX_BETWEEN && named(*e, m.start)))
+                *b > band
+                    && ((*s >= m.end && *s - m.end <= MAX_BETWEEN && named(m.end, *s))
+                        || (*e <= m.start && m.start - *e <= MAX_BETWEEN && named(*e, m.start)))
             });
             for (start, end, parent_band) in parents {
                 let parent = query.words[*start..*end].join(" ");
                 let span = (*start, *end, parent_band.as_str());
-                if !m.inside.contains(&span) && self.is_within((band, &child), (*parent_band, &parent)) {
+                if !m.inside.contains(&span)
+                    && self.is_within((band, &child), (*parent_band, &parent))
+                {
                     m.inside.push(span);
                 }
             }
@@ -577,7 +710,13 @@ impl IndexGazetteer<'_> {
         let areas: Vec<(usize, usize, AdminBand)> = matches
             .iter()
             .filter(|m| m.quality == Quality::Exact)
-            .filter_map(|m| Some((m.start, m.end, AdminBand::ALL.into_iter().find(|b| b.as_str() == m.band)?)))
+            .filter_map(|m| {
+                Some((
+                    m.start,
+                    m.end,
+                    AdminBand::ALL.into_iter().find(|b| b.as_str() == m.band)?,
+                ))
+            })
             .collect();
         for start in 0..n {
             for end in start + 1..=n.min(start + MAX_POSTCODE_WORDS) {
@@ -589,9 +728,14 @@ impl IndexGazetteer<'_> {
                 if !self.postcode(&code, None) {
                     continue;
                 }
-                let mut beside = areas.iter().filter(|(s, e, _)| *e == start || *s == end).peekable();
+                let mut beside = areas
+                    .iter()
+                    .filter(|(s, e, _)| *e == start || *s == end)
+                    .peekable();
                 let alone = beside.peek().is_none();
-                let context = beside.any(|(s, e, band)| self.postcode(&code, Some((*band, &query.words[*s..*e].join(" ")))));
+                let context = beside.any(|(s, e, band)| {
+                    self.postcode(&code, Some((*band, &query.words[*s..*e].join(" "))))
+                });
                 matches.push(AreaMatch {
                     start,
                     end,
@@ -622,7 +766,10 @@ mod test {
     fn names_are_looked_up_with_abbreviations_written_out() {
         let pleasant = forms("mt pleasant");
         assert_eq!(pleasant[0], "mt pleasant");
-        assert!(pleasant.contains(&"mount pleasant".to_string()), "{pleasant:?}");
+        assert!(
+            pleasant.contains(&"mount pleasant".to_string()),
+            "{pleasant:?}"
+        );
         assert!(forms("ft worth").contains(&"fort worth".to_string()));
         assert!(forms("st louis").contains(&"saint louis".to_string()));
         assert_eq!(forms("seattle"), vec!["seattle".to_string()]);
@@ -646,10 +793,24 @@ mod test {
 
     #[test]
     fn near_misses_are_in_any_band_and_keep_the_first_character() {
-        let keys = ["locality/seattle", "county/seattle", "locality/settle", "locality/battle", "region/seatac", "locality/zürich"];
-        assert_eq!(near_misses(&keys, "seatle", 1), ["county/seattle", "locality/seattle", "locality/settle"]);
+        let keys = [
+            "locality/seattle",
+            "county/seattle",
+            "locality/settle",
+            "locality/battle",
+            "region/seatac",
+            "locality/zürich",
+        ];
+        assert_eq!(
+            near_misses(&keys, "seatle", 1),
+            ["county/seattle", "locality/seattle", "locality/settle"]
+        );
         // A typo in the first character isn't looked for.
-        assert!(near_misses(&keys, "beattle", 1).iter().all(|k| k.ends_with("battle") || k.ends_with("beattle")));
+        assert!(
+            near_misses(&keys, "beattle", 1)
+                .iter()
+                .all(|k| k.ends_with("battle") || k.ends_with("beattle"))
+        );
         // Edits count characters, not bytes.
         assert_eq!(near_misses(&keys, "zurich", 1), ["locality/zürich"]);
         assert_eq!(near_misses(&keys, "zürch", 1), ["locality/zürich"]);

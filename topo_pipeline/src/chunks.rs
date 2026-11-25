@@ -47,13 +47,19 @@ impl ChunkId {
     pub fn bounds(&self) -> (f64, f64, f64, f64) {
         let side = CHUNK_CELLS as f64 / BASE_PER_DEGREE as f64;
         let half = 0.5 / BASE_PER_DEGREE as f64;
-        let (w, s) = (f64::from(self.x) * side - 180.0 + half, f64::from(self.y) * side - 90.0 + half);
+        let (w, s) = (
+            f64::from(self.x) * side - 180.0 + half,
+            f64::from(self.y) * side - 90.0 + half,
+        );
         (w, s, w + side, s + side)
     }
 
     /// The range of base lattice points it spans, both ends included.
     fn base(&self) -> ((i64, i64), (i64, i64)) {
-        let (x, y) = (i64::from(self.x) * CHUNK_CELLS, i64::from(self.y) * CHUNK_CELLS);
+        let (x, y) = (
+            i64::from(self.x) * CHUNK_CELLS,
+            i64::from(self.y) * CHUNK_CELLS,
+        );
         ((x, x + CHUNK_CELLS), (y, y + CHUNK_CELLS))
     }
 
@@ -84,7 +90,11 @@ fn fnv(hash: &mut u64, bytes: &[u8]) {
 
 impl Mosaic {
     pub fn open(config: &Config, work: &Path) -> Result<Mosaic> {
-        let sources = config.sources.iter().map(|s| Source::open(s, work)).collect::<Result<Vec<_>>>()?;
+        let sources = config
+            .sources
+            .iter()
+            .map(|s| Source::open(s, work))
+            .collect::<Result<Vec<_>>>()?;
         let c = &config.contours;
         let mut hash = 0xcbf29ce484222325;
         fnv(&mut hash, &ALGORITHM.to_le_bytes());
@@ -93,7 +103,8 @@ impl Mosaic {
             format!(
                 "{} {} {} {} {}",
                 c.interval_m, c.interval_ft, c.simplify_m, c.round_corners, c.min_loop_m
-            ).as_bytes(),
+            )
+            .as_bytes(),
         );
         Ok(Mosaic {
             sources,
@@ -122,7 +133,10 @@ impl Mosaic {
                 if w >= e || s >= n {
                     continue;
                 }
-                let (a, b) = (ChunkId::containing(w, s), ChunkId::containing(e - 1e-9, n - 1e-9));
+                let (a, b) = (
+                    ChunkId::containing(w, s),
+                    ChunkId::containing(e - 1e-9, n - 1e-9),
+                );
                 for y in a.y..=b.y {
                     for x in a.x..=b.x {
                         chunks.push(ChunkId { y, x });
@@ -139,13 +153,21 @@ impl Mosaic {
     /// Contours for a chunk, from the DEMs.
     pub fn compute(&self, id: ChunkId) -> Result<Vec<Line>> {
         let (w, s, e, n) = id.bounds();
-        let inside: Vec<&Source> =
-            self.sources.iter().filter(|src| !src.overlapping(w, s, e, n).is_empty()).collect();
+        let inside: Vec<&Source> = self
+            .sources
+            .iter()
+            .filter(|src| !src.overlapping(w, s, e, n).is_empty())
+            .collect();
         let Some(r) = inside.iter().map(|src| src.refine).max() else {
             return Ok(Vec::new());
         };
         let ((bx0, bx1), (by0, by1)) = id.base();
-        let (x0, x1, y0, y1) = (refined(bx0, r), refined(bx1, r), refined(by0, r), refined(by1, r));
+        let (x0, x1, y0, y1) = (
+            refined(bx0, r),
+            refined(bx1, r),
+            refined(by0, r),
+            refined(by1, r),
+        );
 
         // Enough window that a loop small enough to drop fits entirely in it, whichever
         // chunk it touches. Longitude cells are the short ones, more so near the poles.
@@ -153,7 +175,12 @@ impl Mosaic {
         let cos_lat = n.abs().max(s.abs()).to_radians().cos().max(0.05);
         let buffer = (self.params.min_loop_m / 2.0 / (cell_m * cos_lat)).ceil() as i64 + 2;
 
-        let rect = Rect { x0: x0 - buffer, y0: y0 - buffer, x1: x1 + buffer + 1, y1: y1 + buffer + 1 };
+        let rect = Rect {
+            x0: x0 - buffer,
+            y0: y0 - buffer,
+            x1: x1 + buffer + 1,
+            y1: y1 + buffer + 1,
+        };
         let mut grid = Grid::new(rect, r);
         for source in &self.sources {
             blend(&mut grid, source, &self.cache)?;
@@ -177,16 +204,24 @@ impl Mosaic {
             let config = &source.config;
             fnv(
                 &mut hash,
-                format!("{} {} {} {} {}", config.name, config.arcsec, config.median, config.sigma, config.feather)
-                    .as_bytes(),
+                format!(
+                    "{} {} {} {} {}",
+                    config.name, config.arcsec, config.median, config.sigma, config.feather
+                )
+                .as_bytes(),
             );
             for raster in source.overlapping(w - margin, s - margin, e + margin, n + margin) {
-                let name = raster.path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let name = raster
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
                 fnv(&mut hash, name.as_bytes());
                 fnv(&mut hash, &raster.bytes.to_le_bytes());
             }
         }
-        work.join("chunks").join(format!("{}-{hash:016x}.bin", id.name()))
+        work.join("chunks")
+            .join(format!("{}-{hash:016x}.bin", id.name()))
     }
 
     /// Computes the chunks not on disk yet. Returns each chunk's file.
@@ -205,7 +240,8 @@ impl Mosaic {
                     let path = self.path(work, id);
                     if !path.exists() {
                         let lines = self.compute(id).with_context(|| format!("chunk {id:?}"))?;
-                        let tmp = path.with_extension(format!("tmp{:?}", std::thread::current().id()));
+                        let tmp =
+                            path.with_extension(format!("tmp{:?}", std::thread::current().id()));
                         fs::write(&tmp, encode(&lines)?)?;
                         fs::rename(&tmp, &path)?;
                     }
@@ -245,7 +281,10 @@ fn blend(grid: &mut Grid, source: &Source, cache: &RasterCache) -> Result<()> {
     let east = Grid::lon(area.x1 as f64, rs);
     let north = Grid::lat(area.y1 as f64, rs);
     let margin = source.config.margin() as f64 / (BASE_PER_DEGREE * rs) as f64;
-    if source.overlapping(west - margin, south - margin, east + margin, north + margin).is_empty() {
+    if source
+        .overlapping(west - margin, south - margin, east + margin, north + margin)
+        .is_empty()
+    {
         return Ok(());
     }
     let (values, weights) = source.read_lattice(area, cache)?;
@@ -261,7 +300,9 @@ fn blend(grid: &mut Grid, source: &Source, cache: &RasterCache) -> Result<()> {
             (p.floor() as usize, (p - p.floor()) as f32)
         }
     };
-    let columns: Vec<(usize, f32)> = (0..width).map(|c| locate(rect.x0 + c as i64, area.x0)).collect();
+    let columns: Vec<(usize, f32)> = (0..width)
+        .map(|c| locate(rect.x0 + c as i64, area.x0))
+        .collect();
     for row in 0..rect.height() {
         let (sy, fy) = locate(rect.y0 + row as i64, area.y0);
         for (col, &(sx, fx)) in columns.iter().enumerate() {
@@ -271,7 +312,11 @@ fn blend(grid: &mut Grid, source: &Source, cache: &RasterCache) -> Result<()> {
                 continue;
             }
             let out = &mut grid.values[row * width + col];
-            *out = if out.is_nan() || w >= 1.0 { v } else { *out + (v - *out) * w };
+            *out = if out.is_nan() || w >= 1.0 {
+                v
+            } else {
+                *out + (v - *out) * w
+            };
         }
     }
     Ok(())
@@ -390,7 +435,11 @@ pub fn read_lines(path: &Path) -> Result<Vec<Line>> {
             points.push((x as i32, y as i32));
         }
         lines.push(Line {
-            unit: if flags & 1 == 0 { Unit::Meters } else { Unit::Feet },
+            unit: if flags & 1 == 0 {
+                Unit::Meters
+            } else {
+                Unit::Feet
+            },
             elevation,
             closed: flags & 2 != 0,
             points,

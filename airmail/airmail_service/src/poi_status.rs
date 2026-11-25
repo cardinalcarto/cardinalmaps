@@ -78,13 +78,18 @@ struct Mapped {
 
 impl Mapped {
     fn open(path: &Path) -> Result<Mapped> {
-        let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let file =
+            std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
         let meta = file.metadata()?;
         // SAFETY: the file is only ever replaced by a rename, never written
         // in place (see the module docs), so the mapping doesn't change.
         #[allow(unsafe_code)]
         let map = unsafe { Mmap::map(&file)? };
-        ensure!(map.len() >= HEADER && &map[..8] == MAGIC, "{} isn't a POI status file", path.display());
+        ensure!(
+            map.len() >= HEADER && &map[..8] == MAGIC,
+            "{} isn't a POI status file",
+            path.display()
+        );
         let u32_at = |i: usize| u32::from_le_bytes(map[i..i + 4].try_into().unwrap());
         let i64_at = |i: usize| i64::from_le_bytes(map[i..i + 8].try_into().unwrap());
         ensure!(
@@ -96,14 +101,20 @@ impl Mapped {
         );
         let records = i64_at(40).cast_unsigned();
         ensure!(
-            usize::try_from(records).ok().and_then(|n| n.checked_mul(RECORD)).is_some_and(|n| n + HEADER == map.len()),
+            usize::try_from(records)
+                .ok()
+                .and_then(|n| n.checked_mul(RECORD))
+                .is_some_and(|n| n + HEADER == map.len()),
             "{} is {} bytes, but says it has {records} records",
             path.display(),
             map.len()
         );
         Ok(Mapped {
             file: (meta.dev(), meta.ino()),
-            as_of: AsOf { sequence: i64_at(16), timestamp: i64_at(24) },
+            as_of: AsOf {
+                sequence: i64_at(16),
+                timestamp: i64_at(24),
+            },
             records,
             map,
         })
@@ -128,7 +139,12 @@ impl Mapped {
         };
         #[allow(clippy::cast_possible_truncation)]
         let version = ((record >> 4) & ((1 << 20) - 1)) as u32;
-        Status::Known { state, osm_type, osm_id: (record >> 24).cast_signed(), version }
+        Status::Known {
+            state,
+            osm_type,
+            osm_id: (record >> 24).cast_signed(),
+            version,
+        }
     }
 }
 
@@ -172,7 +188,10 @@ impl PoiStatus {
         let replaced = match std::fs::metadata(&self.path) {
             Ok(meta) => (meta.dev(), meta.ino()) != current,
             Err(e) => {
-                warn!("Can't read {}: {e}; keeping the POI status already loaded", self.path.display());
+                warn!(
+                    "Can't read {}: {e}; keeping the POI status already loaded",
+                    self.path.display()
+                );
                 false
             }
         };
@@ -181,10 +200,17 @@ impl PoiStatus {
         }
         match Mapped::open(&self.path) {
             Ok(mapped) => {
-                info!("Reloaded POI status from {}: as of sequence {}", self.path.display(), mapped.as_of.sequence);
+                info!(
+                    "Reloaded POI status from {}: as of sequence {}",
+                    self.path.display(),
+                    mapped.as_of.sequence
+                );
                 *self.current.write().unwrap() = Arc::new(mapped);
             }
-            Err(e) => warn!("Can't load {}: {e:#}; keeping the POI status already loaded", self.path.display()),
+            Err(e) => warn!(
+                "Can't load {}: {e:#}; keeping the POI status already loaded",
+                self.path.display()
+            ),
         }
     }
 
@@ -224,7 +250,12 @@ pub fn rfc3339(seconds: i64) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs / 60 % 60, secs % 60)
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
 }
 
 #[cfg(test)]

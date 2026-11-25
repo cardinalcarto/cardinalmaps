@@ -78,13 +78,18 @@ impl Language {
     /// `wof:lang_x_spoken` lists them, or `None` if it isn't one of these.
     #[must_use]
     pub fn from_iso_639_3(code: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|language| language.iso_639_3().eq_ignore_ascii_case(code))
+        Self::ALL
+            .into_iter()
+            .find(|language| language.iso_639_3().eq_ignore_ascii_case(code))
     }
 
     /// The languages of ISO 639-3 codes, skipping the others.
     #[must_use]
     pub fn from_codes<S: AsRef<str>>(codes: &[S]) -> Vec<Self> {
-        codes.iter().filter_map(|code| Self::from_iso_639_3(code.as_ref())).collect()
+        codes
+            .iter()
+            .filter_map(|code| Self::from_iso_639_3(code.as_ref()))
+            .collect()
     }
 }
 
@@ -95,10 +100,16 @@ mod test {
     #[test]
     fn codes_round_trip() {
         for language in Language::ALL {
-            assert_eq!(Language::from_iso_639_3(language.iso_639_3()), Some(language));
+            assert_eq!(
+                Language::from_iso_639_3(language.iso_639_3()),
+                Some(language)
+            );
         }
         assert_eq!(Language::from_iso_639_3("ENG"), Some(Language::English));
         assert_eq!(Language::from_iso_639_3("jpn"), None);
-        assert_eq!(Language::from_codes(&["fra", "xxx", "deu"]), vec![Language::French, Language::German]);
+        assert_eq!(
+            Language::from_codes(&["fra", "xxx", "deu"]),
+            vec![Language::French, Language::German]
+        );
     }
 }

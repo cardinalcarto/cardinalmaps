@@ -9,7 +9,9 @@ use geozero::{CoordDimensions, ToGeo, ToWkb, wkb::Wkb};
 use s2::{cell::Cell, cellid::CellID, latlng::LatLng, region::RegionCoverer};
 
 // Shared with poi_service, which computes POI importance from the same shapes.
-pub use airmail_importance::shape::{MAX_VERTICES, area_m2, normalize, representative_point, simplify};
+pub use airmail_importance::shape::{
+    MAX_VERTICES, area_m2, normalize, representative_point, simplify,
+};
 
 /// The most S2 cells in a shape's covering.
 const MAX_COVER_CELLS: usize = 16;
@@ -33,13 +35,25 @@ const MIN_COVER_LEVEL: u64 = 3;
 #[must_use]
 pub fn covering(geometry: &Geometry<f64>) -> Vec<CellID> {
     if let Geometry::Point(point) = geometry {
-        return vec![CellID::from(LatLng::from_degrees(point.y(), point.x())).parent(MAX_COVER_LEVEL)];
+        return vec![
+            CellID::from(LatLng::from_degrees(point.y(), point.x())).parent(MAX_COVER_LEVEL),
+        ];
     }
     let Some(bounds) = geometry.bounding_rect() else {
         return vec![];
     };
-    let region = s2::rect::Rect::from_degrees(bounds.min().y, bounds.min().x, bounds.max().y, bounds.max().x);
-    let coverer = RegionCoverer { min_level: MIN_COVER_LEVEL as u8, max_level: MAX_COVER_LEVEL as u8, level_mod: 1, max_cells: 8 };
+    let region = s2::rect::Rect::from_degrees(
+        bounds.min().y,
+        bounds.min().x,
+        bounds.max().y,
+        bounds.max().x,
+    );
+    let coverer = RegionCoverer {
+        min_level: MIN_COVER_LEVEL as u8,
+        max_level: MAX_COVER_LEVEL as u8,
+        level_mod: 1,
+        max_cells: 8,
+    };
     let mut cells: Vec<CellID> = coverer
         .covering(&region)
         .0
@@ -52,7 +66,11 @@ pub fn covering(geometry: &Geometry<f64>) -> Vec<CellID> {
         let Some(index) = cells.iter().position(|cell| cell.level() < MAX_COVER_LEVEL) else {
             break;
         };
-        let children: Vec<CellID> = cells[index].children().into_iter().filter(|c| touches(geometry, *c)).collect();
+        let children: Vec<CellID> = cells[index]
+            .children()
+            .into_iter()
+            .filter(|c| touches(geometry, *c))
+            .collect();
         if cells.len() - 1 + children.len() > MAX_COVER_CELLS {
             break;
         }
@@ -90,7 +108,11 @@ pub fn ancestors(cell: CellID) -> Vec<CellID> {
 pub fn bbox_rects(bbox: [f64; 4]) -> Vec<Rect<f64>> {
     let [min_lon, min_lat, max_lon, max_lat] = bbox;
     let rect = |a: f64, b: f64| Rect::new(coord! { x: a, y: min_lat }, coord! { x: b, y: max_lat });
-    if min_lon > max_lon { vec![rect(min_lon, 180.0), rect(-180.0, max_lon)] } else { vec![rect(min_lon, max_lon)] }
+    if min_lon > max_lon {
+        vec![rect(min_lon, 180.0), rect(-180.0, max_lon)]
+    } else {
+        vec![rect(min_lon, max_lon)]
+    }
 }
 
 /// Whether a geometry intersects any of `rects`.
@@ -103,10 +125,16 @@ pub fn intersects_any(geometry: &Geometry<f64>, rects: &[Rect<f64>]) -> bool {
 /// than coverings are, since finer cells would match nothing more.
 #[must_use]
 pub fn query_cells(rects: &[Rect<f64>]) -> Vec<CellID> {
-    let coverer = RegionCoverer { min_level: 0, max_level: MAX_COVER_LEVEL as u8, level_mod: 1, max_cells: 16 };
+    let coverer = RegionCoverer {
+        min_level: 0,
+        max_level: MAX_COVER_LEVEL as u8,
+        level_mod: 1,
+        max_cells: 16,
+    };
     let mut cells = Vec::new();
     for rect in rects {
-        let region = s2::rect::Rect::from_degrees(rect.min().y, rect.min().x, rect.max().y, rect.max().x);
+        let region =
+            s2::rect::Rect::from_degrees(rect.min().y, rect.min().x, rect.max().y, rect.max().x);
         let mut union = coverer.covering(&region);
         union.normalize();
         cells.extend(union.0);
@@ -139,9 +167,7 @@ pub fn from_wkb(wkb: &[u8]) -> Result<Geometry<f64>> {
         | Geometry::LineString(_)
         | Geometry::MultiLineString(_)
         | Geometry::Polygon(_)
-        | Geometry::MultiPolygon(_)) => {
-            Ok(geometry)
-        }
+        | Geometry::MultiPolygon(_)) => Ok(geometry),
         other => bail!("unexpected stored geometry {other:?}"),
     }
 }
@@ -196,7 +222,12 @@ mod test {
         for shape in shapes {
             let cells = covering(&shape);
             assert!(!cells.is_empty());
-            assert!(cells.iter().all(|c| (MIN_COVER_LEVEL..=MAX_COVER_LEVEL).contains(&c.level())), "{cells:?}");
+            assert!(
+                cells
+                    .iter()
+                    .all(|c| (MIN_COVER_LEVEL..=MAX_COVER_LEVEL).contains(&c.level())),
+                "{cells:?}"
+            );
         }
         let query = query_cells(&bbox_rects([-122.3001, 47.5999, -122.2999, 47.6001]));
         assert!(query.iter().all(|c| c.level() <= MAX_COVER_LEVEL));
@@ -213,10 +244,17 @@ mod test {
         ];
         for shape in shapes {
             let cells = covering(&shape);
-            assert!(!cells.is_empty() && cells.len() <= MAX_COVER_CELLS, "{} cells", cells.len());
+            assert!(
+                !cells.is_empty() && cells.len() <= MAX_COVER_CELLS,
+                "{} cells",
+                cells.len()
+            );
             for c in shape.coords_iter() {
                 let leaf = CellID::from(LatLng::from_degrees(c.y, c.x));
-                assert!(cells.iter().any(|cell| cell.contains(&leaf)), "{c:?} isn't covered");
+                assert!(
+                    cells.iter().any(|cell| cell.contains(&leaf)),
+                    "{c:?} isn't covered"
+                );
             }
         }
     }
@@ -225,9 +263,18 @@ mod test {
     fn bbox_across_the_antimeridian_is_two_rects() {
         let rects = bbox_rects([179.0, -1.0, -179.0, 1.0]);
         assert_eq!(rects.len(), 2);
-        assert!(intersects_any(&Geometry::Point(Point::new(179.5, 0.0)), &rects));
-        assert!(intersects_any(&Geometry::Point(Point::new(-179.5, 0.0)), &rects));
-        assert!(!intersects_any(&Geometry::Point(Point::new(0.0, 0.0)), &rects));
+        assert!(intersects_any(
+            &Geometry::Point(Point::new(179.5, 0.0)),
+            &rects
+        ));
+        assert!(intersects_any(
+            &Geometry::Point(Point::new(-179.5, 0.0)),
+            &rects
+        ));
+        assert!(!intersects_any(
+            &Geometry::Point(Point::new(0.0, 0.0)),
+            &rects
+        ));
     }
 
     #[test]

@@ -57,21 +57,42 @@ impl StreetWay {
         if !STREET_HIGHWAYS.contains(highway) || name.is_empty() || points.len() < 2 {
             return None;
         }
-        let line: LineString<f64> = points.iter().map(|&(lat, lon)| coord! { x: lon, y: lat }).collect();
+        let line: LineString<f64> = points
+            .iter()
+            .map(|&(lat, lon)| coord! { x: lon, y: lat })
+            .collect();
         let (lat, lon) = points[points.len() / 2];
-        let cell = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(lat, lon)).parent(STREET_CELL_LEVEL);
+        let cell = s2::cellid::CellID::from(s2::latlng::LatLng::from_degrees(lat, lon))
+            .parent(STREET_CELL_LEVEL);
         let tags = tags
             .iter()
             .filter(|(k, _)| **k == "highway" || is_name_key(k))
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-        let line = line.simplify(STREET_SIMPLIFY_DEGREES).0.into_iter().map(|c| (c.x as f32, c.y as f32)).collect();
-        Some(Self { key: (name.to_lowercase(), cell.0), tags, osm, line })
+        let line = line
+            .simplify(STREET_SIMPLIFY_DEGREES)
+            .0
+            .into_iter()
+            .map(|c| (c.x as f32, c.y as f32))
+            .collect();
+        Some(Self {
+            key: (name.to_lowercase(), cell.0),
+            tags,
+            osm,
+            line,
+        })
     }
 
     fn highway_rank(&self) -> usize {
-        let highway = self.tags.iter().find(|(k, _)| k == "highway").map(|(_, v)| v.as_str());
-        STREET_HIGHWAYS.iter().position(|h| Some(*h) == highway).unwrap_or(STREET_HIGHWAYS.len())
+        let highway = self
+            .tags
+            .iter()
+            .find(|(k, _)| k == "highway")
+            .map(|(_, v)| v.as_str());
+        STREET_HIGHWAYS
+            .iter()
+            .position(|h| Some(*h) == highway)
+            .unwrap_or(STREET_HIGHWAYS.len())
     }
 }
 
@@ -91,7 +112,13 @@ impl From<StreetWay> for Street {
     fn from(way: StreetWay) -> Self {
         let rank = way.highway_rank();
         let points = way.line.len();
-        Self { tags: way.tags, osm: way.osm, rank, lines: vec![way.line], points }
+        Self {
+            tags: way.tags,
+            osm: way.osm,
+            rank,
+            lines: vec![way.line],
+            points,
+        }
     }
 }
 
@@ -118,9 +145,16 @@ impl Street {
         let lines = self
             .lines
             .into_iter()
-            .map(|line| line.into_iter().map(|(x, y)| coord! { x: f64::from(x), y: f64::from(y) }).collect::<LineString<f64>>())
+            .map(|line| {
+                line.into_iter()
+                    .map(|(x, y)| coord! { x: f64::from(x), y: f64::from(y) })
+                    .collect::<LineString<f64>>()
+            })
             .collect();
-        let mut poi = airmail::osm::street_document(self.tags, Geometry::MultiLineString(MultiLineString(lines)))?;
+        let mut poi = airmail::osm::street_document(
+            self.tags,
+            Geometry::MultiLineString(MultiLineString(lines)),
+        )?;
         poi.osm = Some(self.osm);
         Some(poi)
     }
@@ -136,30 +170,59 @@ pub struct OsmPoi {
 
 impl OsmPoi {
     /// A node, at `(lat, lon)`.
-    pub fn new_from_node(tags: HashMap<&str, &str>, location: (f64, f64), osm: OsmRef) -> Option<Self> {
+    pub fn new_from_node(
+        tags: HashMap<&str, &str>,
+        location: (f64, f64),
+        osm: OsmRef,
+    ) -> Option<Self> {
         let tags = Self::validate_tags(tags)?;
         let geometry = Geometry::Point(Point::new(location.1, location.0));
-        Some(Self { tags, geometry, osm })
+        Some(Self {
+            tags,
+            geometry,
+            osm,
+        })
     }
 
     /// A way through `(lat, lon)` points: an area if it's closed and its
     /// tags don't say it's a line, else a line.
-    pub fn new_from_way(tags: HashMap<&str, &str>, points: &[(f64, f64)], osm: OsmRef) -> Option<Self> {
+    pub fn new_from_way(
+        tags: HashMap<&str, &str>,
+        points: &[(f64, f64)],
+        osm: OsmRef,
+    ) -> Option<Self> {
         let tags = Self::validate_tags(tags)?;
-        let line: LineString<f64> = points.iter().map(|&(lat, lon)| coord! { x: lon, y: lat }).collect();
+        let line: LineString<f64> = points
+            .iter()
+            .map(|&(lat, lon)| coord! { x: lon, y: lat })
+            .collect();
         let geometry = match line.0.len() {
             0 => return None,
             1 => Geometry::Point(Point(line.0[0])),
-            _ if line.is_closed() && line.0.len() >= 4 && is_area(&tags) => Geometry::Polygon(Polygon::new(line, vec![])),
+            _ if line.is_closed() && line.0.len() >= 4 && is_area(&tags) => {
+                Geometry::Polygon(Polygon::new(line, vec![]))
+            }
             _ => Geometry::LineString(line),
         };
-        Some(Self { tags, geometry, osm })
+        Some(Self {
+            tags,
+            geometry,
+            osm,
+        })
     }
 
     /// A multipolygon relation, already assembled.
-    pub fn new_from_relation(tags: HashMap<&str, &str>, shape: MultiPolygon<f64>, osm: OsmRef) -> Option<Self> {
+    pub fn new_from_relation(
+        tags: HashMap<&str, &str>,
+        shape: MultiPolygon<f64>,
+        osm: OsmRef,
+    ) -> Option<Self> {
         let tags = Self::validate_tags(tags)?;
-        Some(Self { tags, geometry: Geometry::MultiPolygon(shape), osm })
+        Some(Self {
+            tags,
+            geometry: Geometry::MultiPolygon(shape),
+            osm,
+        })
     }
 
     /// The tags of an element worth indexing, or `None`.
@@ -169,7 +232,11 @@ impl OsmPoi {
         if !airmail_importance::osm::is_indexed(tags.iter().map(|(k, v)| (*k, *v))) {
             return None;
         }
-        Some(tags.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect())
+        Some(
+            tags.into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        )
     }
 
     pub fn index_poi(self) -> Option<ToIndexPoi> {
@@ -196,25 +263,53 @@ mod test {
     use super::*;
     use airmail::poi::{Kind, OsmType};
 
-    const WAY: OsmRef = OsmRef { osm_type: OsmType::Way, id: 1, version: Some(1) };
+    const WAY: OsmRef = OsmRef {
+        osm_type: OsmType::Way,
+        id: 1,
+        version: Some(1),
+    };
 
     fn square() -> Vec<(f64, f64)> {
-        vec![(47.0, -122.0), (47.0, -121.9), (47.1, -121.9), (47.1, -122.0), (47.0, -122.0)]
+        vec![
+            (47.0, -122.0),
+            (47.0, -121.9),
+            (47.1, -121.9),
+            (47.1, -122.0),
+            (47.0, -122.0),
+        ]
     }
 
     #[test]
     fn closed_ways_are_areas_unless_tagged_as_lines() {
-        let park = OsmPoi::new_from_way([("leisure", "park"), ("name", "Park")].into(), &square(), WAY).unwrap();
+        let park = OsmPoi::new_from_way(
+            [("leisure", "park"), ("name", "Park")].into(),
+            &square(),
+            WAY,
+        )
+        .unwrap();
         assert!(matches!(park.geometry, Geometry::Polygon(_)));
-        let fence = OsmPoi::new_from_way([("barrier", "fence"), ("name", "Fence")].into(), &square(), WAY).unwrap();
+        let fence = OsmPoi::new_from_way(
+            [("barrier", "fence"), ("name", "Fence")].into(),
+            &square(),
+            WAY,
+        )
+        .unwrap();
         assert!(matches!(fence.geometry, Geometry::LineString(_)));
     }
 
     #[test]
     fn admin_places_come_from_whos_on_first() {
-        let city = OsmPoi::new_from_node([("place", "city"), ("name", "Seattle")].into(), (47.6, -122.3), WAY);
+        let city = OsmPoi::new_from_node(
+            [("place", "city"), ("name", "Seattle")].into(),
+            (47.6, -122.3),
+            WAY,
+        );
         assert!(city.is_none());
-        let square = OsmPoi::new_from_node([("place", "square"), ("name", "Pioneer Square")].into(), (47.6, -122.3), WAY);
+        let square = OsmPoi::new_from_node(
+            [("place", "square"), ("name", "Pioneer Square")].into(),
+            (47.6, -122.3),
+            WAY,
+        );
         assert!(square.is_some());
     }
 
@@ -241,13 +336,36 @@ mod test {
     #[test]
     fn named_roads_are_streets() {
         let way = |id: i64, highway: &str, points: &[(f64, f64)]| {
-            let osm = OsmRef { osm_type: OsmType::Way, id, version: Some(1) };
-            StreetWay::new(&[("highway", highway), ("name", "Broadway"), ("surface", "asphalt")].into(), points, osm)
+            let osm = OsmRef {
+                osm_type: OsmType::Way,
+                id,
+                version: Some(1),
+            };
+            StreetWay::new(
+                &[
+                    ("highway", highway),
+                    ("name", "Broadway"),
+                    ("surface", "asphalt"),
+                ]
+                .into(),
+                points,
+                osm,
+            )
         };
         let a = way(5, "residential", &[(47.60, -122.32), (47.61, -122.32)]).unwrap();
-        let b = way(3, "secondary", &[(47.6101, -122.3201), (47.6102, -122.3202)]).unwrap();
+        let b = way(
+            3,
+            "secondary",
+            &[(47.6101, -122.3201), (47.6102, -122.3202)],
+        )
+        .unwrap();
         assert_eq!(a.key, b.key);
-        assert!(way(6, "residential", &[(40.7, -74.0), (40.71, -74.0)]).unwrap().key != a.key);
+        assert!(
+            way(6, "residential", &[(40.7, -74.0), (40.71, -74.0)])
+                .unwrap()
+                .key
+                != a.key
+        );
         assert!(way(7, "proposed", &[(47.60, -122.32), (47.61, -122.32)]).is_none());
 
         let mut street = Street::from(a);
@@ -264,10 +382,14 @@ mod test {
 
     #[test]
     fn unnamed_addresses_are_addresses() {
-        let poi = OsmPoi::new_from_node([("addr:housenumber", "1530"), ("addr:street", "Post Alley")].into(), (47.6, -122.3), WAY)
-            .unwrap()
-            .index_poi()
-            .unwrap();
+        let poi = OsmPoi::new_from_node(
+            [("addr:housenumber", "1530"), ("addr:street", "Post Alley")].into(),
+            (47.6, -122.3),
+            WAY,
+        )
+        .unwrap()
+        .index_poi()
+        .unwrap();
         assert_eq!(poi.kind, Kind::Address);
     }
 }

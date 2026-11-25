@@ -8,26 +8,46 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref EN_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("en/street_types.txt").expect("dictionary")).unwrap();
-    static ref CA_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ca/street_types.txt").expect("dictionary")).unwrap();
-    static ref ES_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("es/street_types.txt").expect("dictionary")).unwrap();
-    static ref AR_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ar/street_types.txt").expect("dictionary")).unwrap();
-    static ref FR_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("fr/street_types.txt").expect("dictionary")).unwrap();
-    static ref DE_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("de/street_types.txt").expect("dictionary")).unwrap();
-    static ref IT_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("it/street_types.txt").expect("dictionary")).unwrap();
-    static ref PT_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("pt/street_types.txt").expect("dictionary")).unwrap();
-    static ref RU_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("ru/street_types.txt").expect("dictionary")).unwrap();
-    static ref ZH_STREET_TYPES: SubstitutionDict =
-        SubstitutionDict::from_str(airmail_tagger::dictionaries::file("zh/street_types.txt").expect("dictionary")).unwrap();
+    static ref EN_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("en/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref CA_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("ca/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref ES_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("es/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref AR_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("ar/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref FR_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("fr/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref DE_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("de/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref IT_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("it/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref PT_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("pt/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref RU_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("ru/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
+    static ref ZH_STREET_TYPES: SubstitutionDict = SubstitutionDict::from_str(
+        airmail_tagger::dictionaries::file("zh/street_types.txt").expect("dictionary")
+    )
+    .unwrap();
     static ref EMPTY_SUBS: SubstitutionDict = SubstitutionDict::empty();
 }
 
@@ -96,7 +116,12 @@ const MAX_ROAD_FORMS: usize = 64;
 /// first, up to [`MAX_ROAD_FORMS`]. Later words vary before earlier ones, so a
 /// capped list still has the street type's forms.
 pub(super) fn apply_subs(words: &[String], dict: &SubstitutionDict) -> Vec<String> {
-    fn walk(prefix: &mut Vec<String>, remaining: &[String], dict: &SubstitutionDict, out: &mut Vec<String>) {
+    fn walk(
+        prefix: &mut Vec<String>,
+        remaining: &[String],
+        dict: &SubstitutionDict,
+        out: &mut Vec<String>,
+    ) {
         if out.len() >= MAX_ROAD_FORMS {
             return;
         }

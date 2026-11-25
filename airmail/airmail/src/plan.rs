@@ -24,15 +24,19 @@ use log::trace;
 use tantivy::{
     DocAddress, Searcher, Term,
     collector::{Count, TopDocs},
-    query::{BooleanQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query, QueryClone, TermQuery},
+    query::{
+        BooleanQuery, ConstScoreQuery, DisjunctionMaxQuery, FuzzyTermQuery, Occur, Query,
+        QueryClone, TermQuery,
+    },
     schema::IndexRecordOption,
 };
 
 use crate::categories::{self, QueryCategories};
 use crate::geometry;
 use crate::index::{
-    AirmailIndex, EARTH_RADIUS_KM, FIELD_ADMIN_IDS, FIELD_AREA_NAME, FIELD_CENTER, FIELD_HOUSENUMBER, FIELD_IMPORTANCE, FIELD_INDEXED_TAG,
-    FIELD_KIND, FIELD_NAME, FIELD_POSTCODE, FIELD_STREET, FIELD_UNIT, SearchHit, SearchRequest, SearchResults, admin_field, area_key,
+    AirmailIndex, EARTH_RADIUS_KM, FIELD_ADMIN_IDS, FIELD_AREA_NAME, FIELD_CENTER,
+    FIELD_HOUSENUMBER, FIELD_IMPORTANCE, FIELD_INDEXED_TAG, FIELD_KIND, FIELD_NAME, FIELD_POSTCODE,
+    FIELD_STREET, FIELD_UNIT, SearchHit, SearchRequest, SearchResults, admin_field, area_key,
 };
 use crate::poi::{AdminBand, Kind};
 use crate::within::Within;
@@ -118,11 +122,19 @@ impl Group {
             && self.postcodes == other.postcodes
             && self.near == other.near
             && self.areas.len() == other.areas.len()
-            && self.areas.iter().zip(&other.areas).all(|(a, b)| a.words == b.words)
+            && self
+                .areas
+                .iter()
+                .zip(&other.areas)
+                .all(|(a, b)| a.words == b.words)
     }
 
     fn only_areas(&self) -> bool {
-        self.venue.is_empty() && self.road.is_empty() && self.numbers.is_empty() && self.postcodes.is_empty() && !self.areas.is_empty()
+        self.venue.is_empty()
+            && self.road.is_empty()
+            && self.numbers.is_empty()
+            && self.postcodes.is_empty()
+            && !self.areas.is_empty()
     }
 
     /// The area searched: the most specific, others narrowing it.
@@ -156,7 +168,10 @@ impl Group {
 fn groups(readings: &[(Vec<Tag>, f64)]) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for (tags, probability) in readings {
-        let mut group = Group { probability: *probability, ..Group::default() };
+        let mut group = Group {
+            probability: *probability,
+            ..Group::default()
+        };
         for (i, tag) in tags.iter().enumerate() {
             match tag {
                 Tag::Venue => group.venue.push(i),
@@ -168,8 +183,16 @@ fn groups(readings: &[(Vec<Tag>, f64)]) -> Vec<Group> {
                 Tag::Neighbourhood | Tag::Locality | Tag::County | Tag::Region | Tag::Country => {
                     let band = tag.band().expect("an area's band");
                     match group.areas.last_mut() {
-                        Some(run) if run.words.last() == Some(&(i - 1)) && run.bands.contains_key(band) => run.words.push(i),
-                        _ => group.areas.push(AreaRun { words: vec![i], bands: HashMap::from([(band, *probability)]) }),
+                        Some(run)
+                            if run.words.last() == Some(&(i - 1))
+                                && run.bands.contains_key(band) =>
+                        {
+                            run.words.push(i)
+                        }
+                        _ => group.areas.push(AreaRun {
+                            words: vec![i],
+                            bands: HashMap::from([(band, *probability)]),
+                        }),
                     }
                 }
             }
@@ -202,7 +225,11 @@ impl Anchor {
     fn new(lon_lat: [f64; 2], scale_km: f64) -> Self {
         let [lon, lat] = lon_lat;
         let center = s2::point::Point::from(s2::latlng::LatLng::from_degrees(lat, lon));
-        Self { center, lon_lat, scale_km: scale_km.max(MIN_SCALE_KM) }
+        Self {
+            center,
+            lon_lat,
+            scale_km: scale_km.max(MIN_SCALE_KM),
+        }
     }
 
     fn of_box([west, south, east, north]: [f64; 4]) -> Self {
@@ -238,7 +265,12 @@ fn widened([west, south, east, north]: [f64; 4], km: f64) -> Option<[f64; 4]> {
         return None;
     }
     let lat = km / KM_PER_DEGREE;
-    Some([wrap(west - lon), (south - lat).max(-90.0), wrap(east + lon), (north + lat).min(90.0)])
+    Some([
+        wrap(west - lon),
+        (south - lat).max(-90.0),
+        wrap(east + lon),
+        (north + lat).min(90.0),
+    ])
 }
 
 fn mass(importance: f64) -> f64 {
@@ -295,8 +327,15 @@ fn constant(query: Box<dyn Query>, score: f32) -> Box<dyn Query> {
     Box::new(ConstScoreQuery::new(query, score))
 }
 
-fn require(mut clauses: Vec<(Occur, Box<dyn Query>)>, filters: impl IntoIterator<Item = Box<dyn Query>>) -> BooleanQuery {
-    clauses.extend(filters.into_iter().map(|filter| (Occur::Must, constant(filter, 0.0))));
+fn require(
+    mut clauses: Vec<(Occur, Box<dyn Query>)>,
+    filters: impl IntoIterator<Item = Box<dyn Query>>,
+) -> BooleanQuery {
+    clauses.extend(
+        filters
+            .into_iter()
+            .map(|filter| (Occur::Must, constant(filter, 0.0))),
+    );
     BooleanQuery::new(clauses)
 }
 
@@ -305,21 +344,37 @@ type Matches = Vec<(f32, DocAddress)>;
 
 /// The best of what `query` matches: its score × `base` × mass × nearness;
 /// only what's in `within` if given, checked exactly as it's collected.
-fn ranked(searcher: &Searcher, query: &dyn Query, anchor: Option<Anchor>, base: f64, limit: usize, within: Option<&Arc<Vec<Rect<f64>>>>) -> Result<Matches> {
-    let collector = TopDocs::with_limit(limit).tweak_score(move |segment: &tantivy::SegmentReader| {
-        let importance = segment.fast_fields().f64(FIELD_IMPORTANCE).ok();
-        let center = segment.fast_fields().u64(FIELD_CENTER).ok();
-        move |doc, score: f32| {
-            let importance = importance.as_ref().and_then(|column| column.first(doc)).unwrap_or(0.0);
-            let near = match (&anchor, center.as_ref().and_then(|column| column.first(doc))) {
-                (Some(anchor), Some(center)) => {
-                    nearness(anchor.km_to(s2::point::Point::from(s2::cellid::CellID(center))), anchor.scale_km, importance)
-                }
-                _ => 1.0,
-            };
-            (f64::from(score) * base * mass(importance) * near) as f32
-        }
-    });
+fn ranked(
+    searcher: &Searcher,
+    query: &dyn Query,
+    anchor: Option<Anchor>,
+    base: f64,
+    limit: usize,
+    within: Option<&Arc<Vec<Rect<f64>>>>,
+) -> Result<Matches> {
+    let collector =
+        TopDocs::with_limit(limit).tweak_score(move |segment: &tantivy::SegmentReader| {
+            let importance = segment.fast_fields().f64(FIELD_IMPORTANCE).ok();
+            let center = segment.fast_fields().u64(FIELD_CENTER).ok();
+            move |doc, score: f32| {
+                let importance = importance
+                    .as_ref()
+                    .and_then(|column| column.first(doc))
+                    .unwrap_or(0.0);
+                let near = match (
+                    &anchor,
+                    center.as_ref().and_then(|column| column.first(doc)),
+                ) {
+                    (Some(anchor), Some(center)) => nearness(
+                        anchor.km_to(s2::point::Point::from(s2::cellid::CellID(center))),
+                        anchor.scale_km,
+                        importance,
+                    ),
+                    _ => 1.0,
+                };
+                (f64::from(score) * base * mass(importance) * near) as f32
+            }
+        });
     Ok(match within {
         Some(rects) => searcher.search(query, &Within::new(rects.clone(), collector))?,
         None => searcher.search(query, &collector)?,
@@ -348,12 +403,27 @@ struct Run<'a> {
 
 impl<'a> Run<'a> {
     fn new(index: &'a AirmailIndex, request: &'a SearchRequest<'a>) -> Result<Self> {
-        let view = request.viewport.map(Anchor::of_box).or_else(|| request.focus.map(|focus| Anchor::new(focus, MIN_SCALE_KM)));
-        let (words, readings) = index.tagged(request.text, request.prefix, view.map(|v| v.lon_lat), MAX_READINGS, READING_COVERAGE);
+        let view = request
+            .viewport
+            .map(Anchor::of_box)
+            .or_else(|| request.focus.map(|focus| Anchor::new(focus, MIN_SCALE_KM)));
+        let (words, readings) = index.tagged(
+            request.text,
+            request.prefix,
+            view.map(|v| v.lon_lat),
+            MAX_READINGS,
+            READING_COVERAGE,
+        );
         let (readings, trusted): (Vec<(Vec<Tag>, f64)>, bool) = match readings {
             Some(readings) if !readings.is_empty() => {
                 let trusted = readings.iter().any(|r| r.probability >= TRUSTED_READING);
-                (readings.into_iter().map(|r| (r.tags, r.probability)).collect(), trusted)
+                (
+                    readings
+                        .into_iter()
+                        .map(|r| (r.tags, r.probability))
+                        .collect(),
+                    trusted,
+                )
             }
             // Without a tagger, all of it is what's sought, for all we know.
             _ => (vec![(vec![Tag::Venue; words.len()], 1.0)], false),
@@ -367,9 +437,13 @@ impl<'a> Run<'a> {
             trusted,
             typing: request.prefix && !request.text.ends_with(char::is_whitespace),
             view,
-            located: request.location.map(|location| Anchor::new(location, MIN_SCALE_KM)),
+            located: request
+                .location
+                .map(|location| Anchor::new(location, MIN_SCALE_KM)),
             filters: Vec::new(),
-            bbox: request.bbox.map(|bbox| Arc::new(geometry::bbox_rects(bbox))),
+            bbox: request
+                .bbox
+                .map(|bbox| Arc::new(geometry::bbox_rects(bbox))),
             limit: request.limit.max(1),
             retrieved: Vec::new(),
             categories: None,
@@ -415,20 +489,43 @@ impl<'a> Run<'a> {
         let specific = group.most_specific_area();
         // A reading of only areas seeks the most specific by name; otherwise
         // what's sought is in them.
-        let candidates = if group.only_areas() { Vec::new() } else { self.candidates(group, specific)? };
-        trace!("{:?}: {group:?}: {:?}", self.request.text, candidates.iter().map(|c| (c.id, c.share)).collect::<Vec<_>>());
+        let candidates = if group.only_areas() {
+            Vec::new()
+        } else {
+            self.candidates(group, specific)?
+        };
+        trace!(
+            "{:?}: {group:?}: {:?}",
+            self.request.text,
+            candidates
+                .iter()
+                .map(|c| (c.id, c.share))
+                .collect::<Vec<_>>()
+        );
         if !group.areas.is_empty() && !group.only_areas() && candidates.is_empty() {
             return Ok(());
         }
-        let default_anchor = if group.near { self.located.or(self.view) } else { self.view.or(self.located) };
-        let scopes: Vec<Scope> = if candidates.is_empty() {
-            vec![Scope { share: 1.0, filter: None, anchor: default_anchor }]
+        let default_anchor = if group.near {
+            self.located.or(self.view)
         } else {
-            candidates.iter().flat_map(|candidate| self.scopes_of(candidate, group, default_anchor)).collect()
+            self.view.or(self.located)
+        };
+        let scopes: Vec<Scope> = if candidates.is_empty() {
+            vec![Scope {
+                share: 1.0,
+                filter: None,
+                anchor: default_anchor,
+            }]
+        } else {
+            candidates
+                .iter()
+                .flat_map(|candidate| self.scopes_of(candidate, group, default_anchor))
+                .collect()
         };
 
         let address = self.address_query(group);
-        let mut required: Vec<Box<dyn Query>> = self.filters.iter().map(|f| f.box_clone()).collect();
+        let mut required: Vec<Box<dyn Query>> =
+            self.filters.iter().map(|f| f.box_clone()).collect();
         if group.only_areas() {
             required.extend(self.narrowing(group, specific));
         } else if !group.venue.is_empty() {
@@ -438,50 +535,99 @@ impl<'a> Run<'a> {
         let categories = if group.venue.is_empty() || pass == Pass::Typos {
             None
         } else {
-            let text = group.venue.iter().map(|&i| self.words[i].as_str()).collect::<Vec<_>>().join(" ");
+            let text = group
+                .venue
+                .iter()
+                .map(|&i| self.words[i].as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             self.request.model.map(|model| model.understand(&text))
         };
         if self.categories.is_none() {
             self.categories.clone_from(&categories);
         }
-        let diets: Rc<Vec<String>> = Rc::new(categories.iter().flat_map(|c| c.diets.iter().map(|(diet, _)| diet.clone())).collect());
+        let diets: Rc<Vec<String>> = Rc::new(
+            categories
+                .iter()
+                .flat_map(|c| c.diets.iter().map(|(diet, _)| diet.clone()))
+                .collect(),
+        );
         let by_category = categories.as_ref().and_then(|c| self.category_query(c));
 
         let name_words = group.name_words();
-        let sought = if name_words.is_empty() { None } else { Some(Rc::new(self.sought(name_words, pass)?)) };
-        let discount = if pass == Pass::Typos { TYPO_DISCOUNT } else { 1.0 };
+        let sought = if name_words.is_empty() {
+            None
+        } else {
+            Some(Rc::new(self.sought(name_words, pass)?))
+        };
+        let discount = if pass == Pass::Typos {
+            TYPO_DISCOUNT
+        } else {
+            1.0
+        };
         let wanted = self.limit + EXTRA_RESULTS;
 
         for scope in scopes {
             let base = group.probability * scope.share * discount;
-            let in_scope = || required.iter().map(|f| f.box_clone()).chain(scope.filter.iter().map(|f| f.box_clone()));
-            let mut found: Vec<(Matches, Option<Rc<Sought>>)> = Vec::new();
-            let by_other = if group.venue.is_empty() && group.road.is_empty() && !group.postcodes.is_empty() {
-                Some(self.postcode_query(group))
-            } else if group.venue.is_empty() {
-                address.as_ref().map(|a| a.box_clone())
-            } else {
-                None
+            let in_scope = || {
+                required
+                    .iter()
+                    .map(|f| f.box_clone())
+                    .chain(scope.filter.iter().map(|f| f.box_clone()))
             };
+            let mut found: Vec<(Matches, Option<Rc<Sought>>)> = Vec::new();
+            let by_other =
+                if group.venue.is_empty() && group.road.is_empty() && !group.postcodes.is_empty() {
+                    Some(self.postcode_query(group))
+                } else if group.venue.is_empty() {
+                    address.as_ref().map(|a| a.box_clone())
+                } else {
+                    None
+                };
             if let Some(sought) = &sought {
-                let matching = self.index.all_name_words(&sought.words, sought.unfinished, pass == Pass::Typos);
+                let matching = self.index.all_name_words(
+                    &sought.words,
+                    sought.unfinished,
+                    pass == Pass::Typos,
+                );
                 let query = require(vec![(Occur::Must, constant(matching, 1.0))], in_scope());
-                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted, self.bbox.as_ref())?, Some(sought.clone())));
+                found.push((
+                    ranked(
+                        &self.searcher,
+                        &query,
+                        scope.anchor,
+                        base,
+                        wanted,
+                        self.bbox.as_ref(),
+                    )?,
+                    Some(sought.clone()),
+                ));
             } else if let Some(other) = by_other {
                 let query = require(vec![(Occur::Must, constant(other, 1.0))], in_scope());
-                found.push((ranked(&self.searcher, &query, scope.anchor, base, wanted, self.bbox.as_ref())?, None));
+                found.push((
+                    ranked(
+                        &self.searcher,
+                        &query,
+                        scope.anchor,
+                        base,
+                        wanted,
+                        self.bbox.as_ref(),
+                    )?,
+                    None,
+                ));
             }
             if let Some(by_category) = &by_category {
                 let query = require(vec![(Occur::Must, by_category.box_clone())], in_scope());
                 found.push((self.nearest_rings(&query, &scope, base, wanted)?, None));
             }
             for (matches, sought) in found {
-                self.retrieved.extend(matches.into_iter().map(|(score, address)| Retrieved {
-                    address,
-                    score: f64::from(score),
-                    sought: sought.clone(),
-                    diets: diets.clone(),
-                }));
+                self.retrieved
+                    .extend(matches.into_iter().map(|(score, address)| Retrieved {
+                        address,
+                        score: f64::from(score),
+                        sought: sought.clone(),
+                        diets: diets.clone(),
+                    }));
             }
         }
         Ok(())
@@ -489,60 +635,130 @@ impl<'a> Run<'a> {
 
     /// The best of `query`, in widening rings around the anchor if nothing but
     /// the anchor limits it.
-    fn nearest_rings(&self, query: &BooleanQuery, scope: &Scope, base: f64, wanted: usize) -> Result<Matches> {
+    fn nearest_rings(
+        &self,
+        query: &BooleanQuery,
+        scope: &Scope,
+        base: f64,
+        wanted: usize,
+    ) -> Result<Matches> {
         if let (None, Some(anchor)) = (&scope.filter, scope.anchor) {
             for factor in RING_FACTORS {
-                let Some(surroundings) = anchor.surroundings(factor) else { break };
+                let Some(surroundings) = anchor.surroundings(factor) else {
+                    break;
+                };
                 let cells = geometry::query_cells(&geometry::bbox_rects(surroundings));
-                let within = require(vec![(Occur::Must, query.box_clone())], [self.index.covering_query(&cells)]);
-                let found = ranked(&self.searcher, &within, scope.anchor, base, wanted, self.bbox.as_ref())?;
+                let within = require(
+                    vec![(Occur::Must, query.box_clone())],
+                    [self.index.covering_query(&cells)],
+                );
+                let found = ranked(
+                    &self.searcher,
+                    &within,
+                    scope.anchor,
+                    base,
+                    wanted,
+                    self.bbox.as_ref(),
+                )?;
                 if found.len() >= self.limit {
                     return Ok(found);
                 }
             }
         }
-        ranked(&self.searcher, query, scope.anchor, base, wanted, self.bbox.as_ref())
+        ranked(
+            &self.searcher,
+            query,
+            scope.anchor,
+            base,
+            wanted,
+            self.bbox.as_ref(),
+        )
     }
 
     /// Every word in any field, for a misread query.
     fn search_any_field(&mut self) -> Result<()> {
         let last = self.words.len() - 1;
-        let every_word = self.words.iter().enumerate().map(|(i, word)| -> Box<dyn Query> {
-            let fields = [FIELD_NAME, FIELD_STREET, FIELD_HOUSENUMBER, FIELD_UNIT, FIELD_POSTCODE].into_iter().chain(AdminBand::ALL.map(admin_field));
-            let unfinished = self.typing && i == last;
-            Box::new(BooleanQuery::union(fields.map(|field| self.index.word_query(field, word, unfinished, self.request.typos)).collect()))
-        });
+        let every_word = self
+            .words
+            .iter()
+            .enumerate()
+            .map(|(i, word)| -> Box<dyn Query> {
+                let fields = [
+                    FIELD_NAME,
+                    FIELD_STREET,
+                    FIELD_HOUSENUMBER,
+                    FIELD_UNIT,
+                    FIELD_POSTCODE,
+                ]
+                .into_iter()
+                .chain(AdminBand::ALL.map(admin_field));
+                let unfinished = self.typing && i == last;
+                Box::new(BooleanQuery::union(
+                    fields
+                        .map(|field| {
+                            self.index
+                                .word_query(field, word, unfinished, self.request.typos)
+                        })
+                        .collect(),
+                ))
+            });
         let matching: Box<dyn Query> = Box::new(BooleanQuery::intersection(every_word.collect()));
-        let query = require(vec![(Occur::Must, constant(matching, 1.0))], self.filters.iter().map(|f| f.box_clone()));
-        let found = ranked(&self.searcher, &query, self.view.or(self.located), ANY_FIELD_DISCOUNT, self.limit + EXTRA_RESULTS, self.bbox.as_ref())?;
+        let query = require(
+            vec![(Occur::Must, constant(matching, 1.0))],
+            self.filters.iter().map(|f| f.box_clone()),
+        );
+        let found = ranked(
+            &self.searcher,
+            &query,
+            self.view.or(self.located),
+            ANY_FIELD_DISCOUNT,
+            self.limit + EXTRA_RESULTS,
+            self.bbox.as_ref(),
+        )?;
         let none = Rc::new(Vec::new());
-        self.retrieved.extend(found.into_iter().map(|(score, address)| Retrieved {
-            address,
-            score: f64::from(score),
-            sought: None,
-            diets: none.clone(),
-        }));
+        self.retrieved
+            .extend(found.into_iter().map(|(score, address)| Retrieved {
+                address,
+                score: f64::from(score),
+                sought: None,
+                diets: none.clone(),
+            }));
         Ok(())
     }
 
     /// The areas a group's most specific area words may mean, by how likely
     /// the tagger makes their bands, importance and nearness to the map.
     fn candidates(&self, group: &Group, specific: Option<usize>) -> Result<Vec<Candidate>> {
-        let Some(specific) = specific else { return Ok(Vec::new()) };
+        let Some(specific) = specific else {
+            return Ok(Vec::new());
+        };
         let run = &group.areas[specific];
-        let name = run.words.iter().map(|&i| self.words[i].as_str()).collect::<Vec<_>>().join(" ");
+        let name = run
+            .words
+            .iter()
+            .map(|&i| self.words[i].as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let narrowing = self.narrowing(group, Some(specific));
         let mut matches: Vec<(f64, DocAddress, AdminBand)> = Vec::new();
         for band in AdminBand::ALL {
-            let Some(weight) = run.bands.get(band.as_str()) else { continue };
-            let term = Term::from_field_text(self.index.field(FIELD_AREA_NAME), &area_key(band, &name));
+            let Some(weight) = run.bands.get(band.as_str()) else {
+                continue;
+            };
+            let term =
+                Term::from_field_text(self.index.field(FIELD_AREA_NAME), &area_key(band, &name));
             let named: Box<dyn Query> = if self.unfinished(&run.words) {
                 Box::new(FuzzyTermQuery::new_prefix(term, 0, true))
             } else {
                 Box::new(TermQuery::new(term, IndexRecordOption::Basic))
             };
-            let query = require(vec![(Occur::Must, constant(named, 1.0))], narrowing.iter().map(|q| q.box_clone()));
-            for (score, address) in ranked(&self.searcher, &query, self.view, 1.0, MAX_CANDIDATES, None)? {
+            let query = require(
+                vec![(Occur::Must, constant(named, 1.0))],
+                narrowing.iter().map(|q| q.box_clone()),
+            );
+            for (score, address) in
+                ranked(&self.searcher, &query, self.view, 1.0, MAX_CANDIDATES, None)?
+            {
                 matches.push((f64::from(score) * weight, address, band));
             }
         }
@@ -556,17 +772,36 @@ impl<'a> Run<'a> {
                 continue;
             }
             let hit = self.index.hit(&self.searcher, address, 0.0)?;
-            let (Some(id), Some(bounds)) = (hit.wof.as_ref().map(|w| w.id), geometry::bbox(&hit.geometry)) else { continue };
+            let (Some(id), Some(bounds)) = (
+                hit.wof.as_ref().map(|w| w.id),
+                geometry::bbox(&hit.geometry),
+            ) else {
+                continue;
+            };
             let is_point = bounds[0] == bounds[2] && bounds[1] == bounds[3];
-            candidates.push(Candidate { id, share, bounds, small: is_point || matches!(band, AdminBand::Neighbourhood | AdminBand::Locality) });
+            candidates.push(Candidate {
+                id,
+                share,
+                bounds,
+                small: is_point || matches!(band, AdminBand::Neighbourhood | AdminBand::Locality),
+            });
         }
         Ok(candidates)
     }
 
     /// Where to search for a candidate: in it, and if it's small, around it for
     /// less, as where a neighbourhood ends is a matter of opinion.
-    fn scopes_of(&self, candidate: &Candidate, group: &Group, default_anchor: Option<Anchor>) -> Vec<Scope> {
-        let anchor = if candidate.small && !group.near { Some(Anchor::of_box(candidate.bounds)) } else { default_anchor };
+    fn scopes_of(
+        &self,
+        candidate: &Candidate,
+        group: &Group,
+        default_anchor: Option<Anchor>,
+    ) -> Vec<Scope> {
+        let anchor = if candidate.small && !group.near {
+            Some(Anchor::of_box(candidate.bounds))
+        } else {
+            default_anchor
+        };
         let in_it = Term::from_field_u64(self.index.field(FIELD_ADMIN_IDS), candidate.id);
         let mut scopes = vec![Scope {
             share: candidate.share,
@@ -576,8 +811,14 @@ impl<'a> Run<'a> {
         if candidate.small
             && let Some(bounds) = widened(candidate.bounds, AREA_MARGIN_KM)
         {
-            let around = self.index.covering_query(&geometry::query_cells(&geometry::bbox_rects(bounds)));
-            scopes.push(Scope { share: candidate.share * OUTSIDE, filter: Some(around), anchor });
+            let around = self
+                .index
+                .covering_query(&geometry::query_cells(&geometry::bbox_rects(bounds)));
+            scopes.push(Scope {
+                share: candidate.share * OUTSIDE,
+                filter: Some(around),
+                anchor,
+            });
         }
         scopes
     }
@@ -594,7 +835,14 @@ impl<'a> Run<'a> {
             for &word in &other.words {
                 let fields = AdminBand::ALL
                     .iter()
-                    .map(|band| self.index.word_query(admin_field(*band), &self.words[word], self.typing && word == last, false))
+                    .map(|band| {
+                        self.index.word_query(
+                            admin_field(*band),
+                            &self.words[word],
+                            self.typing && word == last,
+                            false,
+                        )
+                    })
                     .collect();
                 narrowing.push(Box::new(BooleanQuery::union(fields)));
             }
@@ -605,7 +853,13 @@ impl<'a> Run<'a> {
     fn words_in(&self, field: &str, indexes: &[usize]) -> Box<dyn Query> {
         let last = self.words.len().saturating_sub(1);
         Box::new(BooleanQuery::intersection(
-            indexes.iter().map(|&i| self.index.word_query(field, &self.words[i], self.typing && i == last, false)).collect(),
+            indexes
+                .iter()
+                .map(|&i| {
+                    self.index
+                        .word_query(field, &self.words[i], self.typing && i == last, false)
+                })
+                .collect(),
         ))
     }
 
@@ -624,7 +878,10 @@ impl<'a> Run<'a> {
 
     /// A postcode's own, or a place's address's.
     fn postcode_query(&self, group: &Group) -> Box<dyn Query> {
-        Box::new(BooleanQuery::union(vec![self.words_in(FIELD_NAME, &group.postcodes), self.words_in(FIELD_POSTCODE, &group.postcodes)]))
+        Box::new(BooleanQuery::union(vec![
+            self.words_in(FIELD_NAME, &group.postcodes),
+            self.words_in(FIELD_POSTCODE, &group.postcodes),
+        ]))
     }
 
     fn sought(&self, indexes: &[usize], pass: Pass) -> Result<Sought> {
@@ -633,11 +890,18 @@ impl<'a> Run<'a> {
         let rarity = if pass == Pass::Typos {
             1.0
         } else {
-            let matching = self.searcher.search(&self.index.all_name_words(&words, unfinished, false), &Count)?;
+            let matching = self.searcher.search(
+                &self.index.all_name_words(&words, unfinished, false),
+                &Count,
+            )?;
             let share = matching.max(1) as f64 / self.searcher.num_docs().max(1) as f64;
             1.0 + RARITY_WEIGHT * (RARITY_COMMON_SHARE / share).max(1.0).log10() as f32
         };
-        Ok(Sought { words, unfinished, rarity })
+        Ok(Sought {
+            words,
+            unfinished,
+            rarity,
+        })
     }
 
     /// Places with the most specific signal, scored `CATEGORY_MATCH` for the
@@ -645,14 +909,22 @@ impl<'a> Run<'a> {
     /// split across equivalent tags.
     fn category_query(&self, understood: &QueryCategories) -> Option<Box<dyn Query>> {
         let tags: Vec<(String, f32)> = if !understood.cuisines.is_empty() {
-            understood.cuisines.iter().map(|(c, p)| (format!("cuisine={c}"), *p)).collect()
+            understood
+                .cuisines
+                .iter()
+                .map(|(c, p)| (format!("cuisine={c}"), *p))
+                .collect()
         } else if !understood.categories.is_empty() {
             understood.categories.clone()
         } else {
             understood
                 .diets
                 .iter()
-                .flat_map(|(diet, p)| categories::DIET_POSITIVE_VALUES.iter().map(move |value| (format!("diet:{diet}={value}"), *p)))
+                .flat_map(|(diet, p)| {
+                    categories::DIET_POSITIVE_VALUES
+                        .iter()
+                        .map(move |value| (format!("diet:{diet}={value}"), *p))
+                })
                 .collect()
         };
         let top = tags.iter().map(|(_, p)| *p).fold(0.0, f32::max);
@@ -663,7 +935,10 @@ impl<'a> Run<'a> {
             .iter()
             .map(|(tag, p)| {
                 let term = Term::from_field_text(self.index.field(FIELD_INDEXED_TAG), tag);
-                constant(Box::new(TermQuery::new(term, IndexRecordOption::Basic)), CATEGORY_MATCH * p / top)
+                constant(
+                    Box::new(TermQuery::new(term, IndexRecordOption::Basic)),
+                    CATEGORY_MATCH * p / top,
+                )
             })
             .collect();
         Some(Box::new(DisjunctionMaxQuery::new(alternatives)))
@@ -672,17 +947,37 @@ impl<'a> Run<'a> {
     /// What a request itself requires.
     fn request_filters(&self) -> Vec<Box<dyn Query>> {
         let term = |field: &str, value: &str| -> Box<dyn Query> {
-            Box::new(TermQuery::new(Term::from_field_text(self.index.field(field), value), IndexRecordOption::Basic))
+            Box::new(TermQuery::new(
+                Term::from_field_text(self.index.field(field), value),
+                IndexRecordOption::Basic,
+            ))
         };
-        let mut filters: Vec<Box<dyn Query>> = self.request.tags.iter().map(|tag| term(FIELD_INDEXED_TAG, tag)).collect();
+        let mut filters: Vec<Box<dyn Query>> = self
+            .request
+            .tags
+            .iter()
+            .map(|tag| term(FIELD_INDEXED_TAG, tag))
+            .collect();
         if !self.request.kinds.is_empty() && self.request.kinds.len() < Kind::ALL.len() {
-            filters.push(Box::new(BooleanQuery::union(self.request.kinds.iter().map(|kind| term(FIELD_KIND, kind.as_str())).collect())));
+            filters.push(Box::new(BooleanQuery::union(
+                self.request
+                    .kinds
+                    .iter()
+                    .map(|kind| term(FIELD_KIND, kind.as_str()))
+                    .collect(),
+            )));
         }
         if let Some(within) = self.request.within {
-            filters.push(Box::new(TermQuery::new(Term::from_field_u64(self.index.field(FIELD_ADMIN_IDS), within), IndexRecordOption::Basic)));
+            filters.push(Box::new(TermQuery::new(
+                Term::from_field_u64(self.index.field(FIELD_ADMIN_IDS), within),
+                IndexRecordOption::Basic,
+            )));
         }
         if let Some(bbox) = self.request.bbox {
-            filters.push(self.index.covering_query(&geometry::query_cells(&geometry::bbox_rects(bbox))));
+            filters.push(
+                self.index
+                    .covering_query(&geometry::query_cells(&geometry::bbox_rects(bbox))),
+            );
         }
         filters
     }
@@ -695,18 +990,32 @@ impl<'a> Run<'a> {
             names.push(&wof.default_name);
             names.extend(wof.names.values().map(String::as_str));
         }
-        names.extend(hit.tags.iter().filter(|(k, _)| k == "name" || k.starts_with("name:") || k.ends_with("_name")).map(|(_, v)| v.as_str()));
+        names.extend(
+            hit.tags
+                .iter()
+                .filter(|(k, _)| k == "name" || k.starts_with("name:") || k.ends_with("_name"))
+                .map(|(_, v)| v.as_str()),
+        );
         let last = sought.words.len() - 1;
         names
             .into_iter()
             .filter_map(|name| {
                 let tokens = self.index.tokens(&name.replace("'s", "s"));
                 let has_all = sought.words.iter().enumerate().all(|(i, word)| {
-                    tokens.iter().any(|t| if sought.unfinished && i == last { t.starts_with(word.as_str()) } else { t == word })
+                    tokens.iter().any(|t| {
+                        if sought.unfinished && i == last {
+                            t.starts_with(word.as_str())
+                        } else {
+                            t == word
+                        }
+                    })
                 });
-                (has_all && !tokens.is_empty()).then(|| (sought.words.len() as f32 / tokens.len() as f32).min(1.0))
+                (has_all && !tokens.is_empty())
+                    .then(|| (sought.words.len() as f32 / tokens.len() as f32).min(1.0))
             })
-            .fold(None, |best: Option<f32>, coverage| Some(best.map_or(coverage, |b| b.max(coverage))))
+            .fold(None, |best: Option<f32>, coverage| {
+                Some(best.map_or(coverage, |b| b.max(coverage)))
+            })
             .unwrap_or(UNSEEN_COVERAGE)
     }
 
@@ -731,22 +1040,41 @@ impl<'a> Run<'a> {
                 }
             };
             let hit = &*hit;
-            if bbox.as_ref().is_some_and(|rects| !geometry::intersects_any(&hit.geometry, rects)) {
+            if bbox
+                .as_ref()
+                .is_some_and(|rects| !geometry::intersects_any(&hit.geometry, rects))
+            {
                 continue;
             }
-            let coverage = item.sought.as_ref().map(|sought| self.coverage(hit, sought));
-            let matched = item.sought.as_ref().zip(coverage).map_or(1.0, |(sought, coverage)| coverage * sought.rarity);
+            let coverage = item
+                .sought
+                .as_ref()
+                .map(|sought| self.coverage(hit, sought));
+            let matched = item
+                .sought
+                .as_ref()
+                .zip(coverage)
+                .map_or(1.0, |(sought, coverage)| coverage * sought.rarity);
             let has_diet = item.diets.iter().any(|diet| {
-                hit.tag(&format!("diet:{diet}")).is_some_and(|value| categories::DIET_POSITIVE_VALUES.contains(&value))
+                hit.tag(&format!("diet:{diet}"))
+                    .is_some_and(|value| categories::DIET_POSITIVE_VALUES.contains(&value))
             });
             let score = item.score as f32 * matched * if has_diet { DIET_BONUS } else { 1.0 };
             let entry = best.entry(item.address).or_insert((0.0, false));
             entry.0 = entry.0.max(score);
             entry.1 |= coverage.is_some_and(|c| c >= 1.0);
         }
-        trace!("{:?}: {} retrieved, {} places", self.request.text, self.retrieved.len(), best.len());
+        trace!(
+            "{:?}: {} retrieved, {} places",
+            self.request.text,
+            self.retrieved.len(),
+            best.len()
+        );
 
-        let mut ranked: Vec<(DocAddress, f32, bool)> = best.into_iter().map(|(address, (score, whole))| (address, score, whole)).collect();
+        let mut ranked: Vec<(DocAddress, f32, bool)> = best
+            .into_iter()
+            .map(|(address, (score, whole))| (address, score, whole))
+            .collect();
         ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         // The best place with exactly the name stays in reach, however many
         // places of its kind are nearer.
@@ -764,9 +1092,16 @@ impl<'a> Run<'a> {
         }
         crate::index::merge_duplicates(&mut sorted);
         sorted.truncate(self.limit);
-        let admin_ids: BTreeSet<u64> = sorted.iter().flat_map(|hit| hit.admin_ids.iter().copied()).collect();
+        let admin_ids: BTreeSet<u64> = sorted
+            .iter()
+            .flat_map(|hit| hit.admin_ids.iter().copied())
+            .collect();
         let admins = self.index.admins(&self.searcher, &admin_ids)?;
-        Ok(SearchResults { hits: sorted, admins, categories: self.categories })
+        Ok(SearchResults {
+            hits: sorted,
+            admins,
+            categories: self.categories,
+        })
     }
 }
 
@@ -775,7 +1110,11 @@ impl AirmailIndex {
     fn all_name_words(&self, words: &[String], unfinished: bool, typos: bool) -> Box<dyn Query> {
         let last = words.len().saturating_sub(1);
         Box::new(BooleanQuery::intersection(
-            words.iter().enumerate().map(|(i, word)| self.word_query(FIELD_NAME, word, unfinished && i == last, typos)).collect(),
+            words
+                .iter()
+                .enumerate()
+                .map(|(i, word)| self.word_query(FIELD_NAME, word, unfinished && i == last, typos))
+                .collect(),
         ))
     }
 }
@@ -824,7 +1163,8 @@ mod test {
 
     #[test]
     fn boxes_widen_and_wrap() {
-        let [west, south, east, north] = widened([-122.41, 47.656, -122.361, 47.698], AREA_MARGIN_KM).unwrap();
+        let [west, south, east, north] =
+            widened([-122.41, 47.656, -122.361, 47.698], AREA_MARGIN_KM).unwrap();
         assert!(west < -122.47 && east > -122.30 && south < 47.62 && north > 47.73);
         let [west, _, east, _] = widened([179.99, 0.0, -179.99, 0.01], AREA_MARGIN_KM).unwrap();
         assert!(west > 179.0 && east < -179.0);

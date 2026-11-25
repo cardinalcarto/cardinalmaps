@@ -29,7 +29,10 @@ impl Streets {
     const SHARDS: usize = 64;
 
     fn new() -> Self {
-        Self { shards: (0..Self::SHARDS).map(|_| Mutex::default()).collect(), hasher: RandomState::new() }
+        Self {
+            shards: (0..Self::SHARDS).map(|_| Mutex::default()).collect(),
+            hasher: RandomState::new(),
+        }
     }
 
     fn add(&self, way: StreetWay) {
@@ -44,7 +47,9 @@ impl Streets {
     }
 
     fn into_streets(self) -> impl Iterator<Item = Street> {
-        self.shards.into_iter().flat_map(|shard| shard.into_inner().expect("streets").into_values())
+        self.shards
+            .into_iter()
+            .flat_map(|shard| shard.into_inner().expect("streets").into_values())
     }
 }
 
@@ -66,7 +71,11 @@ impl Scan {
 
     /// Tags with the street from an associated street relation, if the
     /// element is a house in one and has no `addr:street`.
-    fn with_street<'a>(&'a self, mut tags: HashMap<&'a str, &'a str>, member: (u8, i64)) -> HashMap<&'a str, &'a str> {
+    fn with_street<'a>(
+        &'a self,
+        mut tags: HashMap<&'a str, &'a str>,
+        member: (u8, i64),
+    ) -> HashMap<&'a str, &'a str> {
         if tags.contains_key("addr:housenumber")
             && !tags.contains_key("addr:street")
             && let Some(street) = self.house_streets.get(&member)
@@ -92,9 +101,11 @@ const LOCATIONS_ON_WAYS: &str = "LocationsOnWays";
 pub fn require_locations_on_ways(path: &Path) -> Result<()> {
     let has = match BlobReader::from_path(path)?.next().transpose()? {
         Some(blob) => match blob.decode()? {
-            BlobDecode::OsmHeader(header) => {
-                header.optional_features().iter().chain(header.required_features()).any(|f| f == LOCATIONS_ON_WAYS)
-            }
+            BlobDecode::OsmHeader(header) => header
+                .optional_features()
+                .iter()
+                .chain(header.required_features())
+                .any(|f| f == LOCATIONS_ON_WAYS),
             _ => false,
         },
         None => false,
@@ -123,14 +134,17 @@ pub struct OsmPbf {
 }
 
 fn version(version: Option<i32>) -> Option<u32> {
-    version.and_then(|v| u32::try_from(v).ok()).filter(|v| *v > 0)
+    version
+        .and_then(|v| u32::try_from(v).ok())
+        .filter(|v| *v > 0)
 }
 
 /// Whether a relation might be indexed: a named multipolygon or one with an
 /// address. Its tags are checked again once it's assembled.
 fn wants_relation(tags: &HashMap<&str, &str>) -> bool {
     tags.get("type") == Some(&"multipolygon")
-        && (tags.contains_key("name") || (tags.contains_key("addr:housenumber") && tags.contains_key("addr:street")))
+        && (tags.contains_key("name")
+            || (tags.contains_key("addr:housenumber") && tags.contains_key("addr:street")))
 }
 
 impl OsmPbf {
@@ -140,7 +154,12 @@ impl OsmPbf {
         sender: Sender<ToIndexPoi>,
         indexer_cache: Arc<IndexerCache>,
     ) -> Self {
-        Self { pbf_path: osm_pbf_path.to_path_buf(), ignore, sender, indexer_cache }
+        Self {
+            pbf_path: osm_pbf_path.to_path_buf(),
+            ignore,
+            sender,
+            indexer_cache,
+        }
     }
 
     fn send(&self, poi: Option<OsmPoi>, counter: &AtomicUsize) -> u64 {
@@ -157,7 +176,10 @@ impl OsmPbf {
     pub fn parse_osm(self) -> Result<()> {
         require_locations_on_ways(&self.pbf_path)?;
         let relations = !self.ignore.contains(&ParseOsmTypes::Relations);
-        info!("Finding the ways multipolygons need in {}", self.pbf_path.display());
+        info!(
+            "Finding the ways multipolygons need in {}",
+            self.pbf_path.display()
+        );
         let scan = self.scan(relations)?;
         let needed_ways = &scan.needed_ways;
         info!(
@@ -178,38 +200,62 @@ impl OsmPbf {
                     if self.ignore.contains(&ParseOsmTypes::DenseNodes) {
                         return 0;
                     }
-                    let osm = OsmRef { osm_type: OsmType::Node, id: dn.id(), version: version(dn.info().map(|i| i.version())) };
+                    let osm = OsmRef {
+                        osm_type: OsmType::Node,
+                        id: dn.id(),
+                        version: version(dn.info().map(|i| i.version())),
+                    };
                     let tags = scan.with_street(dn.tags().collect::<HashMap<_, _>>(), (0, dn.id()));
-                    self.send(OsmPoi::new_from_node(tags, (dn.lat(), dn.lon()), osm), &count_nodes)
+                    self.send(
+                        OsmPoi::new_from_node(tags, (dn.lat(), dn.lon()), osm),
+                        &count_nodes,
+                    )
                 }
                 Element::Node(node) => {
                     if self.ignore.contains(&ParseOsmTypes::Nodes) {
                         return 0;
                     }
-                    let osm = OsmRef { osm_type: OsmType::Node, id: node.id(), version: version(node.info().version()) };
-                    let tags = scan.with_street(node.tags().collect::<HashMap<_, _>>(), (0, node.id()));
-                    self.send(OsmPoi::new_from_node(tags, (node.lat(), node.lon()), osm), &count_nodes)
+                    let osm = OsmRef {
+                        osm_type: OsmType::Node,
+                        id: node.id(),
+                        version: version(node.info().version()),
+                    };
+                    let tags =
+                        scan.with_street(node.tags().collect::<HashMap<_, _>>(), (0, node.id()));
+                    self.send(
+                        OsmPoi::new_from_node(tags, (node.lat(), node.lon()), osm),
+                        &count_nodes,
+                    )
                 }
                 Element::Way(way) => {
                     let needed = needed_ways.contains(&way.id());
                     if self.ignore.contains(&ParseOsmTypes::Ways) && !needed {
                         return 0;
                     }
-                    let points: Vec<(f64, f64)> = way.node_locations().map(|n| (n.lat(), n.lon())).collect();
+                    let points: Vec<(f64, f64)> =
+                        way.node_locations().map(|n| (n.lat(), n.lon())).collect();
                     if points.is_empty() {
                         return 0;
                     }
                     if needed {
                         let coords = points.iter().map(|&(lat, lon)| (lon, lat)).collect();
-                        if let Err(e) = self.indexer_cache.buffered_write_item(WofCacheItem::WayCoords(way.id(), coords)) {
+                        if let Err(e) = self
+                            .indexer_cache
+                            .buffered_write_item(WofCacheItem::WayCoords(way.id(), coords))
+                        {
                             warn!("Error caching way {}: {e}", way.id());
                         }
                     }
                     if self.ignore.contains(&ParseOsmTypes::Ways) {
                         return 0;
                     }
-                    let osm = OsmRef { osm_type: OsmType::Way, id: way.id(), version: version(way.info().version()) };
-                    let tags = scan.with_street(way.tags().collect::<HashMap<_, _>>(), (1, way.id()));
+                    let osm = OsmRef {
+                        osm_type: OsmType::Way,
+                        id: way.id(),
+                        version: version(way.info().version()),
+                    };
+                    let tags =
+                        scan.with_street(way.tags().collect::<HashMap<_, _>>(), (1, way.id()));
                     if let Some(street) = StreetWay::new(&tags, &points, osm) {
                         streets.add(street);
                         return 0;
@@ -230,7 +276,10 @@ impl OsmPbf {
                 self.sender.send(poi).expect("sender failed");
             }
         }
-        info!("Merged named roads into {} streets", count_streets.load(Ordering::Relaxed));
+        info!(
+            "Merged named roads into {} streets",
+            count_streets.load(Ordering::Relaxed)
+        );
 
         let pois = if relations {
             info!("Assembling multipolygons");
@@ -266,7 +315,10 @@ impl OsmPbf {
                         id: relation.id(),
                         version: version(relation.info().version()),
                     };
-                    self.send(OsmPoi::new_from_relation(tags, shape, osm), &count_relations)
+                    self.send(
+                        OsmPoi::new_from_relation(tags, shape, osm),
+                        &count_relations,
+                    )
                 },
                 || 0_u64,
                 |a, b| a + b,
@@ -279,9 +331,13 @@ impl OsmPbf {
         let count_ways = count_ways.load(Ordering::Relaxed);
         let count_nodes = count_nodes.load(Ordering::Relaxed);
         let count_relations = count_relations.load(Ordering::Relaxed);
-        info!("Loaded {pois} interesting pois: {count_nodes} nodes, {count_ways} ways and {count_relations} relations");
+        info!(
+            "Loaded {pois} interesting pois: {count_nodes} nodes, {count_ways} ways and {count_relations} relations"
+        );
         if count_ways == 0 {
-            warn!("No ways found in OSM PBF file. Ensure your pbf file has locations present, see Google: LocationsOnWays");
+            warn!(
+                "No ways found in OSM PBF file. Ensure your pbf file has locations present, see Google: LocationsOnWays"
+            );
         }
         Ok(())
     }
@@ -311,7 +367,8 @@ impl OsmPbf {
                                     RelMemberType::Relation => continue,
                                 };
                                 if house {
-                                    scan.house_streets.insert((member_type, member.member_id), street.clone());
+                                    scan.house_streets
+                                        .insert((member_type, member.member_id), street.clone());
                                 }
                             }
                         }

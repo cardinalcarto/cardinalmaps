@@ -14,7 +14,9 @@ use rayon::prelude::*;
 
 use crate::chunks::{self, ChunkId, MAX_WAY_NODES};
 use crate::contour::{Line, Unit};
-use crate::pbf::{self, BlockKind, DenseNodes, HeaderBlock, PrimitiveBlock, PrimitiveGroup, StringTable, Way};
+use crate::pbf::{
+    self, BlockKind, DenseNodes, HeaderBlock, PrimitiveBlock, PrimitiveGroup, StringTable, Way,
+};
 
 const NODES_PER_BLOCK: usize = 8000;
 const WAYS_PER_BLOCK: usize = 8000;
@@ -53,7 +55,9 @@ impl NodeBlocks {
             return Ok(());
         }
         let block = PrimitiveBlock {
-            stringtable: StringTable { s: vec![Vec::new()] },
+            stringtable: StringTable {
+                s: vec![Vec::new()],
+            },
             primitivegroup: vec![PrimitiveGroup {
                 dense: Some(DenseNodes {
                     id: std::mem::take(&mut self.id),
@@ -63,7 +67,8 @@ impl NodeBlocks {
                 ..PrimitiveGroup::default()
             }],
         };
-        self.out.extend(pbf::encode_blob("OSMData", &block.encode_to_vec())?);
+        self.out
+            .extend(pbf::encode_blob("OSMData", &block.encode_to_vec())?);
         self.last = (0, 0, 0);
         Ok(())
     }
@@ -117,7 +122,12 @@ impl WayBlocks {
                 d
             })
             .collect();
-        self.ways.push(Way { id, keys, vals, refs: refs_delta });
+        self.ways.push(Way {
+            id,
+            keys,
+            vals,
+            refs: refs_delta,
+        });
         self.refs += refs.len();
         if self.ways.len() >= WAYS_PER_BLOCK || self.refs >= REFS_PER_BLOCK {
             self.flush()?;
@@ -130,14 +140,17 @@ impl WayBlocks {
             return Ok(());
         }
         let block = PrimitiveBlock {
-            stringtable: StringTable { s: std::mem::take(&mut self.table) },
+            stringtable: StringTable {
+                s: std::mem::take(&mut self.table),
+            },
             primitivegroup: vec![PrimitiveGroup {
                 ways: std::mem::take(&mut self.ways),
                 ..PrimitiveGroup::default()
             }],
         };
         self.refs = 0;
-        self.out.extend(pbf::encode_blob("OSMData", &block.encode_to_vec())?);
+        self.out
+            .extend(pbf::encode_blob("OSMData", &block.encode_to_vec())?);
         Ok(())
     }
 }
@@ -156,7 +169,11 @@ fn encode_chunk(path: &Path, mut node_id: i64, mut way_id: i64) -> Result<(Vec<u
     let mut refs = Vec::new();
     for line in &lines {
         refs.clear();
-        let distinct = if line.closed { line.points.len() - 1 } else { line.points.len() };
+        let distinct = if line.closed {
+            line.points.len() - 1
+        } else {
+            line.points.len()
+        };
         for &(lon, lat) in &line.points[..distinct] {
             nodes.push(node_id, lon.into(), lat.into())?;
             refs.push(node_id);
@@ -199,7 +216,8 @@ pub fn write_contours(
     }
 
     let ways_path = out.with_extension("ways.tmp");
-    let mut output = BufWriter::new(File::create(out).with_context(|| format!("creating {}", out.display()))?);
+    let mut output =
+        BufWriter::new(File::create(out).with_context(|| format!("creating {}", out.display()))?);
     let mut ways_out = BufWriter::new(File::create(&ways_path)?);
     let header = HeaderBlock {
         bbox: None,
@@ -267,14 +285,20 @@ fn copy_range(file: &mut File, blobs: &[pbf::BlobRef], out: &mut impl Write) -> 
     Ok(())
 }
 
-fn max_id(file: &mut File, blobs: &[pbf::BlobRef], range: std::ops::Range<usize>) -> Result<Option<i64>> {
+fn max_id(
+    file: &mut File,
+    blobs: &[pbf::BlobRef],
+    range: std::ops::Range<usize>,
+) -> Result<Option<i64>> {
     if range.is_empty() {
         return Ok(None);
     }
-    Ok(match pbf::block_kind(&pbf::read_blob(file, &blobs[range.end - 1])?)? {
-        BlockKind::Nodes(id) | BlockKind::Ways(id) | BlockKind::Relations(id) => Some(id),
-        BlockKind::Empty => None,
-    })
+    Ok(
+        match pbf::block_kind(&pbf::read_blob(file, &blobs[range.end - 1])?)? {
+            BlockKind::Nodes(id) | BlockKind::Ways(id) | BlockKind::Relations(id) => Some(id),
+            BlockKind::Empty => None,
+        },
+    )
 }
 
 /// (first way blob, first relation blob) of a sorted file, after checking its header.
@@ -286,23 +310,33 @@ fn sections(file: &mut File, blobs: &[pbf::BlobRef], name: &Path) -> Result<(usi
     if !header.optional_features.iter().any(|f| f == SORTED)
         && !header.required_features.iter().any(|f| f == SORTED)
     {
-        bail!("{}: not marked {SORTED}; sort it first, e.g. osmium sort", name.display());
+        bail!(
+            "{}: not marked {SORTED}; sort it first, e.g. osmium sort",
+            name.display()
+        );
     }
-    let ways = bisect(file, blobs, |k| matches!(k, BlockKind::Ways(_) | BlockKind::Relations(_)))?;
+    let ways = bisect(file, blobs, |k| {
+        matches!(k, BlockKind::Ways(_) | BlockKind::Relations(_))
+    })?;
     let relations = bisect(file, blobs, |k| matches!(k, BlockKind::Relations(_)))?;
     Ok((ways, relations))
 }
 
 /// Writes `planet` with `contours` spliced in, nothing of it decoded or rewritten.
 pub fn append(planet: &Path, contours: &Path, out: &Path) -> Result<()> {
-    let mut planet_file = File::open(planet).with_context(|| format!("opening {}", planet.display()))?;
-    let mut contour_file = File::open(contours).with_context(|| format!("opening {}", contours.display()))?;
+    let mut planet_file =
+        File::open(planet).with_context(|| format!("opening {}", planet.display()))?;
+    let mut contour_file =
+        File::open(contours).with_context(|| format!("opening {}", contours.display()))?;
     let planet_blobs = pbf::scan_blobs(&mut planet_file)?;
     let contour_blobs = pbf::scan_blobs(&mut contour_file)?;
     let (p_ways, p_rels) = sections(&mut planet_file, &planet_blobs, planet)?;
     let (c_ways, c_rels) = sections(&mut contour_file, &contour_blobs, contours)?;
     if c_rels != contour_blobs.len() {
-        bail!("{}: has relations; expected nodes and ways only", contours.display());
+        bail!(
+            "{}: has relations; expected nodes and ways only",
+            contours.display()
+        );
     }
 
     let first_id = |file: &mut File, blob: Option<&pbf::BlobRef>| -> Result<Option<i64>> {
@@ -310,21 +344,31 @@ pub fn append(planet: &Path, contours: &Path, out: &Path) -> Result<()> {
         let contents = pbf::read_blob(file, blob)?;
         let block = PrimitiveBlock::decode(&contents[..])?;
         Ok(block.primitivegroup.iter().find_map(|g| {
-            g.dense.as_ref().and_then(|d| d.id.first().copied()).or(g.ways.first().map(|w| w.id))
+            g.dense
+                .as_ref()
+                .and_then(|d| d.id.first().copied())
+                .or(g.ways.first().map(|w| w.id))
         }))
     };
     let planet_max_node = max_id(&mut planet_file, &planet_blobs, 1..p_ways)?;
     let planet_max_way = max_id(&mut planet_file, &planet_blobs, p_ways..p_rels)?;
-    let contour_first_node = first_id(&mut contour_file, contour_blobs.get(1).filter(|_| c_ways > 1))?;
+    let contour_first_node = first_id(
+        &mut contour_file,
+        contour_blobs.get(1).filter(|_| c_ways > 1),
+    )?;
     let contour_first_way = first_id(&mut contour_file, contour_blobs.get(c_ways))?;
     if let (Some(a), Some(b)) = (planet_max_node, contour_first_node) {
         if a >= b {
-            bail!("the planet's node IDs reach {a}, past the contours' first {b}; raise --node-id-start");
+            bail!(
+                "the planet's node IDs reach {a}, past the contours' first {b}; raise --node-id-start"
+            );
         }
     }
     if let (Some(a), Some(b)) = (planet_max_way, contour_first_way) {
         if a >= b {
-            bail!("the planet's way IDs reach {a}, past the contours' first {b}; raise --way-id-start");
+            bail!(
+                "the planet's way IDs reach {a}, past the contours' first {b}; raise --way-id-start"
+            );
         }
     }
     eprintln!(

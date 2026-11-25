@@ -28,16 +28,25 @@ impl Role {
 /// closed ring are dropped.
 #[must_use]
 pub fn assemble(members: Vec<(Role, Vec<(f64, f64)>)>) -> Option<MultiPolygon<f64>> {
-    let (outer, inner): (Vec<_>, Vec<_>) = members.into_iter().partition(|(role, _)| *role == Role::Outer);
+    let (outer, inner): (Vec<_>, Vec<_>) = members
+        .into_iter()
+        .partition(|(role, _)| *role == Role::Outer);
     let to_lines = |members: Vec<(Role, Vec<(f64, f64)>)>| -> Vec<Vec<Coord<f64>>> {
         members
             .into_iter()
-            .map(|(_, points)| points.into_iter().map(|(x, y)| Coord { x, y }).collect::<Vec<_>>())
+            .map(|(_, points)| {
+                points
+                    .into_iter()
+                    .map(|(x, y)| Coord { x, y })
+                    .collect::<Vec<_>>()
+            })
             .filter(|line| line.len() >= 2)
             .collect()
     };
-    let mut polygons: Vec<Polygon<f64>> =
-        rings(to_lines(outer)).into_iter().map(|ring| Polygon::new(ring, vec![])).collect();
+    let mut polygons: Vec<Polygon<f64>> = rings(to_lines(outer))
+        .into_iter()
+        .map(|ring| Polygon::new(ring, vec![]))
+        .collect();
     if polygons.is_empty() {
         return None;
     }
@@ -46,7 +55,10 @@ pub fn assemble(members: Vec<(Role, Vec<(f64, f64)>)>) -> Option<MultiPolygon<f6
     let mut holes: Vec<Vec<LineString<f64>>> = vec![Vec::new(); polygons.len()];
     for ring in rings(to_lines(inner)) {
         let first = Point(ring.0[0]);
-        if let Some(i) = polygons.iter().position(|p| p.contains(&first) || p.exterior().contains(&first)) {
+        if let Some(i) = polygons
+            .iter()
+            .position(|p| p.contains(&first) || p.exterior().contains(&first))
+        {
             holes[i].push(ring);
         }
     }
@@ -70,7 +82,10 @@ fn rings(lines: Vec<Vec<Coord<f64>>>) -> Vec<LineString<f64>> {
     for (i, line) in lines.iter().enumerate() {
         let line = line.as_ref().unwrap();
         by_end.entry(key(line[0])).or_default().push(i);
-        by_end.entry(key(*line.last().unwrap())).or_default().push(i);
+        by_end
+            .entry(key(*line.last().unwrap()))
+            .or_default()
+            .push(i);
     }
 
     let mut rings = Vec::new();
@@ -104,7 +119,13 @@ mod test {
     use super::*;
 
     fn square(x: f64, y: f64, size: f64) -> Vec<(f64, f64)> {
-        vec![(x, y), (x + size, y), (x + size, y + size), (x, y + size), (x, y)]
+        vec![
+            (x, y),
+            (x + size, y),
+            (x + size, y + size),
+            (x, y + size),
+            (x, y),
+        ]
     }
 
     #[test]

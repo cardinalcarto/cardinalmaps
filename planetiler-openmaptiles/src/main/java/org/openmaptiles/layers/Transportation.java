@@ -727,9 +727,11 @@ public class Transportation implements
             source.getString("motorcycle")), 14)
           .setAttrWithMinzoom("flood_prone", "yes".equals(source.getString("flood_prone")) ? 1 : null, 14)
           .setAttrWithMinzoom("bridge_structure", nullIfEmpty(source.getString("bridge:structure")), 14)
-          .setAttrWithMinzoom("ford_type", "stepping_stones".equals(source.getString("ford")) ? "stepping_stones" : null,
+          .setAttrWithMinzoom("ford_type",
+            "stepping_stones".equals(source.getString("ford")) ? "stepping_stones" : null,
             14)
-          .setAttrWithMinzoom("portage", source.hasTag("portage", "yes") || source.hasTag("canoe", "portage") ? 1 : null,
+          .setAttrWithMinzoom("portage",
+            source.hasTag("portage", "yes") || source.hasTag("canoe", "portage") ? 1 : null,
             14)
           .setAttrWithMinzoom("hazard", nullIfEmpty(source.getString("hazard")), 14)
           .setAttrWithMinzoom("operator", nullIfEmpty(element.operator()), 14);

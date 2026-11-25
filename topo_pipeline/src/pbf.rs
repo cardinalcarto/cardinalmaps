@@ -216,8 +216,11 @@ pub fn encode_blob(kind: &str, contents: &[u8]) -> Result<Vec<u8>> {
         zlib_data: Some(encoder.finish()?),
     };
     let data = blob.encode_to_vec();
-    let header =
-        BlobHeader { r#type: kind.to_owned(), datasize: i32::try_from(data.len())? }.encode_to_vec();
+    let header = BlobHeader {
+        r#type: kind.to_owned(),
+        datasize: i32::try_from(data.len())?,
+    }
+    .encode_to_vec();
     let mut out = Vec::with_capacity(4 + header.len() + data.len());
     out.extend_from_slice(&u32::try_from(header.len())?.to_be_bytes());
     out.extend_from_slice(&header);

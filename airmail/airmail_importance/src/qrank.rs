@@ -19,9 +19,13 @@ impl QRank {
     /// Reads `qrank.csv` or `qrank.csv.gz`: a `Entity,QRank` header, then
     /// lines like `Q60,123456`.
     pub fn load(path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
-        let reader: Box<dyn Read> =
-            if path.extension().is_some_and(|e| e == "gz") { Box::new(GzDecoder::new(file)) } else { Box::new(file) };
+        let file =
+            std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let reader: Box<dyn Read> = if path.extension().is_some_and(|e| e == "gz") {
+            Box::new(GzDecoder::new(file))
+        } else {
+            Box::new(file)
+        };
         Self::parse(BufReader::new(reader)).with_context(|| format!("reading {}", path.display()))
     }
 

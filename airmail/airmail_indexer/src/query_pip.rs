@@ -39,7 +39,11 @@ static ADMIN_INFO: Memo<Arc<AdminInfo>> = LazyLock::new(Default::default);
 static ANCESTORS: Memo<Arc<Vec<u64>>> = LazyLock::new(Default::default);
 static LANGUAGES: Memo<Arc<Vec<String>>> = LazyLock::new(Default::default);
 
-async fn remembered<T: Clone>(memo: &Memo<T>, id: u64, look_up: impl Future<Output = Result<T>>) -> Result<T> {
+async fn remembered<T: Clone>(
+    memo: &Memo<T>,
+    id: u64,
+    look_up: impl Future<Output = Result<T>>,
+) -> Result<T> {
     if let Some(value) = memo.read().expect("memo").get(&id) {
         return Ok(value.clone());
     }
@@ -49,10 +53,12 @@ async fn remembered<T: Clone>(memo: &Memo<T>, id: u64, look_up: impl Future<Outp
 }
 
 async fn country_code(country_id: u64, wof_db: &WhosOnFirst) -> Option<String> {
-    remembered(&COUNTRY_CODES, country_id, async { Ok(wof_db.country_code(country_id).await.ok().flatten()) })
-        .await
-        .ok()
-        .flatten()
+    remembered(&COUNTRY_CODES, country_id, async {
+        Ok(wof_db.country_code(country_id).await.ok().flatten())
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn admin_info(admin_id: u64, wof_db: &WhosOnFirst) -> Result<Arc<AdminInfo>> {
@@ -66,12 +72,20 @@ async fn admin_info(admin_id: u64, wof_db: &WhosOnFirst) -> Result<Arc<AdminInfo
 }
 
 async fn ancestors(admin_id: u64, wof_db: &WhosOnFirst) -> Result<Arc<Vec<u64>>> {
-    remembered(&ANCESTORS, admin_id, async { Ok(Arc::new(wof_db.ancestors(admin_id).await?)) }).await
+    remembered(&ANCESTORS, admin_id, async {
+        Ok(Arc::new(wof_db.ancestors(admin_id).await?))
+    })
+    .await
 }
 
 async fn languages(country_id: u64, wof_db: &WhosOnFirst) -> Arc<Vec<String>> {
     remembered(&LANGUAGES, country_id, async {
-        Ok(Arc::new(query_langs(country_id, wof_db).await.map(|(_, langs)| langs).unwrap_or_default()))
+        Ok(Arc::new(
+            query_langs(country_id, wof_db)
+                .await
+                .map(|(_, langs)| langs)
+                .unwrap_or_default(),
+        ))
     })
     .await
     .unwrap_or_default()
@@ -100,7 +114,10 @@ pub(crate) async fn query_pip(
     } else {
         wof_db.point_in_polygon(lng, lat).await?
     };
-    let containing = containing.iter().map(|area| Ok(area.id.parse()?)).collect::<Result<Vec<u64>>>()?;
+    let containing = containing
+        .iter()
+        .map(|area| Ok(area.id.parse()?))
+        .collect::<Result<Vec<u64>>>()?;
 
     // The point-in-polygon lookup skips some placetypes, such as counties,
     // which the hierarchy has.
@@ -121,8 +138,15 @@ pub(crate) async fn query_pip(
         response.admin_langs = languages(country_id, wof_db).await.to_vec();
     }
 
-    let infos = join_all(admin_ids.iter().map(|id| admin_info(*id, wof_db))).await.into_iter().collect::<Result<Vec<_>>>()?;
-    let areas = admin_ids.iter().zip(&infos).map(|(id, info)| (*id, info.placetype.as_str(), info.names.as_slice()));
-    (response.admin_ids, response.admin_names) = airmail::wof::containing(areas, &response.admin_langs);
+    let infos = join_all(admin_ids.iter().map(|id| admin_info(*id, wof_db)))
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    let areas = admin_ids
+        .iter()
+        .zip(&infos)
+        .map(|(id, info)| (*id, info.placetype.as_str(), info.names.as_slice()));
+    (response.admin_ids, response.admin_names) =
+        airmail::wof::containing(areas, &response.admin_langs);
     Ok(response)
 }

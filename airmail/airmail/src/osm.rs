@@ -9,7 +9,9 @@ pub use airmail_importance::osm::{NAME_KEYS, is_name_key};
 
 /// The values of name tags, split on `;`.
 fn name_values(tags: &[(String, String)]) -> impl Iterator<Item = &str> {
-    tags.iter().filter(|(k, _)| is_name_key(k)).flat_map(|(_, v)| v.split(';').map(str::trim).filter(|n| !n.is_empty()))
+    tags.iter()
+        .filter(|(k, _)| is_name_key(k))
+        .flat_map(|(_, v)| v.split(';').map(str::trim).filter(|n| !n.is_empty()))
 }
 
 /// A named feature (a POI) or an unnamed address, or `None` if it's neither
@@ -59,7 +61,10 @@ pub fn street_document(tags: Vec<(String, String)>, geometry: Geometry<f64>) -> 
     let mut names: Vec<String> = name_values(&tags).map(str::to_string).collect();
     names.sort();
     names.dedup();
-    let road = tags.iter().find(|(k, _)| k == "name").map(|(_, v)| v.clone());
+    let road = tags
+        .iter()
+        .find(|(k, _)| k == "name")
+        .map(|(_, v)| v.clone());
     let mut poi = ToIndexPoi::new(Kind::Street, names, geometry, tags)?;
     poi.road = road;
     Some(poi)
@@ -71,13 +76,21 @@ mod test {
     use geo::Point;
 
     fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
     fn names_but_not_name_metadata() {
         let poi = document(
-            tags(&[("amenity", "university"), ("name", "University of Washington"), ("short_name", "UW"), ("name:etymology:wikidata", "Q1223")]),
+            tags(&[
+                ("amenity", "university"),
+                ("name", "University of Washington"),
+                ("short_name", "UW"),
+                ("name:etymology:wikidata", "Q1223"),
+            ]),
             Geometry::Point(Point::new(-122.3, 47.65)),
         )
         .unwrap();
@@ -88,9 +101,24 @@ mod test {
     #[test]
     fn unnamed_addresses_are_addresses() {
         let at = Geometry::Point(Point::new(-122.34, 47.61));
-        let poi = document(tags(&[("addr:housenumber", "1530"), ("addr:street", "Post Alley"), ("addr:postcode", "98101")]), at.clone()).unwrap();
+        let poi = document(
+            tags(&[
+                ("addr:housenumber", "1530"),
+                ("addr:street", "Post Alley"),
+                ("addr:postcode", "98101"),
+            ]),
+            at.clone(),
+        )
+        .unwrap();
         assert_eq!(poi.kind, Kind::Address);
-        assert_eq!((poi.house_number.as_deref(), poi.road.as_deref(), poi.postcode.as_deref()), (Some("1530"), Some("Post Alley"), Some("98101")));
+        assert_eq!(
+            (
+                poi.house_number.as_deref(),
+                poi.road.as_deref(),
+                poi.postcode.as_deref()
+            ),
+            (Some("1530"), Some("Post Alley"), Some("98101"))
+        );
         assert!(document(tags(&[("addr:housenumber", "1530")]), at).is_none());
     }
 }

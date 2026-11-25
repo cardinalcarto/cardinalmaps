@@ -29,17 +29,31 @@ impl Tagger {
     /// If it isn't one.
     pub fn read(input: &mut impl Read) -> std::io::Result<Self> {
         let (model, known) = Model::read(input)?;
-        Ok(Self { model, vocabulary: Vocabulary::from_counts(known.into_iter().collect()), lexicon: Lexicon::new() })
+        Ok(Self {
+            model,
+            vocabulary: Vocabulary::from_counts(known.into_iter().collect()),
+            lexicon: Lexicon::new(),
+        })
     }
 
     /// The most likely readings, most likely first, until together they're
     /// at least `coverage` likely or there are `max` of them.
     #[must_use]
-    pub fn interpret(&self, query: &Query, areas: &[AreaMatch], max: usize, coverage: f64) -> Vec<Interpretation> {
+    pub fn interpret(
+        &self,
+        query: &Query,
+        areas: &[AreaMatch],
+        max: usize,
+        coverage: f64,
+    ) -> Vec<Interpretation> {
         if query.words.is_empty() {
             return Vec::new();
         }
-        let features = Extractor { lexicon: &self.lexicon, vocabulary: &self.vocabulary }.features(query, areas);
+        let features = Extractor {
+            lexicon: &self.lexicon,
+            vocabulary: &self.vocabulary,
+        }
+        .features(query, areas);
         let mut total = 0.0;
         let mut readings = Vec::new();
         for (path, probability) in self.model.best(&features, max) {
@@ -47,7 +61,10 @@ impl Tagger {
                 break;
             }
             total += probability;
-            readings.push(Interpretation { tags: path.into_iter().map(Tag::of_label).collect(), probability });
+            readings.push(Interpretation {
+                tags: path.into_iter().map(Tag::of_label).collect(),
+                probability,
+            });
         }
         readings
     }
@@ -57,7 +74,11 @@ impl Tagger {
 /// last word maybe still being typed, seen from `focus`.
 #[must_use]
 pub fn query(text: &str, typing: bool, focus: Option<[f64; 2]>) -> Query {
-    let mut query = Query { typing, focus, ..Query::default() };
+    let mut query = Query {
+        typing,
+        focus,
+        ..Query::default()
+    };
     for (i, section) in text.split(',').enumerate() {
         let folded = fold(section);
         for (j, (_, word)) in words(&folded).into_iter().enumerate() {

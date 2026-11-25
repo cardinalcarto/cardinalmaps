@@ -10,7 +10,10 @@ include!(concat!(env!("OUT_DIR"), "/dictionaries.rs"));
 /// as `en/street_types.txt`.
 #[must_use]
 pub fn file(path: &str) -> Option<&'static str> {
-    FILES.binary_search_by(|(p, _)| (*p).cmp(path)).ok().map(|i| FILES[i].1)
+    FILES
+        .binary_search_by(|(p, _)| (*p).cmp(path))
+        .ok()
+        .map(|i| FILES[i].1)
 }
 
 /// Every dictionary of a type, such as `street_types`, with its language.

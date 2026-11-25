@@ -22,5 +22,5 @@ pub mod spelling;
 pub mod substitutions;
 pub mod tagger_data;
 pub mod text;
-pub mod wof;
 mod within;
+pub mod wof;

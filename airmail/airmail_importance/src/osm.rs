@@ -6,7 +6,14 @@ use crate::importance::{PoiSignals, is_transit_stop_tag};
 use crate::qrank::QRank;
 
 /// Name keys a place is searched by, each also with a `:<language>` suffix.
-pub const NAME_KEYS: [&str; 6] = ["name", "alt_name", "official_name", "short_name", "loc_name", "int_name"];
+pub const NAME_KEYS: [&str; 6] = [
+    "name",
+    "alt_name",
+    "official_name",
+    "short_name",
+    "loc_name",
+    "int_name",
+];
 
 /// `place` values Who's On First covers as administrative areas, which are
 /// indexed from there instead of from OSM.
@@ -32,7 +39,10 @@ pub const ADMIN_PLACES: [&str; 15] = [
 #[must_use]
 pub fn is_name_key(key: &str) -> bool {
     let base = key.split(':').next().unwrap_or_default();
-    NAME_KEYS.contains(&base) && key.split(':').count() <= 2 && !key.contains("etymology") && !key.contains("pronunciation")
+    NAME_KEYS.contains(&base)
+        && key.split(':').count() <= 2
+        && !key.contains("etymology")
+        && !key.contains("pronunciation")
 }
 
 /// Whether airmail's indexer reads an element with these tags at all: it has
@@ -63,7 +73,9 @@ pub fn is_indexed<'a>(tags: impl IntoIterator<Item = (&'a str, &'a str)>) -> boo
 #[must_use]
 pub fn is_indexed_poi<'a>(tags: impl IntoIterator<Item = (&'a str, &'a str)> + Clone) -> bool {
     is_indexed(tags.clone())
-        && tags.into_iter().any(|(k, v)| is_name_key(k) && v.split(';').any(|n| !n.trim().is_empty()))
+        && tags
+            .into_iter()
+            .any(|(k, v)| is_name_key(k) && v.split(';').any(|n| !n.trim().is_empty()))
 }
 
 /// Whether a closed way with these tags is an area rather than a ring-shaped
@@ -79,7 +91,12 @@ pub fn is_area<'a>(tags: impl IntoIterator<Item = (&'a str, &'a str)>) -> bool {
                 _ => {}
             },
             "barrier" | "route" => linear = true,
-            "natural" => linear |= matches!(value, "coastline" | "cliff" | "ridge" | "arete" | "tree_row"),
+            "natural" => {
+                linear |= matches!(
+                    value,
+                    "coastline" | "cliff" | "ridge" | "arete" | "tree_row"
+                )
+            }
             "waterway" => waterway_area = Some(matches!(value, "riverbank" | "dock" | "boatyard")),
             _ => {}
         }
@@ -128,24 +145,55 @@ mod test {
 
     #[test]
     fn indexed_pois_are_named_and_not_roads_or_admin_areas() {
-        assert!(is_indexed_poi([("building", "yes"), ("name", "Building 43")]));
-        assert!(is_indexed_poi([("waterway", "stream"), ("name:en", "Salzer Creek")]));
-        assert!(is_indexed_poi([("highway", "bus_stop"), ("name", "3rd & Pike")]));
-        assert!(is_indexed_poi([("place", "square"), ("name", "Occidental Square")]));
-        assert!(!is_indexed_poi([("highway", "residential"), ("name", "Pike Street")]));
-        assert!(!is_indexed_poi([("boundary", "protected_area"), ("name", "Wilderness")]));
+        assert!(is_indexed_poi([
+            ("building", "yes"),
+            ("name", "Building 43")
+        ]));
+        assert!(is_indexed_poi([
+            ("waterway", "stream"),
+            ("name:en", "Salzer Creek")
+        ]));
+        assert!(is_indexed_poi([
+            ("highway", "bus_stop"),
+            ("name", "3rd & Pike")
+        ]));
+        assert!(is_indexed_poi([
+            ("place", "square"),
+            ("name", "Occidental Square")
+        ]));
+        assert!(!is_indexed_poi([
+            ("highway", "residential"),
+            ("name", "Pike Street")
+        ]));
+        assert!(!is_indexed_poi([
+            ("boundary", "protected_area"),
+            ("name", "Wilderness")
+        ]));
         assert!(!is_indexed_poi([("place", "town"), ("name", "Forks")]));
         assert!(!is_indexed_poi([("building", "yes"), ("name", " ; ")]));
-        assert!(!is_indexed_poi([("building", "yes"), ("name:etymology", "Q1")]));
-        assert!(!is_indexed_poi([("addr:housenumber", "1"), ("addr:street", "Main Street")]));
-        assert!(is_indexed([("addr:housenumber", "1"), ("addr:street", "Main Street")]));
+        assert!(!is_indexed_poi([
+            ("building", "yes"),
+            ("name:etymology", "Q1")
+        ]));
+        assert!(!is_indexed_poi([
+            ("addr:housenumber", "1"),
+            ("addr:street", "Main Street")
+        ]));
+        assert!(is_indexed([
+            ("addr:housenumber", "1"),
+            ("addr:street", "Main Street")
+        ]));
         assert!(!is_indexed([]));
     }
 
     #[test]
     fn reads_wikidata_and_transit_stops() {
         let qrank = QRank::parse("Entity,QRank\nQ60,1000\n".as_bytes()).unwrap();
-        let signals = poi_signals([("name", "X"), ("wikidata", "Q60"), ("highway", "bus_stop")], 5.0, Some(&qrank));
+        let signals = poi_signals(
+            [("name", "X"), ("wikidata", "Q60"), ("highway", "bus_stop")],
+            5.0,
+            Some(&qrank),
+        );
         assert!(signals.has_wikidata && signals.transit_stop);
         assert_eq!((signals.qrank, signals.area_m2), (Some(1000), 5.0));
         let signals = poi_signals([("wikidata", "Q60")], 0.0, None);

@@ -35,7 +35,14 @@ pub struct ContourConfig {
 
 impl Default for ContourConfig {
     fn default() -> Self {
-        Self { interval_m: 10, interval_ft: 40, simplify_m: 8.0, round_corners: true, min_loop_m: 250.0, cache_gb: 16.0 }
+        Self {
+            interval_m: 10,
+            interval_ft: 40,
+            simplify_m: 8.0,
+            round_corners: true,
+            min_loop_m: 250.0,
+            cache_gb: 16.0,
+        }
     }
 }
 
@@ -97,15 +104,19 @@ impl SourceConfig {
     /// How far outside a region the source must be read to get its smoothed, feathered
     /// values there exactly, in the source's lattice cells.
     pub fn margin(&self) -> i64 {
-        let kernel = if self.sigma > 0.0 { (self.sigma * 3.0).ceil() as i64 } else { 0 };
+        let kernel = if self.sigma > 0.0 {
+            (self.sigma * 3.0).ceil() as i64
+        } else {
+            0
+        };
         kernel + i64::from(self.median) + i64::from(self.feather) + 2
     }
 }
 
 impl Config {
     pub fn load(path: &Path) -> Result<Config> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let config: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         if config.sources.is_empty() {

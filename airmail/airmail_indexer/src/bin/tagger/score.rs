@@ -26,7 +26,10 @@ fn parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(&[T]) -> Vec<R> + Sync) ->
     let chunk = items.len().div_ceil(threads).max(1);
     std::thread::scope(|scope| {
         let handles: Vec<_> = items.chunks(chunk).map(|c| scope.spawn(|| f(c))).collect();
-        handles.into_iter().flat_map(|h| h.join().expect("a thread panicked")).collect()
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("a thread panicked"))
+            .collect()
     })
 }
 
@@ -47,15 +50,32 @@ struct Case {
 }
 
 fn read_model(path: &Path) -> Result<(Model, Vocabulary)> {
-    let (model, known) = Model::read(&mut BufReader::new(File::open(path).with_context(|| format!("opening {}", path.display()))?))?;
+    let (model, known) = Model::read(&mut BufReader::new(
+        File::open(path).with_context(|| format!("opening {}", path.display()))?,
+    ))?;
     Ok((model, Vocabulary::from_counts(known.into_iter().collect())))
 }
 
 /// The labels a model gives each case.
-fn tag_all(model: &Model, vocabulary: &Vocabulary, lexicon: &Lexicon, cases: &[Case]) -> Vec<Vec<Label>> {
+fn tag_all(
+    model: &Model,
+    vocabulary: &Vocabulary,
+    lexicon: &Lexicon,
+    cases: &[Case],
+) -> Vec<Vec<Label>> {
     parallel(cases, |chunk| {
-        let extractor = Extractor { lexicon, vocabulary };
-        chunk.iter().map(|case| model.tag(&extractor.features(&case.query, &case.areas[0])).0).collect()
+        let extractor = Extractor {
+            lexicon,
+            vocabulary,
+        };
+        chunk
+            .iter()
+            .map(|case| {
+                model
+                    .tag(&extractor.features(&case.query, &case.areas[0]))
+                    .0
+            })
+            .collect()
     })
 }
 
@@ -67,7 +87,11 @@ fn metrics(cases: &[Case], guesses: &[Vec<Label>], reference: Option<&[Vec<Label
     for (case, guess) in cases.iter().zip(guesses) {
         let guess: Vec<Tag> = guess.iter().map(|l| Tag::of_label(*l)).collect();
         words += case.truth.len();
-        let right = guess.iter().zip(&case.truth).filter(|(g, t)| g == t).count();
+        let right = guess
+            .iter()
+            .zip(&case.truth)
+            .filter(|(g, t)| g == t)
+            .count();
         right_words += right;
         let all_right = right == case.truth.len();
         right_queries += usize::from(all_right);
@@ -91,7 +115,8 @@ fn metrics(cases: &[Case], guesses: &[Vec<Label>], reference: Option<&[Vec<Label
     let share = |a: usize, b: usize| if b == 0 { 0.0 } else { a as f64 / b as f64 };
     let mut by_tag = serde_json::Map::new();
     for tag in Tag::ALL {
-        let [right, guessed, actual, queries, queries_right] = tags.get(&tag).copied().unwrap_or_default();
+        let [right, guessed, actual, queries, queries_right] =
+            tags.get(&tag).copied().unwrap_or_default();
         if actual == 0 && guessed == 0 {
             continue;
         }
@@ -104,7 +129,16 @@ fn metrics(cases: &[Case], guesses: &[Vec<Label>], reference: Option<&[Vec<Label
             }),
         );
     }
-    let agreement = reference.map(|reference| share(guesses.iter().zip(reference).filter(|(a, b)| a == b).count(), cases.len()));
+    let agreement = reference.map(|reference| {
+        share(
+            guesses
+                .iter()
+                .zip(reference)
+                .filter(|(a, b)| a == b)
+                .count(),
+            cases.len(),
+        )
+    });
     json!({
         "queries": cases.len(), "words": words,
         "word_accuracy": share(right_words, words), "query_accuracy": share(right_queries, cases.len()),
@@ -120,9 +154,16 @@ fn tsv_cases(path: &Path) -> Result<Vec<(Query, Vec<Tag>)>> {
             continue;
         }
         let mut columns = line.split('\t');
-        let (Some(text), Some(flags), Some(tags)) = (columns.next(), columns.next(), columns.next()) else { continue };
+        let (Some(text), Some(flags), Some(tags)) =
+            (columns.next(), columns.next(), columns.next())
+        else {
+            continue;
+        };
         let query = query_of(text, flags.contains("typing"), None);
-        let want: Vec<Tag> = tags.split_whitespace().map(|t| Tag::parse(t).unwrap_or_else(|| panic!("tag {t}"))).collect();
+        let want: Vec<Tag> = tags
+            .split_whitespace()
+            .map(|t| Tag::parse(t).unwrap_or_else(|| panic!("tag {t}")))
+            .collect();
         if want.len() == query.words.len() {
             cases.push((query, want));
         }
@@ -134,7 +175,16 @@ fn tsv_cases(path: &Path) -> Result<Vec<(Query, Vec<Tag>)>> {
 /// (as `train` holds them out with the same stride, copies and seed) and on
 /// hand-labelled queries, with the first index as their gazetteer.
 #[allow(clippy::too_many_arguments)]
-pub fn score(indexes: &[PathBuf], models: &[PathBuf], stride: u32, copies: usize, seed: u64, max: usize, tsv: Option<&Path>, out: Option<&Path>) -> Result<()> {
+pub fn score(
+    indexes: &[PathBuf],
+    models: &[PathBuf],
+    stride: u32,
+    copies: usize,
+    seed: u64,
+    max: usize,
+    tsv: Option<&Path>,
+    out: Option<&Path>,
+) -> Result<()> {
     let start = Instant::now();
     let sources = sources(indexes, stride, seed, start)?;
     let mut sets: Vec<(String, Vec<Case>)> = Vec::new();
@@ -144,15 +194,35 @@ pub fn score(indexes: &[PathBuf], models: &[PathBuf], stride: u32, copies: usize
         let examples: Vec<Example> = examples.into_iter().step_by(every).collect();
         let queries: Vec<&Query> = examples.iter().map(|e| &e.query).collect();
         let found = areas(&source.index, &queries);
-        let cases = examples.into_iter().zip(found).map(|(e, a)| Case { query: e.query, truth: e.tags, areas: vec![a] }).collect();
-        eprintln!("Held-out queries of {} in {:?}", path.display(), start.elapsed());
+        let cases = examples
+            .into_iter()
+            .zip(found)
+            .map(|(e, a)| Case {
+                query: e.query,
+                truth: e.tags,
+                areas: vec![a],
+            })
+            .collect();
+        eprintln!(
+            "Held-out queries of {} in {:?}",
+            path.display(),
+            start.elapsed()
+        );
         sets.push((format!("held_out:{}", path.display()), cases));
     }
     if let Some(tsv) = tsv {
         let labelled = tsv_cases(tsv)?;
         let queries: Vec<&Query> = labelled.iter().map(|(q, _)| q).collect();
         let found = areas(&sources[0].index, &queries);
-        let cases = labelled.into_iter().zip(found).map(|((query, truth), a)| Case { query, truth, areas: vec![a] }).collect();
+        let cases = labelled
+            .into_iter()
+            .zip(found)
+            .map(|((query, truth), a)| Case {
+                query,
+                truth,
+                areas: vec![a],
+            })
+            .collect();
         sets.push((format!("labelled:{}", tsv.display()), cases));
     }
     let lexicon = Lexicon::new();
@@ -177,7 +247,8 @@ pub fn score(indexes: &[PathBuf], models: &[PathBuf], stride: u32, copies: usize
                 first.push(guesses);
             }
         }
-        results.push(json!({ "model": path.display().to_string(), "bytes": size, "sets": per_set }));
+        results
+            .push(json!({ "model": path.display().to_string(), "bytes": size, "sets": per_set }));
     }
     let report = serde_json::to_string_pretty(&results)?;
     match out {
@@ -191,11 +262,24 @@ pub fn score(indexes: &[PathBuf], models: &[PathBuf], stride: u32, copies: usize
 /// training query (as `train` makes them),
 /// and writes `s` or `t` (state or state-transition), the count and the
 /// feature, a line each, for the features that fired.
-pub fn usage(indexes: &[PathBuf], model: &Path, stride: u32, copies: usize, seed: u64, every: usize, out: &Path) -> Result<()> {
+pub fn usage(
+    indexes: &[PathBuf],
+    model: &Path,
+    stride: u32,
+    copies: usize,
+    seed: u64,
+    every: usize,
+    out: &Path,
+) -> Result<()> {
     let start = Instant::now();
     let (model, vocabulary) = read_model(model)?;
     let (state, transition) = model.rows();
-    let ids = |rows: &[airmail_tagger::model::Row]| -> HashMap<String, usize> { rows.iter().enumerate().map(|(i, (f, _))| (f.clone(), i)).collect() };
+    let ids = |rows: &[airmail_tagger::model::Row]| -> HashMap<String, usize> {
+        rows.iter()
+            .enumerate()
+            .map(|(i, (f, _))| (f.clone(), i))
+            .collect()
+    };
     let (state_ids, transition_ids) = (ids(&state), ids(&transition));
     let sources = sources(indexes, stride, seed, start)?;
     let chosen = ranges(&sources);
@@ -205,42 +289,66 @@ pub fn usage(indexes: &[PathBuf], model: &Path, stride: u32, copies: usize, seed
     type Counts = (Vec<u32>, Vec<u32>, usize, usize);
     let (states, _) = by_range(
         &chosen,
-        || -> (Generator, Option<(usize, IndexGazetteer)>, Counts) { (Generator::new(seed), None, (vec![0; state.len()], vec![0; transition.len()], 0, 0)) },
+        || -> (Generator, Option<(usize, IndexGazetteer)>, Counts) {
+            (
+                Generator::new(seed),
+                None,
+                (vec![0; state.len()], vec![0; transition.len()], 0, 0),
+            )
+        },
         |(generator, gazetteer, (s_counts, t_counts, examples, seen)), range| {
             if gazetteer.as_ref().is_none_or(|(s, _)| *s != range.source) {
-                *gazetteer = Some((range.source, IndexGazetteer::new(&sources[range.source].index).expect("searcher")));
+                *gazetteer = Some((
+                    range.source,
+                    IndexGazetteer::new(&sources[range.source].index).expect("searcher"),
+                ));
             }
             let gazetteer = &gazetteer.as_ref().expect("a gazetteer").1;
-            let extractor = Extractor { lexicon: &lexicon, vocabulary: &vocabulary };
-            range_examples(generator, &sources, range, copies, seed, |example, held_out| {
-                if held_out {
-                    return;
-                }
-                *seen += 1;
-                if *seen % every != 0 {
-                    return;
-                }
-                *examples += 1;
-                let areas = gazetteer.areas(&example.query);
-                for (t, token) in extractor.features(&example.query, &areas).iter().enumerate() {
-                    for f in &token.state {
-                        if let Some(i) = state_ids.get(f) {
-                            s_counts[*i] += 1;
-                        }
+            let extractor = Extractor {
+                lexicon: &lexicon,
+                vocabulary: &vocabulary,
+            };
+            range_examples(
+                generator,
+                &sources,
+                range,
+                copies,
+                seed,
+                |example, held_out| {
+                    if held_out {
+                        return;
                     }
-                    if t > 0 {
-                        for f in &token.transition {
-                            if let Some(i) = transition_ids.get(f) {
-                                t_counts[*i] += 1;
+                    *seen += 1;
+                    if *seen % every != 0 {
+                        return;
+                    }
+                    *examples += 1;
+                    let areas = gazetteer.areas(&example.query);
+                    for (t, token) in extractor
+                        .features(&example.query, &areas)
+                        .iter()
+                        .enumerate()
+                    {
+                        for f in &token.state {
+                            if let Some(i) = state_ids.get(f) {
+                                s_counts[*i] += 1;
+                            }
+                        }
+                        if t > 0 {
+                            for f in &token.transition {
+                                if let Some(i) = transition_ids.get(f) {
+                                    t_counts[*i] += 1;
+                                }
                             }
                         }
                     }
-                }
-            });
+                },
+            );
             gazetteer.forget_if_over(2_000_000);
         },
     );
-    let (mut s_total, mut t_total, mut examples) = (vec![0u64; state.len()], vec![0u64; transition.len()], 0);
+    let (mut s_total, mut t_total, mut examples) =
+        (vec![0u64; state.len()], vec![0u64; transition.len()], 0);
     for (_, _, (s, t, n, _)) in states {
         for (a, b) in s_total.iter_mut().zip(s) {
             *a += u64::from(b);

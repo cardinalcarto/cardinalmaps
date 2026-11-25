@@ -24,8 +24,8 @@
 //! matches and exact names put back together ([`words`]).
 
 use unicode_normalization::UnicodeNormalization;
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_script::{Script, UnicodeScript};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Words longer than this, in bytes, aren't indexed: they're never typed.
 const MAX_WORD_BYTES: usize = 64;
@@ -34,7 +34,13 @@ const MAX_WORD_BYTES: usize = 64;
 fn unspaced(c: char) -> bool {
     matches!(
         c.script(),
-        Script::Han | Script::Hiragana | Script::Katakana | Script::Thai | Script::Lao | Script::Khmer | Script::Myanmar
+        Script::Han
+            | Script::Hiragana
+            | Script::Katakana
+            | Script::Thai
+            | Script::Lao
+            | Script::Khmer
+            | Script::Myanmar
     )
 }
 
@@ -108,7 +114,13 @@ fn fold_any(text: &str) -> String {
 /// Whether text has letters outside the Latin script.
 #[must_use]
 pub fn has_non_latin(text: &str) -> bool {
-    text.chars().any(|c| c.is_alphabetic() && !matches!(c.script(), Script::Latin | Script::Common | Script::Inherited))
+    text.chars().any(|c| {
+        c.is_alphabetic()
+            && !matches!(
+                c.script(),
+                Script::Latin | Script::Common | Script::Inherited
+            )
+    })
 }
 
 /// `text` transliterated into Latin and folded, if it has letters in other
@@ -142,7 +154,8 @@ pub fn umlaut_variant(text: &str) -> Option<String> {
 /// `l arsenal`. Before folding, which drops them.
 #[must_use]
 pub fn apostrophe_variant(text: &str) -> Option<String> {
-    text.contains(['ʼ', '’', '\'', '`']).then(|| fold(&text.replace(['ʼ', '’', '\'', '`'], " ")))
+    text.contains(['ʼ', '’', '\'', '`'])
+        .then(|| fold(&text.replace(['ʼ', '’', '\'', '`'], " ")))
 }
 
 /// The words of folded text, with their byte offsets: runs of letters and
@@ -180,7 +193,10 @@ impl<'a> Iterator for AsciiWords<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let bytes = self.text.as_bytes();
         loop {
-            let start = self.next + bytes[self.next..].iter().position(u8::is_ascii_alphanumeric)?;
+            let start = self.next
+                + bytes[self.next..]
+                    .iter()
+                    .position(u8::is_ascii_alphanumeric)?;
             let end = bytes[start..]
                 .iter()
                 .position(|b| !b.is_ascii_alphanumeric())
@@ -231,8 +247,14 @@ mod test {
         let mut texts: Vec<String> = (0u8..128).map(|b| char::from(b).to_string()).collect();
         texts.extend(
             [
-                "McDonald's Rd\r\nNE", "1530 Post Alley", "  a--b__c  ", "Rue de l'Arsenal, 40",
-                "`back`ticks`", "ALL CAPS 54TH", "\t\ttabs\x7f\x00nul", "",
+                "McDonald's Rd\r\nNE",
+                "1530 Post Alley",
+                "  a--b__c  ",
+                "Rue de l'Arsenal, 40",
+                "`back`ticks`",
+                "ALL CAPS 54TH",
+                "\t\ttabs\x7f\x00nul",
+                "",
             ]
             .map(str::to_string),
         );
@@ -277,12 +299,27 @@ mod test {
 
     #[test]
     fn unspaced_scripts_are_split_into_characters() {
-        assert_eq!(word_list("渋谷区 shibuya"), vec!["渋", "谷", "区", "shibuya"]);
-        assert_eq!(word_list("東京都渋谷区2-1"), vec!["東", "京", "都", "渋", "谷", "区", "2", "1"]);
-        assert_eq!(word_list("เชียงใหม่"), "เชียงใหม่".graphemes(true).collect::<Vec<_>>());
+        assert_eq!(
+            word_list("渋谷区 shibuya"),
+            vec!["渋", "谷", "区", "shibuya"]
+        );
+        assert_eq!(
+            word_list("東京都渋谷区2-1"),
+            vec!["東", "京", "都", "渋", "谷", "区", "2", "1"]
+        );
+        assert_eq!(
+            word_list("เชียงใหม่"),
+            "เชียงใหม่".graphemes(true).collect::<Vec<_>>()
+        );
         assert_eq!(word_list("เชียงใหม่").len(), 7);
         assert_eq!(word_list("독서당로39길 22"), vec!["독서당로39길", "22"]);
-        assert_eq!(word_list(&fold("Rue de l'Arsenal, 40")), vec!["rue", "de", "larsenal", "40"]);
-        assert_eq!(apostrophe_variant("Rue de l'Arsenal").as_deref(), Some("rue de l arsenal"));
+        assert_eq!(
+            word_list(&fold("Rue de l'Arsenal, 40")),
+            vec!["rue", "de", "larsenal", "40"]
+        );
+        assert_eq!(
+            apostrophe_variant("Rue de l'Arsenal").as_deref(),
+            Some("rue de l arsenal")
+        );
     }
 }

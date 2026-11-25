@@ -4,8 +4,8 @@
 //! Coordinates are `x` = longitude, `y` = latitude, in WGS 84 degrees.
 
 use geo::{
-    BoundingRect, Centroid, ChamberlainDuquetteArea, Contains, CoordsIter, Geometry, InteriorPoint, MultiPolygon,
-    Point, SimplifyVwPreserve,
+    BoundingRect, Centroid, ChamberlainDuquetteArea, Contains, CoordsIter, Geometry, InteriorPoint,
+    MultiPolygon, Point, SimplifyVwPreserve,
 };
 
 /// Shapes are simplified until they have at most this many vertices.
@@ -33,7 +33,9 @@ pub fn normalize(geometry: Geometry<f64>) -> Option<Geometry<f64>> {
         Geometry::Line(line) => Geometry::LineString(line.into()),
         other => Geometry::Point(representative_point(&other)?),
     };
-    let finite = geometry.coords_iter().all(|c| c.x.is_finite() && c.y.is_finite());
+    let finite = geometry
+        .coords_iter()
+        .all(|c| c.x.is_finite() && c.y.is_finite());
     (finite && geometry.coords_count() > 0).then_some(geometry)
 }
 
@@ -54,7 +56,9 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
     if let Geometry::MultiPolygon(multi) = &geometry
         && multi.0.len() * 4 > max_vertices
     {
-        let Geometry::MultiPolygon(multi) = geometry else { unreachable!() };
+        let Geometry::MultiPolygon(multi) = geometry else {
+            unreachable!()
+        };
         return largest_parts(multi, max_vertices);
     }
     let size = bounds.width().max(bounds.height());
@@ -66,9 +70,13 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
     for _ in 0..64 {
         let simplified = match &geometry {
             Geometry::LineString(line) => Geometry::LineString(line.simplify_vw_preserve(epsilon)),
-            Geometry::MultiLineString(multi) => Geometry::MultiLineString(multi.simplify_vw_preserve(epsilon)),
+            Geometry::MultiLineString(multi) => {
+                Geometry::MultiLineString(multi.simplify_vw_preserve(epsilon))
+            }
             Geometry::Polygon(polygon) => Geometry::Polygon(polygon.simplify_vw_preserve(epsilon)),
-            Geometry::MultiPolygon(multi) => Geometry::MultiPolygon(drop_degenerate(multi.simplify_vw_preserve(epsilon))),
+            Geometry::MultiPolygon(multi) => {
+                Geometry::MultiPolygon(drop_degenerate(multi.simplify_vw_preserve(epsilon)))
+            }
             _ => return geometry,
         };
         let count = simplified.coords_count();
@@ -93,12 +101,21 @@ pub fn simplify(geometry: Geometry<f64>, max_vertices: usize) -> Geometry<f64> {
 }
 
 fn drop_degenerate(multi: MultiPolygon<f64>) -> MultiPolygon<f64> {
-    MultiPolygon(multi.0.into_iter().filter(|p| p.exterior().0.len() >= 4).collect())
+    MultiPolygon(
+        multi
+            .0
+            .into_iter()
+            .filter(|p| p.exterior().0.len() >= 4)
+            .collect(),
+    )
 }
 
 fn largest_parts(multi: MultiPolygon<f64>, max_vertices: usize) -> Geometry<f64> {
     let mut parts = multi.0;
-    parts.sort_by(|a, b| b.chamberlain_duquette_unsigned_area().total_cmp(&a.chamberlain_duquette_unsigned_area()));
+    parts.sort_by(|a, b| {
+        b.chamberlain_duquette_unsigned_area()
+            .total_cmp(&a.chamberlain_duquette_unsigned_area())
+    });
     let mut kept = Vec::new();
     let mut vertices = 0;
     for part in parts {
@@ -112,7 +129,8 @@ fn largest_parts(multi: MultiPolygon<f64>, max_vertices: usize) -> Geometry<f64>
             kept.push(polygon);
         }
     }
-    normalize(Geometry::MultiPolygon(MultiPolygon(kept))).unwrap_or(Geometry::MultiPolygon(MultiPolygon(vec![])))
+    normalize(Geometry::MultiPolygon(MultiPolygon(kept)))
+        .unwrap_or(Geometry::MultiPolygon(MultiPolygon(vec![])))
 }
 
 /// A point that stands for a geometry: inside it for areas, on it for lines.
@@ -123,7 +141,11 @@ pub fn representative_point(geometry: &Geometry<f64>) -> Option<Point<f64>> {
         Geometry::Point(point) => Some(*point),
         Geometry::Polygon(_) | Geometry::MultiPolygon(_) => {
             let centroid = geometry.centroid()?;
-            if geometry.contains(&centroid) { Some(centroid) } else { geometry.interior_point() }
+            if geometry.contains(&centroid) {
+                Some(centroid)
+            } else {
+                geometry.interior_point()
+            }
         }
         _ => geometry.interior_point(),
     }
@@ -134,7 +156,9 @@ pub fn representative_point(geometry: &Geometry<f64>) -> Option<Point<f64>> {
 #[must_use]
 pub fn area_m2(geometry: &Geometry<f64>) -> f64 {
     match geometry {
-        Geometry::Polygon(_) | Geometry::MultiPolygon(_) => geometry.chamberlain_duquette_unsigned_area(),
+        Geometry::Polygon(_) | Geometry::MultiPolygon(_) => {
+            geometry.chamberlain_duquette_unsigned_area()
+        }
         _ => 0.0,
     }
 }

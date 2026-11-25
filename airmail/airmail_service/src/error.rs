@@ -42,15 +42,26 @@ impl Problem {
 
     #[must_use]
     pub fn invalid_params(params: Vec<(String, String)>) -> Self {
-        let mut problem = Self::new(StatusCode::BAD_REQUEST, "Bad Request", Some("Some parameters are invalid.".into()));
-        problem.invalid_params = params.into_iter().map(|(name, reason)| InvalidParam { name, reason }).collect();
+        let mut problem = Self::new(
+            StatusCode::BAD_REQUEST,
+            "Bad Request",
+            Some("Some parameters are invalid.".into()),
+        );
+        problem.invalid_params = params
+            .into_iter()
+            .map(|(name, reason)| InvalidParam { name, reason })
+            .collect();
         problem
     }
 
     #[must_use]
     pub fn internal(error: &anyhow::Error) -> Self {
         warn!("Search failed: {error:#}");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error", None)
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            None,
+        )
     }
 }
 
@@ -58,6 +69,11 @@ impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = serde_json::to_string(&self).unwrap_or_default();
-        (status, [(header::CONTENT_TYPE, "application/problem+json")], body).into_response()
+        (
+            status,
+            [(header::CONTENT_TYPE, "application/problem+json")],
+            body,
+        )
+            .into_response()
     }
 }

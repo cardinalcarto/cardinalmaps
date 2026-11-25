@@ -17,8 +17,8 @@ pub mod features;
 pub mod labels;
 pub mod lexicon;
 pub mod model;
-pub mod text;
 pub mod tagger;
+pub mod text;
 pub mod train;
 
 pub use crf::{Label, Lattice, TokenFeatures, Weights};

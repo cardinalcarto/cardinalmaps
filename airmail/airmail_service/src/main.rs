@@ -63,7 +63,8 @@ async fn main() -> Result<()> {
     debug!("Loading index from {}", args.index);
     let mut index = AirmailIndex::open_read_only(&args.index)?;
     if let Some(path) = &args.tagger {
-        let tagger = airmail_tagger::Tagger::read(&mut std::io::BufReader::new(std::fs::File::open(path)?))?;
+        let tagger =
+            airmail_tagger::Tagger::read(&mut std::io::BufReader::new(std::fs::File::open(path)?))?;
         info!("Loaded the query tagger from {}", path.display());
         index = index.with_tagger(tagger);
     }
@@ -85,7 +86,11 @@ async fn main() -> Result<()> {
         categories,
         schema_version: index::schema_version(std::path::Path::new(&args.index))?,
         documents,
-        poi_status: args.poi_status.as_deref().map(PoiStatus::open).transpose()?,
+        poi_status: args
+            .poi_status
+            .as_deref()
+            .map(PoiStatus::open)
+            .transpose()?,
     });
 
     let mut cors = CorsLayer::new();
