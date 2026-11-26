@@ -19,6 +19,10 @@ const wofUrl = String.fromEnvironment('CARDINAL_WOF_URL');
 /// `latest.json` (see `publish/README.md`). Empty means no downloads.
 const releasesUrl = String.fromEnvironment('CARDINAL_RELEASES_URL');
 
+/// The public GTFS-RT cache root, including its `gtfs-rt/` prefix.
+/// Empty means transit uses the static timetable without fetching real-time feeds.
+const realtimeCacheUrl = String.fromEnvironment('CARDINAL_REALTIME_CACHE_URL');
+
 /// The offline folder: the directory holding `routing/<date>/`, `transit/<date>/` and
 /// `map/<date>/`, laid out as the bucket's `releases/` are. Empty means the app's
 /// `offline/` folder (see `offline/offline_area.dart`).

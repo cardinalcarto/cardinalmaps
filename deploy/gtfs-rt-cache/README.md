@@ -51,6 +51,9 @@ with permission to put objects under `gtfs-rt/`. The bucket already allows
 public reads. No credentials are needed on clients.
 
 For another environment, `RELEASES_URL`, `BUCKET_NAME`, `AWS_ENDPOINT_URL_S3`,
-and `AWS_REGION` override the defaults. The production app uses the public
-bucket URL above. To run mocked tests locally, install `requirements.txt` and
-run `python -m unittest test_updater` from this directory.
+and `AWS_REGION` override the defaults.
+Configure clients with `CARDINAL_REALTIME_CACHE_URL` in their Dart defines,
+set to `https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt` for production.
+An unset value disables real-time downloads.
+To run mocked tests locally, install `requirements.txt` and run
+`python -m unittest test_updater` from this directory.

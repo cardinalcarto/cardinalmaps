@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:routing/routing.dart';
 
+const cacheUrl = 'https://cache.example.org/gtfs-rt';
+
 RealtimeSource source(String url) =>
     RealtimeSource(feed: 'f', url: Uri.parse(url));
 
@@ -59,8 +61,15 @@ void main() {
 
   test('cache keys match the updater and preserve exact manifest spelling', () {
     expect(
-      cachedRealtimeUrl(source('https://example.org/trip.pb')).toString(),
-      'https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt/a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb',
+      cachedRealtimeUrl(
+        source('https://example.org/trip.pb'),
+        cacheUrl,
+      ).toString(),
+      'https://cache.example.org/gtfs-rt/a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb',
+    );
+    expect(
+      cachedRealtimeUrl(source('https://example.org/trip.pb'), '$cacheUrl/'),
+      cachedRealtimeUrl(source('https://example.org/trip.pb'), cacheUrl),
     );
     final spelled = RealtimeSource(
       feed: 'f',
@@ -68,9 +77,23 @@ void main() {
       upstreamUrl: 'https://EXAMPLE.org/trip.pb',
     );
     expect(
-      cachedRealtimeUrl(spelled),
-      isNot(cachedRealtimeUrl(source('https://example.org/trip.pb'))),
+      cachedRealtimeUrl(spelled, cacheUrl),
+      isNot(cachedRealtimeUrl(source('https://example.org/trip.pb'), cacheUrl)),
     );
+  });
+
+  test('an unconfigured cache does not fetch agency URLs', () async {
+    var requests = 0;
+    final feeds = RealtimeFeeds(
+      () => Future.value([source('https://a.test/alerts.pb')]),
+      cacheUrl: '',
+      client: MockClient((request) async {
+        requests++;
+        return reply([1]);
+      }),
+    );
+    expect(await feeds.fresh(), isEmpty);
+    expect(requests, 0);
   });
 
   test('fetches each message, then only once it is old', () async {
@@ -80,6 +103,7 @@ void main() {
         source('https://a.test/alerts.pb'),
         source('https://a.test/tripupdates.pb'),
       ]),
+      cacheUrl: cacheUrl,
       client: MockClient((request) async {
         fetches++;
         return reply([1, 2, 3]);
@@ -103,9 +127,10 @@ void main() {
       var fetches = 0;
       final feeds = RealtimeFeeds(
         () => Future.value([sourceFeed]),
+        cacheUrl: cacheUrl,
         clock: () => now,
         client: MockClient((request) async {
-          expect(request.url, cachedRealtimeUrl(sourceFeed));
+          expect(request.url, cachedRealtimeUrl(sourceFeed, cacheUrl));
           fetches++;
           return reply([1], published);
         }),
@@ -132,6 +157,7 @@ void main() {
     var up = true;
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
+      cacheUrl: cacheUrl,
       clock: () => now,
       client: MockClient((request) async {
         if (!up) throw http.ClientException('no network');
@@ -166,6 +192,7 @@ void main() {
     ]) {
       final feeds = RealtimeFeeds(
         () => Future.value([source('https://a.test/alerts.pb')]),
+        cacheUrl: cacheUrl,
         clock: () => now,
         client: MockClient((request) async => response),
       );
@@ -176,6 +203,7 @@ void main() {
   test('calls during the first fetch all wait for it', () async {
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
+      cacheUrl: cacheUrl,
       client: MockClient((request) async => reply([1])),
     );
     final (a, b) = await (feeds.fresh(), feeds.fresh()).wait;
@@ -185,6 +213,7 @@ void main() {
   test('a prefetch leaves what it fetched for the next plan', () async {
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
+      cacheUrl: cacheUrl,
       client: MockClient((request) async => reply([1])),
     );
     await feeds.prefetch();
@@ -198,6 +227,7 @@ void main() {
       final reply = Completer<http.Response>();
       final realtime = RealtimeFeeds(
         () => Future.value([source('https://a.test/alerts.pb')]),
+        cacheUrl: cacheUrl,
         client: MockClient((request) => reply.future),
       );
       final (:feeds, :first) = realtime.arrived();
@@ -220,6 +250,7 @@ void main() {
   test('a first fetch that brings nothing says so', () async {
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
+      cacheUrl: cacheUrl,
       client: MockClient((request) async => throw http.ClientException('no')),
     );
     expect(await feeds.arrived().first, isFalse);
