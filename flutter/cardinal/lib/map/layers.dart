@@ -6,6 +6,7 @@ import 'package:cupertino_ui/cupertino_ui.dart'
 import 'package:material_ui/material_ui.dart';
 
 import '../config.dart';
+import '../directions/route_source.dart';
 import '../offline/drawing/area_layer.dart';
 import '../store/store.dart';
 import '../saved/saved_layers_sheet.dart';
@@ -44,13 +45,14 @@ final contourUnits = Setting.choice(
 );
 
 /// What the layer picker chooses: the map's style, and Cardinal Topo's settings; and
-/// whether the app is dark, which the map follows.
+/// whether the app is dark and the map is showing motor or bicycle navigation.
 @immutable
 class MapLayers {
   const MapLayers({
     this.style = MapStyle.streets,
     this.units = ContourUnits.imperial,
     this.dark = false,
+    this.navigationStyle = false,
   });
 
   /// The stored choice, for an app that's [dark] or not.
@@ -69,31 +71,48 @@ class MapLayers {
   /// Whether the app is in dark mode, which each style has a version for.
   final bool dark;
 
-  MapLayers copyWith({MapStyle? style, ContourUnits? units, bool? dark}) =>
-      MapLayers(
-        style: style ?? this.style,
-        units: units ?? this.units,
-        dark: dark ?? this.dark,
-      );
+  /// The temporary, simplified basemap for driving and cycling. Not a saved choice.
+  final bool navigationStyle;
+
+  /// Navigation overrides the basemap without losing the layer picker's choice.
+  /// Walking (including wheelchair navigation) and idle keep that choice.
+  MapLayers forNavigation(TravelMode? mode) => copyWith(
+    navigationStyle: mode == TravelMode.driving || mode == TravelMode.cycling,
+  );
+
+  MapLayers copyWith({
+    MapStyle? style,
+    ContourUnits? units,
+    bool? dark,
+    bool? navigationStyle,
+  }) => MapLayers(
+    style: style ?? this.style,
+    units: units ?? this.units,
+    dark: dark ?? this.dark,
+    navigationStyle: navigationStyle ?? this.navigationStyle,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is MapLayers &&
       other.style == style &&
       other.units == units &&
-      other.dark == dark;
+      other.dark == dark &&
+      other.navigationStyle == navigationStyle;
 
   @override
-  int get hashCode => Object.hash(style, units, dark);
+  int get hashCode => Object.hash(style, units, dark, navigationStyle);
 }
 
 /// The style JSON for [layers], from the bundled styles, with where you are and the
 /// selected place on top.
 Future<Map<String, Object?>> styleFor(MapLayers layers) async {
-  final file = switch (layers.style) {
-    MapStyle.streets => layers.dark ? darkMapStyle : mapStyle,
-    MapStyle.topo => layers.dark ? darkTopoStyle : topoStyle,
-  };
+  final file = layers.navigationStyle
+      ? (layers.dark ? darkDrivingStyle : drivingStyle)
+      : switch (layers.style) {
+          MapStyle.streets => layers.dark ? darkMapStyle : mapStyle,
+          MapStyle.topo => layers.dark ? darkTopoStyle : topoStyle,
+        };
   final style = jsonDecode(
     await rootBundle.loadString('assets/map/$file'),
   ) as Map<String, Object?>;

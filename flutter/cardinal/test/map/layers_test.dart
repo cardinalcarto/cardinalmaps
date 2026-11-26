@@ -1,7 +1,9 @@
 import 'dart:convert';
 
 import 'package:cardinal/config.dart';
+import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/map/layers.dart';
+import 'package:cardinal/map/route_layer.dart';
 import 'package:flutter/services.dart';
 import 'package:cardinal/store/store.dart';
 import 'package:material_ui/material_ui.dart';
@@ -11,6 +13,8 @@ import '../../tool/dark_style.dart';
 import '../../tool/dark_topo_style.dart';
 import '../fakes/fake_place_store.dart';
 import '../fakes/fake_saved_store.dart';
+import '../fakes/fake_navigation.dart';
+import '../fakes/fake_routes.dart';
 
 Map<String, Object?> _state(Map<String, Object?> style) =>
     style['state']! as Map<String, Object?>;
@@ -49,6 +53,73 @@ void main() {
     // Topo's settings still apply in the dark.
     expect(_state(topo)['units'], {'default': 'imperial'});
   });
+
+  test(
+    'driving and cycling temporarily override either stored basemap',
+    () async {
+      final settings = SettingsStore.inMemory();
+      await settings.set(contourUnits, ContourUnits.metric);
+      final navigation = fakeNavigationController();
+      addTearDown(navigation.dispose);
+      final route = fakeRoute([
+        [0.5, 2],
+        [1, 4],
+      ]);
+      for (final choice in MapStyle.values) {
+        await settings.set(mapStyleChoice, choice);
+        for (final dark in [false, true]) {
+          final stored = await MapLayers.read(settings, dark: dark);
+          final normal = await styleFor(stored);
+          for (final mode in [
+            TravelMode.driving,
+            TravelMode.cycling,
+            TravelMode.walking,
+          ]) {
+            navigation.start(route: route, mode: mode, wheelchair: false);
+            final during = stored.forNavigation(navigation.mode);
+            final style = await styleFor(during);
+            if (mode == TravelMode.walking) {
+              expect(during, stored);
+              expect(style, normal);
+            } else {
+              expect(during, isNot(stored));
+              expect(
+                style['id'],
+                dark ? 'cardinal-driving-dark' : 'cardinal-driving',
+              );
+              final sources = style['sources']! as Map;
+              expect(sources.keys, contains(navigationSource));
+              final ids = [
+                for (final layer in style['layers']! as List)
+                  (layer as Map)['id'],
+              ];
+              expect(
+                ids,
+                containsAll([
+                  'navigation-ahead',
+                  'navigation-traveled',
+                  'selection-pin',
+                ]),
+              );
+              expect(ids, isNot(contains('poi')));
+              // A theme change does not cancel the override.
+              final toggled = during.copyWith(dark: !dark);
+              expect(
+                (await styleFor(toggled))['id'],
+                dark ? 'cardinal-driving' : 'cardinal-driving-dark',
+              );
+            }
+            await navigation.end();
+            final after = during.forNavigation(navigation.mode);
+            expect(after, stored);
+            expect(await styleFor(after), normal);
+            expect(await settings.get(mapStyleChoice), choice);
+            expect(await settings.get(contourUnits), ContourUnits.metric);
+          }
+        }
+      }
+    },
+  );
 
   test('the bundled dark style is the one made from the light style', () async {
     // Fails if the light style changed and tool/dark_style.dart wasn't rerun.
