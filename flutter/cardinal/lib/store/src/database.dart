@@ -129,8 +129,22 @@ class RememberedHeadsigns extends Table {
   Set<Column> get primaryKey => {feed, routeId, stopId};
 }
 
+/// Local-only search history. Never part of saved-place sync.
+@DataClassName('RecentSearchRow')
+class RecentSearches extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get placeId => text().unique().references(Places, #id)();
+}
+
 @DriftDatabase(
-  tables: [Places, Settings, SavedLists, SavedPlaces, RememberedHeadsigns],
+  tables: [
+    Places,
+    Settings,
+    SavedLists,
+    SavedPlaces,
+    RememberedHeadsigns,
+    RecentSearches,
+  ],
   include: {'saved.drift'},
 )
 class CardinalDatabase extends _$CardinalDatabase {
@@ -148,7 +162,7 @@ class CardinalDatabase extends _$CardinalDatabase {
       );
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -179,6 +193,7 @@ class CardinalDatabase extends _$CardinalDatabase {
         await m.addColumn(schema.savedPlaces, schema.savedPlaces.shownOnMap);
       },
       from6To7: (m, schema) => m.createTable(schema.rememberedHeadsigns),
+      from7To8: (m, schema) => m.createTable(schema.recentSearches),
     ),
     // Deleting a list takes what's in it along.
     beforeOpen: (details) => customStatement('PRAGMA foreign_keys = ON'),

@@ -8,8 +8,10 @@ import 'package:cupertino_ui/cupertino_ui.dart'
         CupertinoActivityIndicator,
         CupertinoButton,
         CupertinoButtonSize,
+        CupertinoColors,
         CupertinoIcons,
         CupertinoSearchTextField;
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:geolocator/geolocator.dart' show Geolocator, LocationPermission;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -28,7 +30,7 @@ import '../ui/adaptive.dart';
 import '../units.dart';
 import 'place_search.dart';
 
-/// The home sheet: a search bar, peeking over the map, with results below it as you type.
+/// The home sheet: a search bar, peeking over the map, with recent places or results below it.
 ///
 /// It's browsing or searching, a mode it keeps itself rather than reading it off the
 /// bar's focus, which moves of its own accord (the map takes it when it's pressed):
@@ -36,11 +38,12 @@ import 'place_search.dart';
 /// | In | When | Then |
 /// |---|---|---|
 /// | browsing: at the bar, no keyboard | the bar's tapped | searching: full, keyboard up |
-/// | searching | dragged down | searching, at the bar, keyboard as it was |
+/// | browsing | dragged up | browsing, freely through recents, or full |
+/// | searching | dragged down | searching, lower in the sheet, keyboard as it was |
 /// | searching | the bar's tapped | searching: full, keyboard up |
 /// | searching | back, or Cancel on iOS | browsing; the query and results cleared |
 /// | browsing | back | the app's left |
-/// | either | a page covers it | it notes its mode, anchor and keyboard, and lets go of focus |
+/// | either | a page covers it | it notes its mode, rest and keyboard, and lets go of focus |
 /// | either | that page closes, however | as it noted; the keyboard as soon as the page can take focus |
 /// | either | the app bar's Search button is tapped | searching: full, keyboard up |
 ///
@@ -57,6 +60,13 @@ class SearchSheet extends StatefulWidget {
 
 class _SearchSheetState extends State<SearchSheet> with RouteAware {
   static const _bar = #searchBar;
+  static const _peekAnchor = SheetAnchor.section(_bar);
+  static const _recentsAnchor = SheetAnchor.section(_Recents.sectionId);
+  static const _recentsRange = SheetRange(
+    _peekAnchor,
+    _recentsAnchor,
+    carriesIntoScroll: true,
+  );
 
   final _text = TextEditingController();
   final _focus = FocusNode(debugLabel: 'search');
@@ -65,6 +75,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   /// The pinned places, each with a chip under the bar while browsing.
   List<SavedPlace> _pinned = const [];
   StreamSubscription<SavedTree>? _watchSaved;
+
+  List<Place> _recent = const [];
+  StreamSubscription<List<Place>>? _watchRecent;
 
   /// The app's [unitSystem] setting, for how far each result is. The default stands until
   /// the setting is read.
@@ -79,7 +92,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   Fix? _here;
 
   /// What the sheet was when a page covered it, to be again when that page closes.
-  ({bool searching, SheetAnchor anchor, bool keyboard})? _covered;
+  ({bool searching, SheetAnchor? anchor, bool keyboard})? _covered;
 
   SheetController? _sheet;
   ModalRoute<Object?>? _route;
@@ -104,6 +117,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
       setState(() => _pinned = tree.pinned);
     });
+    _watchRecent ??= StoreScope.of(context).recentSearches
+        .watch()
+        .listen((recent) {
+          setState(() => _recent = recent);
+        });
     _watchUnits ??= StoreScope.of(context).settings
         .watch(unitSystem)
         .listen((units) {
@@ -124,6 +142,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     searchRequests.removeListener(_searchRequested);
     _watchSaved?.cancel();
     _watchUnits?.cancel();
+    _watchRecent?.cancel();
     _focus.dispose();
     _text.dispose();
     _search?.dispose();
@@ -181,11 +200,13 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     final sheet = _sheet!;
     _covered = (
       searching: _searching,
-      anchor:
-          sheet.restingAt ??
-          (sheet.isAtMax
-              ? const SheetAnchor.full()
-              : const SheetAnchor.section(_bar)),
+      // The scaffold remembers a free-range rest itself.
+      anchor: sheet.restingIn != null
+          ? null
+          : sheet.restingAt ??
+                (sheet.isAtMax
+                    ? const SheetAnchor.full()
+                    : const SheetAnchor.section(_bar)),
       keyboard: _focus.hasFocus,
     );
     _focus.unfocus();
@@ -197,7 +218,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _covered = null;
     if (covered == null) return;
     setState(() => _searching = covered.searching);
-    _sheet!.animateTo(covered.anchor);
+    if (covered.anchor case final anchor?) _sheet!.animateTo(anchor);
     if (covered.keyboard) _focusWhenAllowed();
   }
 
@@ -256,7 +277,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   }
 
   Future<void> _open(Place place) async {
-    await StoreScope.of(context).places.put(place);
+    final store = StoreScope.of(context);
+    final merged = await store.places.put(place);
+    await store.recentSearches.record(merged);
     if (!mounted) return;
     await context.push<void>(placeLocation(place.id));
   }
@@ -291,10 +314,19 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         builder: (context, _) => SheetContent(
           showsBottomBar: true,
           collapsible: true,
-          // Just the bar, until searching.
-          anchors: _searching
-              ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
-              : const [SheetAnchor.section(_bar)],
+          // History can be browsed at any height up to its end, with full
+          // expansion available beyond that. The search field still opens full.
+          anchors: [
+            _peekAnchor,
+            if (_recent.isNotEmpty && search.text.trim().isEmpty)
+              _recentsAnchor,
+            if (_searching ||
+                (_recent.isNotEmpty && search.text.trim().isEmpty))
+              const SheetAnchor.full(),
+          ],
+          freeRanges: _recent.isNotEmpty && search.text.trim().isEmpty
+              ? const [_recentsRange]
+              : const [],
           slivers: [
             SliverPersistentHeader(
               pinned: true,
@@ -371,12 +403,19 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             ),
             ListenableBuilder(
               listenable: search,
-              builder: (context, _) => _Results(
-                search: search,
-                here: _here,
-                units: _units.onDevice,
-                onTap: _open,
-              ),
+              builder: (context, _) => search.text.trim().isEmpty
+                  ? _Recents(
+                      places: _recent,
+                      onTap: _open,
+                      onRemove: (id) =>
+                          StoreScope.of(context).recentSearches.remove(id),
+                    )
+                  : _Results(
+                      search: search,
+                      here: _here,
+                      units: _units.onDevice,
+                      onTap: _open,
+                    ),
             ),
           ],
         ),
@@ -481,6 +520,96 @@ class _PinnedChips extends StatelessWidget {
       },
     ),
   );
+}
+
+/// History sits below the peeked section, independently of search focus.
+class _Recents extends StatelessWidget {
+  const _Recents({
+    required this.places,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  static const sectionId = #recentSearches;
+
+  final List<Place> places;
+  final ValueChanged<Place> onTap;
+  final ValueChanged<String> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (places.isEmpty)
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    final cupertino = isCupertinoOf(context);
+    // The bounded list is laid out together so the section end is known even
+    // while it is below the peek or taller than the full sheet.
+    return SliverToBoxAdapter(
+      child: SheetSection(
+        id: sectionId,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Text(
+                'Recent searches',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            for (final place in places) _row(context, place, cupertino),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(BuildContext context, Place place, bool cupertino) {
+    void remove() => onRemove(place.id);
+    final row = AppListTile(
+      leading: Icon(cupertino ? CupertinoIcons.time : Icons.history),
+      title: Text(
+        placeTitle(place),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: switch (placeSubtitle(place)) {
+        final subtitle? => Text(
+          subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        null => null,
+      },
+      trailing: cupertino
+          ? null
+          : IconButton(
+              tooltip: 'Remove from recent searches',
+              icon: const Icon(Icons.close),
+              onPressed: remove,
+            ),
+      onTap: () => onTap(place),
+    );
+    return cupertino
+        ? Slidable(
+            key: ValueKey(place.id),
+            endActionPane: ActionPane(
+              motion: const DrawerMotion(),
+              extentRatio: 0.25,
+              dismissible: DismissiblePane(onDismissed: remove),
+              children: [
+                SlidableAction(
+                  onPressed: (_) => remove(),
+                  backgroundColor: CupertinoColors.systemRed,
+                  foregroundColor: const Color(0xFFFFFFFF),
+                  icon: CupertinoIcons.delete,
+                  label: 'Delete',
+                ),
+              ],
+            ),
+            child: row,
+          )
+        : KeyedSubtree(key: ValueKey(place.id), child: row);
+  }
 }
 
 class _Results extends StatelessWidget {

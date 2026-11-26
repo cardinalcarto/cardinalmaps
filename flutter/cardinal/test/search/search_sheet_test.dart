@@ -36,6 +36,7 @@ Future<Store> _pumpApp(
   List<Uri>? asked,
   FakeMap? map,
   Widget? body,
+  List<Map<String, Object?>>? results,
 }) async {
   tester.view
     ..physicalSize = const Size(400, 800) * 2
@@ -55,7 +56,7 @@ Future<Store> _pumpApp(
       return http.Response(
         jsonEncode({
           'query': {},
-          'results': [spaceNeedle()],
+          'results': results ?? [spaceNeedle()],
         }),
         200,
       );
@@ -175,6 +176,40 @@ void main() {
     expect(_sheet(tester).isAtMax, isTrue);
   });
 
+  testWidgets('an opened address appears in recents and reopens', (
+    tester,
+  ) async {
+    await _pumpApp(
+      tester,
+      results: [
+        {
+          ...spaceNeedle(),
+          'id': 'osm:node/1',
+          'kind': 'address',
+          'name': null,
+          'poi': null,
+          'osm': null,
+          'feature': null,
+        },
+      ],
+    );
+    await tester.tap(find.byType(SearchBar));
+    await tester.enterText(find.byType(TextField), '400 Broad Street');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('400 Broad Street').last);
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsOneWidget);
+    await tester.tap(find.byTooltip('Close'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Clear'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsOneWidget);
+    await tester.tap(find.text('400 Broad Street'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsOneWidget);
+  });
+
   testWidgets('a result closed with back comes back to searching too', (
     tester,
   ) async {
@@ -231,6 +266,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('Space Needle')).dy, before);
     expect(find.byType(CupertinoActivityIndicator), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('iOS recents reopen POIs and can be swipe-deleted', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await _pumpApp(tester);
+    await tester.tap(find.byType(CupertinoSearchTextField));
+    await tester.enterText(find.byType(EditableText), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsNothing);
+    await tester.tap(find.text('Space Needle'));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), '');
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsOneWidget);
+    await tester.tap(find.text('Space Needle'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Space Needle'), findsOneWidget);
+    await tester.drag(find.text('Space Needle'), const Offset(-130, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsOneWidget);
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsNothing);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -338,7 +406,7 @@ void main() {
   });
 
   testWidgets(
-    'stopped after a place, nothing is left to drag the sheet up to',
+    'stopped after a place, recents are below the peek and can be expanded',
     (tester) async {
       await _pumpApp(tester);
       final peek = _sheet(tester).extent;
@@ -354,9 +422,9 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(_sheet(tester).extent, moreOrLessEquals(peek));
-      expect(find.text('Space Needle'), findsNothing);
+      expect(find.text('space ne'), findsNothing);
 
-      // Dragged up from the bar, it stays: no results are kept to show.
+      // Dragging up from the bar exposes history without activating search.
       final gesture = await tester.startGesture(
         Offset(200, 800 - _sheet(tester).extent + 12),
       );
@@ -366,9 +434,96 @@ void main() {
       }
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(_sheet(tester).extent, moreOrLessEquals(peek));
+      expect(_sheet(tester).isAtMax, isTrue);
+      expect(find.text('Recent searches'), findsOneWidget);
+      expect(find.text('Space Needle'), findsOneWidget);
+      expect(find.byTooltip('Cancel'), findsNothing);
+      await tester.tap(find.byTooltip('Remove from recent searches'));
+      await tester.pumpAndSettle();
+      expect(find.text('Space Needle'), findsNothing);
     },
   );
+
+  testWidgets('recents have a free range from pins to their end, then full', (
+    tester,
+  ) async {
+    final store = await _pumpApp(tester);
+    final pinned = Place(
+      id: 'poi:pinned',
+      kind: 'poi',
+      name: 'Pinned place',
+      center: const LngLat(0, 0),
+    );
+    await store.places.put(pinned);
+    await store.saved.savePlace(pinned.id);
+    await store.saved.setPinned([
+      (await store.saved.watch().first).copiesOf(pinned.id).single.entryId,
+    ], true);
+    for (var i = 0; i < 3; i++) {
+      final place = Place(
+        id: 'poi:$i',
+        kind: 'poi',
+        name: 'Recent $i',
+        center: const LngLat(0, 0),
+      );
+      await store.places.put(place);
+      await store.recentSearches.record(place);
+    }
+    await tester.pumpAndSettle();
+    final sheet = _sheet(tester);
+    const peekAnchor = SheetAnchor.section(#searchBar);
+    const endAnchor = SheetAnchor.section(#recentSearches);
+    expect(sheet.restingAt, peekAnchor);
+    expect(
+      sheet.anchors.map((a) => a.anchor),
+      containsAllInOrder([peekAnchor, endAnchor, const SheetAnchor.full()]),
+    );
+    final range = sheet.ranges.single;
+    final peek = sheet.extent;
+    expect(range.lower, peek);
+    expect(range.upper, lessThan(sheet.anchors.last.extent));
+    await tester.timedDragFrom(
+      Offset(200, 800 - peek + 12),
+      const Offset(0, -100),
+      const Duration(seconds: 1),
+    );
+    await tester.pumpAndSettle();
+    expect(sheet.restingIn, range.range);
+    expect(sheet.extent, greaterThan(peek));
+    expect(sheet.extent, lessThan(range.upper));
+    sheet.animateTo(endAnchor);
+    await tester.pumpAndSettle();
+    expect(sheet.restingAt, endAnchor);
+    expect(sheet.extent, moreOrLessEquals(range.upper));
+    sheet.animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
+    expect(sheet.isAtMax, isTrue);
+  });
+
+  testWidgets('long recents reach full expansion and can scroll', (
+    tester,
+  ) async {
+    final store = await _pumpApp(tester);
+    for (var i = 0; i < 25; i++) {
+      final place = Place(
+        id: 'poi:$i',
+        kind: 'poi',
+        name: 'Recent $i',
+        center: const LngLat(0, 0),
+      );
+      await store.places.put(place);
+      await store.recentSearches.record(place);
+    }
+    await tester.pumpAndSettle();
+    final sheet = _sheet(tester);
+    expect(sheet.ranges.single.upper, sheet.anchors.last.extent);
+    sheet.animateTo(const SheetAnchor.full());
+    await tester.pumpAndSettle();
+    await tester.drag(find.text('Recent 20'), const Offset(0, -500));
+    await tester.pumpAndSettle();
+    expect(sheet.isAtMax, isTrue);
+    expect(find.text('Recent 5').hitTestable(), findsOneWidget);
+  });
 
   for (final close in ['X', 'back']) {
     for (final collapse in ['dragging down', 'back']) {

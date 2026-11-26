@@ -29,7 +29,7 @@ class PlaceStore {
   Future<Place> put(Place place) async {
     final merged = await _db.transaction(() async {
       final stored = await _select(place.id).getSingleOrNull();
-      final merged = stored == null ? place : _fromRow(stored).merge(place);
+      final merged = stored == null ? place : placeFromRow(stored).merge(place);
       final now = _now();
       await _db.into(_db.places).insertOnConflictUpdate(_toRow(merged, now));
       return merged;
@@ -43,7 +43,7 @@ class PlaceStore {
     final row = await _select(id).getSingleOrNull();
     if (row == null) return null;
     await _touch(id);
-    return _remember(_fromRow(row));
+    return _remember(placeFromRow(row));
   }
 
   /// The stored place with [id], and again whenever it changes. Null while there isn't
@@ -52,19 +52,22 @@ class PlaceStore {
     await _touch(id);
     yield* _select(id)
         .watchSingleOrNull()
-        .map((row) => row == null ? null : _remember(_fromRow(row)))
+        .map((row) => row == null ? null : _remember(placeFromRow(row)))
         .distinct();
   }
 
-  /// Deletes places that haven't been put or read in [age], unless they're saved.
+  /// Deletes places that haven't been put or read in [age], unless they're saved or in recent searches.
   Future<int> prune({Duration age = const Duration(days: 30)}) {
     final cutoff = _now().subtract(age);
     final saved = _db.selectOnly(_db.savedPlaces)
       ..addColumns([_db.savedPlaces.placeId]);
+    final recent = _db.selectOnly(_db.recentSearches)
+      ..addColumns([_db.recentSearches.placeId]);
     return (_db.delete(_db.places)..where(
           (p) =>
               p.accessedAt.isSmallerThanValue(cutoff) &
-              p.id.isNotInQuery(saved),
+              p.id.isNotInQuery(saved) &
+              p.id.isNotInQuery(recent),
         ))
         .go();
   }
@@ -114,7 +117,7 @@ PlacesCompanion _toRow(Place place, DateTime now) {
   );
 }
 
-Place _fromRow(PlaceRow row) {
+Place placeFromRow(PlaceRow row) {
   final (west, south, east, north) = (
     row.bboxWest,
     row.bboxSouth,
