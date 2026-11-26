@@ -29,13 +29,31 @@ void main() {
       await record(
         const Place(id: 'admin:1', kind: 'admin', center: LngLat(0, 0)),
       );
-      expect(await ids(), ['poi:1', 'poi:2']);
+      await record(
+        const Place(id: 'osm:node/1', kind: 'address', center: LngLat(0, 0)),
+      );
+      await record(
+        const Place(id: 'osm:way/2', kind: 'street', center: LngLat(0, 0)),
+      );
+      expect(await ids(), [
+        'osm:way/2',
+        'osm:node/1',
+        'admin:1',
+        'poi:1',
+        'poi:2',
+      ]);
       await store.close();
       store = Store(CardinalDatabase(NativeDatabase(file)));
       addTearDown(store.close);
-      expect(await ids(), ['poi:1', 'poi:2']);
+      expect(await ids(), [
+        'osm:way/2',
+        'osm:node/1',
+        'admin:1',
+        'poi:1',
+        'poi:2',
+      ]);
       await store.recentSearches.remove('poi:1');
-      expect(await ids(), ['poi:2']);
+      expect(await ids(), ['osm:way/2', 'osm:node/1', 'admin:1', 'poi:2']);
       await store.settings.set(saveSearchHistory, false);
       expect(await ids(), isEmpty);
       await record(poi(3));
@@ -47,7 +65,7 @@ void main() {
     },
   );
 
-  test('history is capped and protects its POIs from pruning', () async {
+  test('history is capped and protects its places from pruning', () async {
     final store = Store(CardinalDatabase(NativeDatabase.memory()));
     addTearDown(store.close);
     for (var i = 0; i <= RecentSearchStore.limit; i++) {

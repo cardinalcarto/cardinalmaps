@@ -8,7 +8,7 @@ import 'places.dart';
 import 'settings.dart';
 
 /// On-device history of opened search results, newest first. This is not Saved
-/// and must never be synced. Only POIs are recorded; queries may be added later.
+/// and must never be synced. Opened places of all kinds are recorded; queries may be added later.
 abstract class RecentSearchStore {
   factory RecentSearchStore(CardinalDatabase db, SettingsStore settings) =
       _DatabaseRecentSearches;
@@ -19,7 +19,7 @@ abstract class RecentSearchStore {
 
   Stream<List<Place>> watch();
 
-  /// Records a POI already stored in the place store.
+  /// Records a place already stored in the place store.
   Future<void> record(Place place);
   Future<void> remove(String placeId);
   Future<void> close();
@@ -43,7 +43,6 @@ class _DatabaseRecentSearches implements RecentSearchStore {
 
   @override
   Future<void> record(Place place) async {
-    if (place.kind != 'poi') return;
     await _db.transaction(() async {
       if (!await _settings.get(saveSearchHistory)) return;
       await remove(place.id);
@@ -99,7 +98,7 @@ class _MemoryRecentSearches implements RecentSearchStore {
 
   @override
   Future<void> record(Place place) async {
-    if (place.kind != 'poi' || !await _settings.get(saveSearchHistory)) return;
+    if (!await _settings.get(saveSearchHistory)) return;
     _places.remove(place.id);
     _places[place.id] = place;
     if (_places.length > RecentSearchStore.limit)
