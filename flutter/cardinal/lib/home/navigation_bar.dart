@@ -8,11 +8,11 @@ import '../ui/adaptive.dart';
 import '../ui/glass.dart';
 import 'app_icons.dart';
 
-/// The bar along the bottom of the app's top-level pages: Saved Places, Nearby Places,
+/// The bar along the bottom of the app's top-level pages: Saved Places,
 /// Search, Nearby Transit and Offline Maps.
 ///
 /// On iOS it floats on glass, labeled, with the current page tinted on a lens. Elsewhere
-/// it's a row of icons with the current page's filled, Search in the middle. While the
+/// it's a row of icons with the current page's filled. While the
 /// sheet is collapsed no page is current, and tapping the page under it brings the
 /// sheet back.
 class AppNavigationBar extends StatelessWidget {
@@ -47,12 +47,6 @@ const List<_Tab> _tabs = [
     label: 'Saved',
     tooltip: 'Saved places',
     location: '/saved',
-  ),
-  (
-    icon: AppIcons.nearby,
-    label: 'Nearby',
-    tooltip: 'Nearby places',
-    location: '/nearby',
   ),
   (icon: AppIcons.search, label: 'Search', tooltip: 'Search', location: '/'),
   (

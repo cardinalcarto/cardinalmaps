@@ -7,7 +7,6 @@ import 'directions/directions_page.dart';
 import 'directions/steps_page.dart';
 import 'directions/trip_details_page.dart';
 import 'home/navigation_bar.dart';
-import 'home/stub_page.dart';
 import 'map/attribution.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
@@ -207,7 +206,6 @@ List<RouteBase> sheetRoutes() => [
       ),
     ],
   ),
-  _topLevel('/nearby', const StubPage(title: 'Nearby places')),
   _topLevel(
     '/transit',
     const NearbyTransitPage(),

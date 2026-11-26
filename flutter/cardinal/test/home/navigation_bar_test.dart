@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'package:cardinal/home/navigation_bar.dart';
-import 'package:cardinal/home/stub_page.dart';
 import 'package:cardinal/offline/offline_page.dart';
 import 'package:cardinal/transit/nearby_page.dart';
 import 'package:cardinal/place/place_page.dart';
@@ -33,13 +32,7 @@ double _barTop(WidgetTester tester) =>
 
 Finder _tab(String tooltip) => find.byTooltip(tooltip);
 
-const _tooltips = [
-  'Saved places',
-  'Nearby places',
-  'Search',
-  'Nearby transit',
-  'Offline maps',
-];
+const _tooltips = ['Saved places', 'Search', 'Nearby transit', 'Offline maps'];
 
 /// The tabs the bar shows as the current page: filled, and selected to a screen reader.
 List<String> _selected(WidgetTester tester) => [
@@ -100,38 +93,21 @@ void main() {
     expect(search, lessThanOrEqualTo(_barTop(tester)));
   });
 
-  testWidgets('has the five pages, in order, with Search in the middle', (
+  testWidgets('has the four pages, in order, without Nearby places', (
     tester,
   ) async {
     await pumpFakeApp(tester, store: _store());
-    final xs = [
-      for (final tip in [
-        'Saved places',
-        'Nearby places',
-        'Search',
-        'Nearby transit',
-        'Offline maps',
-      ])
-        tester.getCenter(_tab(tip)).dx,
-    ];
+    final xs = [for (final tip in _tooltips) tester.getCenter(_tab(tip)).dx];
     expect(xs, orderedEquals([...xs]..sort()));
-    expect(xs[2], closeTo(appScreen.width / 2, 1));
+    expect(_tab('Nearby places'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(AppNavigationBar),
+        matching: find.byType(IconButton),
+      ),
+      findsNWidgets(4),
+    );
   });
-
-  for (final (tip, title) in [('Nearby places', 'Nearby places')]) {
-    testWidgets('$tip opens its page, and Search comes back', (tester) async {
-      await pumpFakeApp(tester, store: _store());
-      await tester.tap(_tab(tip));
-      await tester.pumpAndSettle();
-      expect(find.widgetWithText(StubPage, title), findsOneWidget);
-      expect(find.byType(SearchBar), findsNothing);
-
-      await tester.tap(_tab('Search'));
-      await tester.pumpAndSettle();
-      expect(find.byType(SearchBar), findsOneWidget);
-      expect(find.byType(StubPage), findsNothing);
-    });
-  }
 
   testWidgets('Nearby transit opens its page, and Search comes back', (
     tester,
@@ -176,14 +152,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(sheet.extent, appScreen.height);
 
-    await tester.tap(_tab('Nearby places'));
+    await tester.tap(_tab('Search'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
     // On its way down from where it was, not from the search page's height.
     expect(sheet.extent, greaterThan(appScreen.height * 0.7));
     await tester.pumpAndSettle();
     expect(sheet.extent, lessThan(appScreen.height / 2));
-    expect(find.text('Nearby places'), findsOneWidget);
+    expect(find.byType(SearchBar), findsOneWidget);
     expect(find.byType(SavedPage), findsNothing);
   });
 
@@ -238,7 +214,7 @@ void main() {
     expect(_selected(tester), ['Search']);
     expect(
       [for (final t in _tooltips) _filled(tester, t)],
-      [false, false, true, false, false],
+      [false, true, false, false],
     );
 
     await tester.tap(_tab('Nearby transit'));
@@ -273,17 +249,17 @@ void main() {
     tester,
   ) async {
     await pumpFakeApp(tester, store: _store());
-    await tester.tap(_tab('Nearby places'));
+    await tester.tap(_tab('Saved places'));
     await tester.pumpAndSettle();
     final first = _sheet(tester).extent;
     await _collapse(tester);
-    await tester.tap(_tab('Nearby places'));
+    await tester.tap(_tab('Saved places'));
     await tester.pump();
     // Current again as soon as it starts back up.
-    expect(_selected(tester), ['Nearby places']);
+    expect(_selected(tester), ['Saved places']);
     await tester.pumpAndSettle();
     expect(_sheet(tester).extent, first);
-    expect(find.byType(StubPage), findsOneWidget);
+    expect(find.byType(SavedPage), findsOneWidget);
   });
 
   testWidgets('collapsed, another page\'s button opens it with the sheet up', (
@@ -426,13 +402,14 @@ void main() {
       of: find.byType(AppNavigationBar),
       matching: find.text(text),
     );
+    expect(label('Nearby'), findsNothing);
     final heights = <double, double>{};
     for (final scale in [1.0, 1.3, 1.5, 2.0, 3.1]) {
       tester.platformDispatcher.textScaleFactorTestValue = scale;
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: '$scale×');
       heights[scale] = tester.getSize(label('Saved')).height;
-      for (final text in ['Saved', 'Nearby', 'Search', 'Transit', 'Offline']) {
+      for (final text in ['Saved', 'Search', 'Transit', 'Offline']) {
         // Within its tab, under its icon.
         final tab = tester.getRect(
           find.ancestor(of: label(text), matching: find.byType(Column)).first,
