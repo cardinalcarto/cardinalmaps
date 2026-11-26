@@ -8,6 +8,7 @@ Actions. The workflow and local hook use the same checked-in command:
 scripts/check
 ```
 
+To run only formatting checks, use `scripts/check --format-only`.
 To run only selected groups, pass their names, for example:
 
 ```sh
@@ -39,11 +40,12 @@ git config --local core.hooksPath .githooks
 Git will then use the executable [pre-commit hook](../.githooks/pre-commit) directly
 from the checkout, so there is no copy to keep in sync. The setting is local to this
 clone. If you already use a custom hooks path, integrate `scripts/check` into your
-existing hook instead.
+existing hook instead (using `scripts/check --format-only`).
 
 The hook checks the **working tree**, not an isolated copy of the staged files. Keep
-that in mind when committing partially staged changes. It runs every group, so the
-first run may take some time to fetch dependencies and build native libraries.
-If a check fails, the commit is rejected; formatting checks do not reformat files.
+that in mind when committing partially staged changes. It runs formatting checks
+for every group; tests and native bridge builds are left to CI. The first run may
+take time to fetch formatter dependencies. If a formatting check fails, the commit
+is rejected; formatting checks do not reformat files.
 For an exceptional commit, `git commit --no-verify` bypasses the local hook but not CI.
 To uninstall it, run `git config --local --unset core.hooksPath`.
