@@ -36,7 +36,6 @@ void main() {
     var copy = (await saved.watch().first).copiesOf(id).single;
     if (emoji != null) await saved.edit(copy, name: '', emoji: emoji);
     copy = (await saved.watch().first).copiesOf(id).single;
-    await saved.setShown(copy, true);
     return copy;
   }
 
@@ -87,17 +86,20 @@ void main() {
     expect(features(), hasLength(1));
   });
 
-  test('a place that is on becomes a feature with its ID and marker', () async {
-    final copy = await add('poi:1', emoji: '🍕');
-    await pumpEventQueue();
-    final feature = features().single;
-    final properties = feature['properties'] as Map;
-    expect(feature['id'], copy.entryId);
-    expect(properties[savedPlaceProperty], 'poi:1');
-    expect(properties['name'], 'Name poi:1');
-    expect(properties['icon'], markerName('🍕'));
-    expect((feature['geometry'] as Map)['coordinates'], [1.0, 2.0]);
-  });
+  test(
+    'a newly saved place becomes a feature with its ID and marker',
+    () async {
+      final copy = await add('poi:1', emoji: '🍕');
+      await pumpEventQueue();
+      final feature = features().single;
+      final properties = feature['properties'] as Map;
+      expect(feature['id'], copy.entryId);
+      expect(properties[savedPlaceProperty], 'poi:1');
+      expect(properties['name'], 'Name poi:1');
+      expect(properties['icon'], markerName('🍕'));
+      expect((feature['geometry'] as Map)['coordinates'], [1.0, 2.0]);
+    },
+  );
 
   test('turning it off takes it away', () async {
     final copy = await add('poi:1');
@@ -110,28 +112,28 @@ void main() {
   test(
     'a marker is added before the data that uses it, and only once',
     () async {
-      await add('poi:1', emoji: '🍕');
+      await add('poi:1');
       await pumpEventQueue();
       expect(map.images.map((i) => i.name), [
-        markerName('🍕'),
-        markerName('🍕', dark: true),
+        markerName(null),
+        markerName(null, dark: true),
       ]);
       expect(
         map.calls.indexOf('images'),
         lessThan(map.calls.lastIndexOf(savedSource)),
       );
 
-      await add('poi:2', emoji: '🍕');
+      await add('poi:2');
       await pumpEventQueue();
       expect(map.images, hasLength(2));
 
-      await add('poi:3');
+      await add('poi:3', emoji: '🍕');
       await pumpEventQueue();
       expect(map.images.map((i) => i.name), [
-        markerName('🍕'),
-        markerName('🍕', dark: true),
         markerName(null),
         markerName(null, dark: true),
+        markerName('🍕'),
+        markerName('🍕', dark: true),
       ]);
     },
   );

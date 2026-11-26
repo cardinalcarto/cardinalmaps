@@ -33,7 +33,7 @@ class FakeSavedStore implements SavedStore {
   void _changed() => _changes.add(null);
 
   bool _startsShown(int? list) =>
-      list != null && _tree.shownState(list) == true;
+      list == null || _tree.shownState(list) == true;
 
   int _endList(int? parent) => _lists
       .where((r) => r.parentId == parent)
@@ -77,7 +77,7 @@ class FakeSavedStore implements SavedStore {
         id: _nextEntry++,
         placeId: placeId,
         pinned: false,
-        shownOnMap: false,
+        shownOnMap: true,
         position: _topPlace(null) - 1,
         savedAt: DateTime(2026),
       ),
@@ -212,7 +212,7 @@ class FakeSavedStore implements SavedStore {
       }
     }
     final entries = places.map((p) => p.entryId).toSet();
-    final shown = _startsShown(to);
+    final shown = to != null && _startsShown(to);
     final turningOn = {
       ...lists,
       if (shown)

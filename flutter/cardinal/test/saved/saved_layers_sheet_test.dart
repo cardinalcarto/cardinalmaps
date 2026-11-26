@@ -30,6 +30,9 @@ void main() {
     await save('poi:2', 'Spinasse', italian);
     await save('poi:3', 'Il Corvo', food);
     await save('poi:4', 'Home', null);
+    // Most tests exercise toggling places on from an explicitly hidden state.
+    await store.saved.setShown((await tree()).list(food)!, false);
+    await store.saved.setShown((await tree()).copiesOf('poi:4').single, false);
   });
 
   Future<void> pump(
