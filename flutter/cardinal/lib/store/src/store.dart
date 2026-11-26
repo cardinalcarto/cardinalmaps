@@ -5,6 +5,7 @@ import 'headsigns.dart';
 import 'places.dart';
 import 'saved.dart';
 import 'settings.dart';
+import 'recent_searches.dart';
 
 /// The app's persistent state: what screens are about, stored by ID so that routes
 /// can name it, the app's [settings], and the [headsigns] nearby transit remembers.
@@ -18,7 +19,9 @@ class Store {
       places = PlaceStore(db),
       saved = SavedStore(db),
       settings = SettingsStore(db),
-      headsigns = HeadsignStore(db);
+      headsigns = HeadsignStore(db) {
+    recentSearches = RecentSearchStore(db, settings);
+  }
 
   /// The store in the app's database.
   Store.open() : this(CardinalDatabase.open());
@@ -34,7 +37,9 @@ class Store {
     HeadsignStore? headsigns,
   }) : _db = null,
        settings = settings ?? SettingsStore.inMemory(),
-       headsigns = headsigns ?? HeadsignStore.inMemory();
+       headsigns = headsigns ?? HeadsignStore.inMemory() {
+    recentSearches = RecentSearchStore.inMemory(this.settings);
+  }
 
   final CardinalDatabase? _db;
 
@@ -46,10 +51,15 @@ class Store {
 
   final HeadsignStore headsigns;
 
+  late final RecentSearchStore recentSearches;
+
   /// Deletes what hasn't been used in a while.
   Future<void> prune() => places.prune();
 
-  Future<void> close() async => _db?.close();
+  Future<void> close() async {
+    await recentSearches.close();
+    await _db?.close();
+  }
 }
 
 /// Provides a [Store] to the widgets below it.

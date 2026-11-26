@@ -418,7 +418,8 @@ class $PlacesTable extends Places with TableInfo<$PlacesTable, PlaceRow> {
 }
 
 class PlaceRow extends DataClass implements Insertable<PlaceRow> {
-  /// The geocoder's identifier: `poi:<id>`, `wof:<id>` or `osm:<type>/<id>`.
+  /// The geocoder's identifier: `poi:<id>`, `wof:<id>`, `osm:<type>/<id>`, ... (see
+  /// `Place.id`).
   final String id;
   final String kind;
   final int? version;
@@ -2563,6 +2564,203 @@ class RememberedHeadsignsCompanion
   }
 }
 
+class $RecentSearchesTable extends RecentSearches
+    with TableInfo<$RecentSearchesTable, RecentSearchRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RecentSearchesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _placeIdMeta = const VerificationMeta(
+    'placeId',
+  );
+  @override
+  late final GeneratedColumn<String> placeId = GeneratedColumn<String>(
+    'place_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'UNIQUE REFERENCES places (id)',
+    ),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, placeId];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'recent_searches';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RecentSearchRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('place_id')) {
+      context.handle(
+        _placeIdMeta,
+        placeId.isAcceptableOrUnknown(data['place_id']!, _placeIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_placeIdMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  RecentSearchRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RecentSearchRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      placeId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}place_id'],
+      )!,
+    );
+  }
+
+  @override
+  $RecentSearchesTable createAlias(String alias) {
+    return $RecentSearchesTable(attachedDatabase, alias);
+  }
+}
+
+class RecentSearchRow extends DataClass implements Insertable<RecentSearchRow> {
+  final int id;
+  final String placeId;
+  const RecentSearchRow({required this.id, required this.placeId});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['place_id'] = Variable<String>(placeId);
+    return map;
+  }
+
+  RecentSearchesCompanion toCompanion(bool nullToAbsent) {
+    return RecentSearchesCompanion(id: Value(id), placeId: Value(placeId));
+  }
+
+  factory RecentSearchRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RecentSearchRow(
+      id: serializer.fromJson<int>(json['id']),
+      placeId: serializer.fromJson<String>(json['placeId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'placeId': serializer.toJson<String>(placeId),
+    };
+  }
+
+  RecentSearchRow copyWith({int? id, String? placeId}) =>
+      RecentSearchRow(id: id ?? this.id, placeId: placeId ?? this.placeId);
+  RecentSearchRow copyWithCompanion(RecentSearchesCompanion data) {
+    return RecentSearchRow(
+      id: data.id.present ? data.id.value : this.id,
+      placeId: data.placeId.present ? data.placeId.value : this.placeId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RecentSearchRow(')
+          ..write('id: $id, ')
+          ..write('placeId: $placeId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, placeId);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RecentSearchRow &&
+          other.id == this.id &&
+          other.placeId == this.placeId);
+}
+
+class RecentSearchesCompanion extends UpdateCompanion<RecentSearchRow> {
+  final Value<int> id;
+  final Value<String> placeId;
+  const RecentSearchesCompanion({
+    this.id = const Value.absent(),
+    this.placeId = const Value.absent(),
+  });
+  RecentSearchesCompanion.insert({
+    this.id = const Value.absent(),
+    required String placeId,
+  }) : placeId = Value(placeId);
+  static Insertable<RecentSearchRow> custom({
+    Expression<int>? id,
+    Expression<String>? placeId,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (placeId != null) 'place_id': placeId,
+    });
+  }
+
+  RecentSearchesCompanion copyWith({Value<int>? id, Value<String>? placeId}) {
+    return RecentSearchesCompanion(
+      id: id ?? this.id,
+      placeId: placeId ?? this.placeId,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (placeId.present) {
+      map['place_id'] = Variable<String>(placeId.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RecentSearchesCompanion(')
+          ..write('id: $id, ')
+          ..write('placeId: $placeId')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$CardinalDatabase extends GeneratedDatabase {
   _$CardinalDatabase(QueryExecutor e) : super(e);
   $CardinalDatabaseManager get managers => $CardinalDatabaseManager(this);
@@ -2588,6 +2786,7 @@ abstract class _$CardinalDatabase extends GeneratedDatabase {
   late final $SettingsTable settings = $SettingsTable(this);
   late final $RememberedHeadsignsTable rememberedHeadsigns =
       $RememberedHeadsignsTable(this);
+  late final $RecentSearchesTable recentSearches = $RecentSearchesTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2602,6 +2801,7 @@ abstract class _$CardinalDatabase extends GeneratedDatabase {
     savedListsNoCycleOnInsert,
     settings,
     rememberedHeadsigns,
+    recentSearches,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -2694,6 +2894,25 @@ final class $$PlacesTableReferences
     ).filter((f) => f.placeId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_savedPlacesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$RecentSearchesTable, List<RecentSearchRow>>
+  _recentSearchesRefsTable(_$CardinalDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.recentSearches,
+        aliasName: 'places__id__recent_searches__place_id',
+      );
+
+  $$RecentSearchesTableProcessedTableManager get recentSearchesRefs {
+    final manager = $$RecentSearchesTableTableManager(
+      $_db,
+      $_db.recentSearches,
+    ).filter((f) => f.placeId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_recentSearchesRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -2810,6 +3029,31 @@ class $$PlacesTableFilterComposer
           }) => $$SavedPlacesTableFilterComposer(
             $db: $db,
             $table: $db.savedPlaces,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> recentSearchesRefs(
+    Expression<bool> Function($$RecentSearchesTableFilterComposer f) f,
+  ) {
+    final $$RecentSearchesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.recentSearches,
+      getReferencedColumn: (t) => t.placeId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$RecentSearchesTableFilterComposer(
+            $db: $db,
+            $table: $db.recentSearches,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -3003,6 +3247,31 @@ class $$PlacesTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> recentSearchesRefs<T extends Object>(
+    Expression<T> Function($$RecentSearchesTableAnnotationComposer a) f,
+  ) {
+    final $$RecentSearchesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.recentSearches,
+      getReferencedColumn: (t) => t.placeId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$RecentSearchesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.recentSearches,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$PlacesTableTableManager
@@ -3018,7 +3287,10 @@ class $$PlacesTableTableManager
           $$PlacesTableUpdateCompanionBuilder,
           (PlaceRow, $$PlacesTableReferences),
           PlaceRow,
-          PrefetchHooks Function({bool savedPlacesRefs})
+          PrefetchHooks Function({
+            bool savedPlacesRefs,
+            bool recentSearchesRefs,
+          })
         > {
   $$PlacesTableTableManager(_$CardinalDatabase db, $PlacesTable table)
     : super(
@@ -3119,36 +3391,61 @@ class $$PlacesTableTableManager
                 ),
               )
               .toList(),
-          prefetchHooksCallback: ({savedPlacesRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [if (savedPlacesRefs) db.savedPlaces],
-              addJoins: null,
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (savedPlacesRefs)
-                    await $_getPrefetchedDataByColumns<
-                      PlaceRow,
-                      $PlacesTable,
-                      SavedPlaceRow,
-                      $SavedPlacesTable
-                    >(
-                      currentTable: table,
-                      referencedTable: $$PlacesTableReferences
-                          ._savedPlacesRefsTable(db),
-                      managerFromTypedResult: (p0) => $$PlacesTableReferences(
-                        db,
-                        table,
-                        p0,
-                      ).savedPlacesRefs,
-                      currentColumn: 'id',
-                      referencedColumn: 'place_id',
-                      typedResults: items,
-                    ),
-                ];
+          prefetchHooksCallback:
+              ({savedPlacesRefs = false, recentSearchesRefs = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (savedPlacesRefs) db.savedPlaces,
+                    if (recentSearchesRefs) db.recentSearches,
+                  ],
+                  addJoins: null,
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (savedPlacesRefs)
+                        await $_getPrefetchedDataByColumns<
+                          PlaceRow,
+                          $PlacesTable,
+                          SavedPlaceRow,
+                          $SavedPlacesTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$PlacesTableReferences
+                              ._savedPlacesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$PlacesTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).savedPlacesRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'place_id',
+                          typedResults: items,
+                        ),
+                      if (recentSearchesRefs)
+                        await $_getPrefetchedDataByColumns<
+                          PlaceRow,
+                          $PlacesTable,
+                          RecentSearchRow,
+                          $RecentSearchesTable
+                        >(
+                          currentTable: table,
+                          referencedTable: $$PlacesTableReferences
+                              ._recentSearchesRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$PlacesTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).recentSearchesRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'place_id',
+                          typedResults: items,
+                        ),
+                    ];
+                  },
+                );
               },
-            );
-          },
         ),
       );
 }
@@ -3165,7 +3462,7 @@ typedef $$PlacesTableProcessedTableManager =
       $$PlacesTableUpdateCompanionBuilder,
       (PlaceRow, $$PlacesTableReferences),
       PlaceRow,
-      PrefetchHooks Function({bool savedPlacesRefs})
+      PrefetchHooks Function({bool savedPlacesRefs, bool recentSearchesRefs})
     >;
 typedef $$SavedListsTableCreateCompanionBuilder = SavedListsCompanion Function({
   Value<int> id,
@@ -4442,6 +4739,255 @@ typedef $$RememberedHeadsignsTableProcessedTableManager =
       RememberedHeadsignRow,
       PrefetchHooks Function()
     >;
+typedef $$RecentSearchesTableCreateCompanionBuilder =
+    RecentSearchesCompanion Function({Value<int> id, required String placeId});
+typedef $$RecentSearchesTableUpdateCompanionBuilder =
+    RecentSearchesCompanion Function({Value<int> id, Value<String> placeId});
+
+final class $$RecentSearchesTableReferences
+    extends
+        BaseReferences<
+          _$CardinalDatabase,
+          $RecentSearchesTable,
+          RecentSearchRow
+        > {
+  $$RecentSearchesTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $PlacesTable _placeIdTable(_$CardinalDatabase db) =>
+      db.places.createAlias('recent_searches__place_id__places__id');
+
+  $$PlacesTableProcessedTableManager get placeId {
+    final $_column = $_itemColumn<String>('place_id')!;
+
+    final manager = $$PlacesTableTableManager(
+      $_db,
+      $_db.places,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_placeIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$RecentSearchesTableFilterComposer
+    extends Composer<_$CardinalDatabase, $RecentSearchesTable> {
+  $$RecentSearchesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$PlacesTableFilterComposer get placeId {
+    final $$PlacesTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableFilterComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$RecentSearchesTableOrderingComposer
+    extends Composer<_$CardinalDatabase, $RecentSearchesTable> {
+  $$RecentSearchesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$PlacesTableOrderingComposer get placeId {
+    final $$PlacesTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableOrderingComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$RecentSearchesTableAnnotationComposer
+    extends Composer<_$CardinalDatabase, $RecentSearchesTable> {
+  $$RecentSearchesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  $$PlacesTableAnnotationComposer get placeId {
+    final $$PlacesTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.placeId,
+      referencedTable: $db.places,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlacesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.places,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$RecentSearchesTableTableManager
+    extends
+        RootTableManager<
+          _$CardinalDatabase,
+          $RecentSearchesTable,
+          RecentSearchRow,
+          $$RecentSearchesTableFilterComposer,
+          $$RecentSearchesTableOrderingComposer,
+          $$RecentSearchesTableAnnotationComposer,
+          $$RecentSearchesTableCreateCompanionBuilder,
+          $$RecentSearchesTableUpdateCompanionBuilder,
+          (RecentSearchRow, $$RecentSearchesTableReferences),
+          RecentSearchRow,
+          PrefetchHooks Function({bool placeId})
+        > {
+  $$RecentSearchesTableTableManager(
+    _$CardinalDatabase db,
+    $RecentSearchesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RecentSearchesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$RecentSearchesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$RecentSearchesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            Value<String> placeId = const Value.absent(),
+          }) => RecentSearchesCompanion(id: id, placeId: placeId),
+          createCompanionCallback: ({
+            Value<int> id = const Value.absent(),
+            required String placeId,
+          }) => RecentSearchesCompanion.insert(id: id, placeId: placeId),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$RecentSearchesTable, RecentSearchRow>(table),
+                  $$RecentSearchesTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({placeId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (placeId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.placeId,
+                        referencedTable: $$RecentSearchesTableReferences
+                            ._placeIdTable(db),
+                        referencedColumn: $$RecentSearchesTableReferences
+                            ._placeIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$RecentSearchesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$CardinalDatabase,
+      $RecentSearchesTable,
+      RecentSearchRow,
+      $$RecentSearchesTableFilterComposer,
+      $$RecentSearchesTableOrderingComposer,
+      $$RecentSearchesTableAnnotationComposer,
+      $$RecentSearchesTableCreateCompanionBuilder,
+      $$RecentSearchesTableUpdateCompanionBuilder,
+      (RecentSearchRow, $$RecentSearchesTableReferences),
+      RecentSearchRow,
+      PrefetchHooks Function({bool placeId})
+    >;
 
 class $CardinalDatabaseManager {
   final _$CardinalDatabase _db;
@@ -4456,4 +5002,6 @@ class $CardinalDatabaseManager {
       $$SettingsTableTableManager(_db, _db.settings);
   $$RememberedHeadsignsTableTableManager get rememberedHeadsigns =>
       $$RememberedHeadsignsTableTableManager(_db, _db.rememberedHeadsigns);
+  $$RecentSearchesTableTableManager get recentSearches =>
+      $$RecentSearchesTableTableManager(_db, _db.recentSearches);
 }

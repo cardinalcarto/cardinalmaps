@@ -8,8 +8,10 @@ import 'package:cupertino_ui/cupertino_ui.dart'
         CupertinoActivityIndicator,
         CupertinoButton,
         CupertinoButtonSize,
+        CupertinoColors,
         CupertinoIcons,
         CupertinoSearchTextField;
+import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:geolocator/geolocator.dart' show Geolocator, LocationPermission;
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -66,6 +68,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   List<SavedPlace> _pinned = const [];
   StreamSubscription<SavedTree>? _watchSaved;
 
+  List<Place> _recent = const [];
+  StreamSubscription<List<Place>>? _watchRecent;
+
   /// The app's [unitSystem] setting, for how far each result is. The default stands until
   /// the setting is read.
   UnitSystem _units = UnitSystem.locale;
@@ -104,6 +109,11 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     _watchSaved ??= StoreScope.of(context).saved.watch().listen((tree) {
       setState(() => _pinned = tree.pinned);
     });
+    _watchRecent ??= StoreScope.of(context).recentSearches
+        .watch()
+        .listen((recent) {
+          setState(() => _recent = recent);
+        });
     _watchUnits ??= StoreScope.of(context).settings
         .watch(unitSystem)
         .listen((units) {
@@ -124,6 +134,7 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
     searchRequests.removeListener(_searchRequested);
     _watchSaved?.cancel();
     _watchUnits?.cancel();
+    _watchRecent?.cancel();
     _focus.dispose();
     _text.dispose();
     _search?.dispose();
@@ -256,7 +267,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
   }
 
   Future<void> _open(Place place) async {
-    await StoreScope.of(context).places.put(place);
+    final store = StoreScope.of(context);
+    final merged = await store.places.put(place);
+    await store.recentSearches.record(merged);
     if (!mounted) return;
     await context.push<void>(placeLocation(place.id));
   }
@@ -291,8 +304,9 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
         builder: (context, _) => SheetContent(
           showsBottomBar: true,
           collapsible: true,
-          // Just the bar, until searching.
-          anchors: _searching
+          // Just the bar, unless searching or there is history to browse.
+          anchors:
+              _searching || (_recent.isNotEmpty && search.text.trim().isEmpty)
               ? const [SheetAnchor.section(_bar), SheetAnchor.full()]
               : const [SheetAnchor.section(_bar)],
           slivers: [
@@ -371,12 +385,19 @@ class _SearchSheetState extends State<SearchSheet> with RouteAware {
             ),
             ListenableBuilder(
               listenable: search,
-              builder: (context, _) => _Results(
-                search: search,
-                here: _here,
-                units: _units.onDevice,
-                onTap: _open,
-              ),
+              builder: (context, _) => search.text.trim().isEmpty
+                  ? _Recents(
+                      places: _recent,
+                      onTap: _open,
+                      onRemove: (id) =>
+                          StoreScope.of(context).recentSearches.remove(id),
+                    )
+                  : _Results(
+                      search: search,
+                      here: _here,
+                      units: _units.onDevice,
+                      onTap: _open,
+                    ),
             ),
           ],
         ),
@@ -481,6 +502,90 @@ class _PinnedChips extends StatelessWidget {
       },
     ),
   );
+}
+
+/// History sits below the peeked section, independently of search focus.
+class _Recents extends StatelessWidget {
+  const _Recents({
+    required this.places,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  final List<Place> places;
+  final ValueChanged<Place> onTap;
+  final ValueChanged<String> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (places.isEmpty)
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    final cupertino = isCupertinoOf(context);
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+            child: Text(
+              'Recent searches',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+        ),
+        SliverList.builder(
+          itemCount: places.length,
+          itemBuilder: (context, i) {
+            final place = places[i];
+            void remove() => onRemove(place.id);
+            final row = AppListTile(
+              leading: Icon(cupertino ? CupertinoIcons.time : Icons.history),
+              title: Text(
+                placeTitle(place),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: switch (placeSubtitle(place)) {
+                final subtitle? => Text(
+                  subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                null => null,
+              },
+              trailing: cupertino
+                  ? null
+                  : IconButton(
+                      tooltip: 'Remove from recent searches',
+                      icon: const Icon(Icons.close),
+                      onPressed: remove,
+                    ),
+              onTap: () => onTap(place),
+            );
+            return cupertino
+                ? Slidable(
+                    key: ValueKey(place.id),
+                    endActionPane: ActionPane(
+                      motion: const DrawerMotion(),
+                      extentRatio: 0.25,
+                      dismissible: DismissiblePane(onDismissed: remove),
+                      children: [
+                        SlidableAction(
+                          onPressed: (_) => remove(),
+                          backgroundColor: CupertinoColors.systemRed,
+                          foregroundColor: const Color(0xFFFFFFFF),
+                          icon: CupertinoIcons.delete,
+                          label: 'Delete',
+                        ),
+                      ],
+                    ),
+                    child: row,
+                  )
+                : KeyedSubtree(key: ValueKey(place.id), child: row);
+          },
+        ),
+      ],
+    );
+  }
 }
 
 class _Results extends StatelessWidget {

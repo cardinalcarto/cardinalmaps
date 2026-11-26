@@ -234,6 +234,39 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('iOS recents reopen POIs and can be swipe-deleted', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await _pumpApp(tester);
+    await tester.tap(find.byType(CupertinoSearchTextField));
+    await tester.enterText(find.byType(EditableText), 'space ne');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsNothing);
+    await tester.tap(find.text('Space Needle'));
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(EditableText), '');
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsOneWidget);
+    await tester.tap(find.text('Space Needle'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PlacePage), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Space Needle'), findsOneWidget);
+    await tester.drag(find.text('Space Needle'), const Offset(-130, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsOneWidget);
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(find.text('Recent searches'), findsNothing);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   group('the bar fits the header it\'s pinned in, with the room round it it '
       'has at 1×', () {
     for (final (platform, scale, chips) in [
@@ -338,7 +371,7 @@ void main() {
   });
 
   testWidgets(
-    'stopped after a place, nothing is left to drag the sheet up to',
+    'stopped after a place, recents are below the peek and can be expanded',
     (tester) async {
       await _pumpApp(tester);
       final peek = _sheet(tester).extent;
@@ -354,9 +387,9 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(_sheet(tester).extent, moreOrLessEquals(peek));
-      expect(find.text('Space Needle'), findsNothing);
+      expect(find.text('space ne'), findsNothing);
 
-      // Dragged up from the bar, it stays: no results are kept to show.
+      // Dragging up from the bar exposes history without activating search.
       final gesture = await tester.startGesture(
         Offset(200, 800 - _sheet(tester).extent + 12),
       );
@@ -366,7 +399,13 @@ void main() {
       }
       await gesture.up();
       await tester.pumpAndSettle();
-      expect(_sheet(tester).extent, moreOrLessEquals(peek));
+      expect(_sheet(tester).isAtMax, isTrue);
+      expect(find.text('Recent searches'), findsOneWidget);
+      expect(find.text('Space Needle'), findsOneWidget);
+      expect(find.byTooltip('Cancel'), findsNothing);
+      await tester.tap(find.byTooltip('Remove from recent searches'));
+      await tester.pumpAndSettle();
+      expect(find.text('Space Needle'), findsNothing);
     },
   );
 

@@ -69,6 +69,9 @@ class Setting<T> {
   }
 }
 
+/// Whether to keep local search history. Turning this off clears it.
+final saveSearchHistory = Setting.flag('saveSearchHistory', true);
+
 /// The app's settings, kept in the database (or in memory, for tests).
 abstract class SettingsStore {
   factory SettingsStore(CardinalDatabase db) = _DatabaseSettings;
@@ -105,11 +108,19 @@ class _DatabaseSettings implements SettingsStore {
           .distinct();
 
   @override
-  Future<void> set<T>(Setting<T> setting, T value) => _db
-      .into(_db.settings)
-      .insertOnConflictUpdate(
-        SettingRow(key: setting.key, value: jsonEncode(setting.encode(value))),
-      );
+  Future<void> set<T>(Setting<T> setting, T value) => _db.transaction(() async {
+    await _db
+        .into(_db.settings)
+        .insertOnConflictUpdate(
+          SettingRow(
+            key: setting.key,
+            value: jsonEncode(setting.encode(value)),
+          ),
+        );
+    if (setting.key == saveSearchHistory.key && value == false) {
+      await _db.delete(_db.recentSearches).go();
+    }
+  });
 }
 
 class _MemorySettings implements SettingsStore {
@@ -121,13 +132,13 @@ class _MemorySettings implements SettingsStore {
       setting._read(_values[setting.key]);
 
   @override
-  Stream<T> watch<T>(Setting<T> setting) async* {
-    yield setting._read(_values[setting.key]);
-    yield* _changes.stream
+  Stream<T> watch<T>(Setting<T> setting) => Stream<T>.multi((controller) {
+    final subscription = _changes.stream
         .where((key) => key == setting.key)
-        .map((_) => setting._read(_values[setting.key]))
-        .distinct();
-  }
+        .listen((_) => controller.add(setting._read(_values[setting.key])));
+    controller.add(setting._read(_values[setting.key]));
+    controller.onCancel = subscription.cancel;
+  }).distinct();
 
   @override
   Future<void> set<T>(Setting<T> setting, T value) async {
