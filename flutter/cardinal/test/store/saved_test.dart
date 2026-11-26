@@ -369,15 +369,33 @@ void main() {
       return (food, italian);
     }
 
-    test('starts with everything off', () async {
+    test('starts with everything on', () async {
       final (food, _) = await foodAndItalian();
       final t = await tree();
-      expect(t.shownState(food), isFalse);
-      expect(t.shownPlaces, isEmpty);
+      expect(t.shownState(food), isTrue);
+      expect(
+        t.shownPlaces.map((p) => p.id),
+        unorderedEquals(['poi:1', 'poi:2']),
+      );
+    });
+
+    test('saving directly and making top-level copies starts on', () async {
+      final list = await saved.createList('List');
+      await places.put(_place('poi:1'));
+      await saved.setLocations('poi:1', {list});
+      final copy = (await tree()).copiesOf('poi:1').single;
+      expect(copy.shownOnMap, isTrue);
+      await saved.setShown(copy, false);
+      await saved.copy([copy], null);
+      expect((await tree()).placesIn(null).single.shownOnMap, isTrue);
+      await saved.setShown((await tree()).placesIn(null).single, false);
+      await saved.savePlace('poi:1');
+      expect((await tree()).placesIn(null).single.shownOnMap, isFalse);
     });
 
     test('ticking a list turns on all of it, at every level', () async {
       final (food, italian) = await foodAndItalian();
+      await saved.setShown((await tree()).list(food)!, false);
       await saved.setShown((await tree()).list(food)!, true);
       final t = await tree();
       expect(t.shownState(food), isTrue);
@@ -394,6 +412,7 @@ void main() {
     test('one place turns its lists partly on, all the way up', () async {
       final (food, italian) = await foodAndItalian();
       await saved.createList('Bars', parent: food);
+      await saved.setShown((await tree()).list(food)!, false);
       await saved.setShown((await tree()).copiesOf('poi:2').single, true);
       final t = await tree();
       expect(t.shownState(italian), isTrue);
@@ -403,7 +422,7 @@ void main() {
 
     test('top-level places are on or off one by one', () async {
       await saveAll(['poi:1', 'poi:2']);
-      await saved.setShown((await tree()).copiesOf('poi:1').single, true);
+      await saved.setShown((await tree()).copiesOf('poi:2').single, false);
       expect((await tree()).shownPlaces.single.id, 'poi:1');
     });
 
@@ -415,6 +434,7 @@ void main() {
 
     test('what is new starts on only if all of its list is', () async {
       final (food, italian) = await foodAndItalian();
+      await saved.setShown((await tree()).list(food)!, false);
       await saved.setShown((await tree()).list(italian)!, true);
       await places.put(_place('poi:3'));
       await saved.setLocations('poi:3', {italian, food});
@@ -440,6 +460,7 @@ void main() {
         final inBars = t.placesIn(bars).single;
         await saved.edit(inBars, name: '', emoji: '🍺');
         await saved.setShown(inFood, true);
+        await saved.setShown(inBars, false);
         expect((await tree()).shownPlaces.single.emoji, isNull);
 
         t = await tree();
@@ -467,6 +488,7 @@ void main() {
       test('and undoing it turns the place off again', () async {
         final shown = await shownList();
         await saveAll(['poi:1']);
+        await saved.setShown((await tree()).copiesOf('poi:1').single, false);
         final undo = await saved.move([
           (await tree()).copiesOf('poi:1').single,
         ], shown);
@@ -483,6 +505,7 @@ void main() {
         await saveAll(['poi:1']);
         await saved.move([(await tree()).copiesOf('poi:1').single], italian);
 
+        await saved.setShown((await tree()).list(food)!, false);
         final undo = await saved.move([(await tree()).list(food)!], shown);
         var t = await tree();
         expect(t.shownState(shown), isTrue);
@@ -499,7 +522,8 @@ void main() {
         final off = await saved.createList('Off');
         await saveAll(['poi:1', 'poi:2']);
         var t = await tree();
-        await saved.setShown(t.copiesOf('poi:1').single, true);
+        await saved.setShown(t.list(off)!, false);
+        await saved.setShown(t.copiesOf('poi:2').single, false);
         t = await tree();
         await saved.move([
           t.copiesOf('poi:1').single,
@@ -518,7 +542,8 @@ void main() {
           t.copiesOf('poi:1').single,
           t.copiesOf('poi:2').single,
         ], mixed);
-        await saved.setShown((await tree()).copiesOf('poi:1').single, true);
+        await saved.setShown((await tree()).copiesOf('poi:2').single, false);
+        await saved.setShown((await tree()).copiesOf('poi:3').single, false);
         await saved.move([(await tree()).copiesOf('poi:3').single], mixed);
         t = await tree();
         expect(t.shownState(mixed), isNull);

@@ -27,7 +27,7 @@ class SavedList extends SavedItem {
     required this.parent,
     required this.name,
     this.note,
-    this.shownOnMap = false,
+    this.shownOnMap = true,
   });
 
   final int id;
@@ -58,7 +58,7 @@ class SavedPlace extends SavedItem {
     this.note,
     this.pinned = false,
     this.emoji,
-    this.shownOnMap = false,
+    this.shownOnMap = true,
   });
 
   /// Identifies this copy of the place.
@@ -328,7 +328,7 @@ class SavedStore {
   }
 
   /// Makes a list at the end of [parent]'s lists, on in the map's layer if all of
-  /// [parent] is, and returns its ID.
+  /// [parent] is or if at the top level, and returns its ID.
   Future<int> createList(String name, {int? parent}) =>
       _db.transaction(() async {
         final position = await _endList(parent);
@@ -355,6 +355,7 @@ class SavedStore {
             placeId: placeId,
             position: position - 1,
             savedAt: _now(),
+            shownOnMap: const Value(true),
           ),
           mode: InsertMode.insertOrIgnore,
         );
@@ -417,9 +418,9 @@ class SavedStore {
       });
 
   /// Whether something new in [list] starts on in the map's layer: if all of the list
-  /// is. Never at the top level, which isn't a list to be all on.
+  /// is, or by default at the top level.
   Future<bool> _startsShown(int? list) async =>
-      list != null && (await _load()).shownState(list) == true;
+      list == null || (await _load()).shownState(list) == true;
 
   /// Copies [items] to the end of [to], null for the top level, with their names and
   /// notes but unpinned, except any already there. Returns how to undo it, for [restore].
@@ -510,7 +511,7 @@ class SavedStore {
     ];
     final places = items.whereType<SavedPlace>().toList();
     final entryIds = [for (final place in places) place.entryId];
-    final shown = await _startsShown(to);
+    final shown = to != null && await _startsShown(to);
     final tree = await _load();
     // Only what turning on will change, besides the moved items themselves.
     final inside = !shown
