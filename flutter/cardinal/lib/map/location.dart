@@ -356,10 +356,17 @@ class _MyLocationButtonState extends State<MyLocationButton> {
     // Other startup offers wait until this one, and the permission it asks for, is
     // answered.
     final offered = Completer<void>();
-    StartupOffersScope.maybeOf(context)?.hold(offered.future);
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _offer(settings).whenComplete(offered.complete),
-    );
+    final offers = StartupOffersScope.maybeOf(context);
+    final previous = offers?.answeredSoFar();
+    offers?.hold(offered.future);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        await previous;
+        if (mounted) await _offer(settings);
+      } finally {
+        offered.complete();
+      }
+    });
   }
 
   /// How long the offer waits for the map to finish drawing, at most: offline, it may

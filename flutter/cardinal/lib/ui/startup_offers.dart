@@ -15,6 +15,9 @@ class StartupOffers {
   void hold(Future<void> answer) =>
       _held.add(answer.then<void>((_) {}, onError: (Object _) {}));
 
+  /// Waits only for the offers already held, not ones registered later.
+  Future<void> answeredSoFar() async => Future.wait(_held.toList());
+
   /// Completes once every offer held so far is answered, including any held while
   /// waiting.
   Future<void> answered() async {

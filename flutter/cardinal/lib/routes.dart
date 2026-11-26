@@ -7,6 +7,7 @@ import 'directions/directions_page.dart';
 import 'directions/steps_page.dart';
 import 'directions/trip_details_page.dart';
 import 'home/navigation_bar.dart';
+import 'home/welcome.dart';
 import 'map/attribution.dart';
 import 'map/buttons.dart';
 import 'map/map.dart';
@@ -107,23 +108,25 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
       observers: [sheetPages],
       // Offline search's models are offered over the map once it's up.
       builder: (context, state, child) => GeocoderModelsPrompt(
-        child: Scaffold(
-          resizeToAvoidBottomInset: false,
-          body: SheetScaffold(
-            body: CardinalMap(controller: map),
-            floating: const NavigationLayer(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  MapDrawingLayer(child: MapButtons()),
-                  MapAttribution(),
-                ],
+        child: WelcomePrompt(
+          child: Scaffold(
+            resizeToAvoidBottomInset: false,
+            body: SheetScaffold(
+              body: CardinalMap(controller: map),
+              floating: const NavigationLayer(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    MapDrawingLayer(child: MapButtons()),
+                    MapAttribution(),
+                  ],
+                ),
               ),
+              bottomBar: const AppNavigationBar(),
+              bottomBarHeight: AppNavigationBar.heightOf(context),
+              backdrop: sheetGlassOf(context),
+              sheet: child,
             ),
-            bottomBar: const AppNavigationBar(),
-            bottomBarHeight: AppNavigationBar.heightOf(context),
-            backdrop: sheetGlassOf(context),
-            sheet: child,
           ),
         ),
       ),
