@@ -423,6 +423,9 @@ class _SavedPageState extends State<SavedPage> {
               // The same height going into a list and back out of it.
               keepsHeight: true,
               anchors: const [SheetAnchor.fraction(0.4), SheetAnchor.full()],
+              freeRanges: const [
+                SheetRange(SheetAnchor.fraction(0.4), SheetAnchor.full()),
+              ],
               slivers: [
                 PinnedHeaderSliver(
                   child: SheetBuilder(

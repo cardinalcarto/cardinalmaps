@@ -71,6 +71,12 @@ check() (
     esac
 )
 
+phases=(format test)
+if [[ ${1:-} == --format-only ]]; then
+    phases=(format)
+    shift
+fi
+
 if [[ $# == 0 ]]; then
     set -- airmail crates poi_service topo_pipeline wof_service valinor flutter python go java
 fi
@@ -79,7 +85,7 @@ fi
 # Do not put check in an if/|| condition: Bash would suppress errexit inside it.
 status=0
 for group in "$@"; do
-    for phase in format test; do
+    for phase in "${phases[@]}"; do
         set +e
         (set -e; check "$group" "$phase")
         result=$?

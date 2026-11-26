@@ -105,19 +105,30 @@ void main() {
       expect(router.state.uri.path, '/saved');
     });
 
-    testWidgets('opens at 40%, and snaps to it, full or collapsed', (
+    testWidgets('opens at 40%, floats up to full, and can collapse', (
       tester,
     ) async {
       await place('poi:1', name: 'Cafe');
       await open(tester);
       final sheet = sheetOf(tester);
       expect(sheet.extent, appScreen.height * 0.4);
-      // A little way up, it snaps back...
-      await tester.drag(text('Saved places').first, const Offset(0, -100));
+      // A little way up, it stays where it was released.
+      await tester.timedDrag(
+        text('Saved places').first,
+        const Offset(0, -100),
+        const Duration(seconds: 2),
+      );
+      final released = sheet.extent;
       await tester.pumpAndSettle();
-      expect(sheet.extent, appScreen.height * 0.4);
+      expect(sheet.extent, greaterThan(appScreen.height * 0.4));
+      expect(sheet.extent, lessThan(appScreen.height));
+      expect(sheet.extent, moreOrLessEquals(released, epsilon: 5));
+      expect(
+        sheet.restingIn,
+        const SheetRange(SheetAnchor.fraction(0.4), SheetAnchor.full()),
+      );
       // ...most of the way, it's full...
-      await tester.drag(text('Saved places').first, const Offset(0, -400));
+      await tester.drag(text('Saved places').first, const Offset(0, -600));
       await tester.pumpAndSettle();
       expect(sheet.extent, appScreen.height);
       // ...and from 40%, most of the way down, it collapses.
