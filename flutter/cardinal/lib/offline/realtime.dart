@@ -15,7 +15,7 @@ import 'offline_area.dart';
 
 /// Public cache root, shared with the updater in deploy/gtfs-rt-cache.
 const realtimeCacheUrl =
-    'https://cardinal-carto-public.t3.storage.dev/gtfs-rt/';
+    'https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt/';
 const realtimeExpiry = Duration(minutes: 3);
 
 Uri cachedRealtimeUrl(RealtimeSource source) => Uri.parse(

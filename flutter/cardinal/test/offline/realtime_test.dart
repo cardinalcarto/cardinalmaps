@@ -60,7 +60,7 @@ void main() {
   test('cache keys match the updater and preserve exact manifest spelling', () {
     expect(
       cachedRealtimeUrl(source('https://example.org/trip.pb')).toString(),
-      '${realtimeCacheUrl}a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb',
+      'https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt/a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb',
     );
     final spelled = RealtimeSource(
       feed: 'f',

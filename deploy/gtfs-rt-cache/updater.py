@@ -13,7 +13,7 @@ from botocore.config import Config
 from google.transit import gtfs_realtime_pb2
 
 BUCKET = os.environ.get('BUCKET_NAME', 'cardinal-carto-public')
-RELEASES = os.environ.get('RELEASES_URL', f'https://{BUCKET}.t3.storage.dev/releases').rstrip('/')
+RELEASES = os.environ.get('RELEASES_URL', f'https://{BUCKET}.t3.tigrisfiles.io/releases').rstrip('/')
 INTERVAL = 60
 MAX_BYTES = 32 * 1024 * 1024
 WORKERS = int(os.environ.get('GTFS_RT_WORKERS', '16'))

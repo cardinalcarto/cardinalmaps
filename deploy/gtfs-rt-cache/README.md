@@ -16,7 +16,7 @@ place. Objects are not deleted during outages.
 Each object is public-read at:
 
 ```
-https://cardinal-carto-public.t3.storage.dev/gtfs-rt/<sha256 of exact manifest URL>.pb
+https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt/<sha256 of exact manifest URL>.pb
 ```
 
 The `x-amz-meta-fetched-at` response header is the Unix timestamp (seconds) of

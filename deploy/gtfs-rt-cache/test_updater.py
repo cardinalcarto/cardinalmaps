@@ -1,3 +1,4 @@
+import importlib
 import unittest
 from unittest.mock import Mock, patch
 
@@ -7,6 +8,13 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_default_release_url_uses_public_hostname(self):
+        with patch.dict('os.environ', {}, clear=True):
+            importlib.reload(updater)
+            self.assertEqual(updater.RELEASES,
+                             'https://cardinal-carto-public.t3.tigrisfiles.io/releases')
+        importlib.reload(updater)
+
     def test_key_matches_client(self):
         self.assertEqual(updater.object_key('https://example.org/trip.pb'),
                          'gtfs-rt/a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb')
