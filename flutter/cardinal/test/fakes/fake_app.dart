@@ -6,6 +6,7 @@ import 'package:cardinal/directions/transit_plan.dart' show TransitRoute;
 import 'package:cardinal/directions/route_source.dart';
 import 'package:cardinal/geocoder/geocoder.dart';
 import 'package:cardinal/home/navigation_bar.dart';
+import 'package:cardinal/home/welcome.dart';
 import 'package:cardinal/l10n/app_localizations.dart';
 import 'package:cardinal/map/location.dart';
 import 'package:cardinal/map/map.dart';
@@ -88,6 +89,7 @@ Future<GoRouter> pumpFakeApp(
   Geocoder? online,
   Geocoder? offline,
   bool offerModels = false,
+  bool offerWelcome = false,
   bool locationButton = false,
   Size size = appScreen,
 }) async {
@@ -123,7 +125,10 @@ Future<GoRouter> pumpFakeApp(
             ),
           );
           // As the app offers them, if the test wants the offer.
-          return offerModels ? GeocoderModelsPrompt(child: scaffold) : scaffold;
+          final welcome = offerWelcome
+              ? WelcomePrompt(child: scaffold)
+              : scaffold;
+          return offerModels ? GeocoderModelsPrompt(child: welcome) : welcome;
         },
         routes: sheetRoutes(),
       ),

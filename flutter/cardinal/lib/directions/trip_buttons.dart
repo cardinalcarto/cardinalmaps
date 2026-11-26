@@ -44,7 +44,8 @@ void startNavigation(
 /// Steps and Start along the bottom of the window, acting on the selected route:
 /// Start the main action, twice as wide. Null disables either. [TripButtons.start] has
 /// Start alone, the width of the window, and [TripButtons.details] has Trip details
-/// alone, which acts on the selected transit journey.
+/// alone, which acts on the selected transit journey. [TripButtons.offline] opens
+/// the Offline tab when the trip needs downloaded maps.
 ///
 /// Whichever they are, they're one height at a text size, so one set can take
 /// another's place without the sheet's anchors moving.
@@ -67,6 +68,12 @@ class TripButtons extends StatelessWidget {
       onStart = onDetails,
       _steps = false,
       _main = 'Trip details';
+
+  const TripButtons.offline({super.key, required VoidCallback onOffline})
+    : onSteps = null,
+      onStart = onOffline,
+      _steps = false,
+      _main = 'Offline maps';
 
   final VoidCallback? onSteps;
 

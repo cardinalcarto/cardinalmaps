@@ -1281,7 +1281,12 @@ class _DirectionsPageState extends State<DirectionsPage>
                       fit: StackFit.passthrough,
                       children: [...previous, ?current],
                     ),
-                    child: transit
+                    child: _needsOfflineArea(directions)
+                        ? TripButtons.offline(
+                            key: const ValueKey(#offline),
+                            onOffline: () => context.go('/offline'),
+                          )
+                        : transit
                         ? TripButtons.details(
                             key: const ValueKey(#details),
                             onDetails:
@@ -1509,12 +1514,17 @@ class _DirectionsPageState extends State<DirectionsPage>
     ),
   );
 
+  bool _needsOfflineArea(Directions directions) =>
+      directions.problem == RouteProblem.noOfflineArea ||
+      directions.problem == RouteProblem.outsideArea;
+
   String _messageFor(Directions directions) => switch (directions) {
     Directions(problem: RouteProblem.outsideArea) =>
-      "This trip is outside the offline area, so there are no directions for it "
-          "on this device",
+      "This trip is outside the offline area. Download an offline area covering "
+          "your trip while online directions are being set up.",
     Directions(problem: RouteProblem.noOfflineArea) =>
-      'Directions need an offline area, and this device has none',
+      'Download an offline area to get directions. Online directions are still '
+          'being set up.',
     Directions(problem: RouteProblem.noRoute) => 'No route found',
     Directions(problem: RouteProblem.failed) =>
       "Couldn't get directions. Try again.",

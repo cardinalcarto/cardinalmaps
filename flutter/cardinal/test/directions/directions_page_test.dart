@@ -39,6 +39,7 @@ import 'package:routing/routing.dart';
 import 'package:sparkle/sparkle.dart' show PuckStyle;
 
 import '../fakes/fake_app.dart';
+import '../fakes/fake_downloads.dart';
 import '../fakes/fake_location.dart';
 import '../fakes/fake_map.dart';
 import '../fakes/fake_navigation.dart';
@@ -119,10 +120,12 @@ void main() {
     FakeLocation? location,
     bool settle = true,
     TargetPlatform? platform,
+    FakeOfflineDownloads? downloads,
   }) async {
     final router = await pumpFakeApp(
       tester,
       platform: platform,
+      downloads: Future.value(downloads),
       navigation: navigation,
       store: store,
       routes: routes,
@@ -181,6 +184,45 @@ void main() {
     // The steps are a page of their own.
     expect(find.text('Drive north.'), findsNothing);
   });
+
+  for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+    testWidgets('offers offline downloads for every mode on ${platform.name}', (
+      tester,
+    ) async {
+      routes.immediately = null;
+      transit.immediately = null;
+      final router = await open(
+        tester,
+        settle: false,
+        platform: platform,
+        downloads: FakeOfflineDownloads(),
+      );
+      for (final question in routes.asked) {
+        question.answer.completeError(const NoOfflineArea());
+      }
+      transit.asked.single.answer.completeError(const NoOfflineArea());
+      await tester.pumpAndSettle();
+      for (final mode in TravelMode.values) {
+        await tester.tap(find.byIcon(mode.icon));
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('Download an offline area to get directions'),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining('Online directions are still being set up'),
+          findsOneWidget,
+        );
+        expect(find.text('Offline maps'), findsOneWidget);
+        expect(find.text('Start'), findsNothing);
+        expect(find.text('Trip details'), findsNothing);
+      }
+      await tester.tap(find.text('Offline maps'));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/offline');
+      expect(find.text('Download an area'), findsOneWidget);
+    });
+  }
 
   group('distances follow the units setting over the region', () {
     void inLocale(WidgetTester tester, Locale locale) {
@@ -2528,6 +2570,8 @@ void main() {
           .completeError(const OutsideOfflineArea());
       await tester.pumpAndSettle();
       expect(find.textContaining('outside the offline area'), findsOneWidget);
+      expect(find.textContaining('covering your trip'), findsOneWidget);
+      expect(find.text('Offline maps'), findsOneWidget);
     });
   });
 }
