@@ -18,7 +18,7 @@ expression: "&response"
         "state": "applied",
         "age_seconds": 15,
         "header_timestamp": 1781535000,
-        "stale_after_seconds": 300,
+        "stale_after_seconds": 600,
         "entities_dropped": 0
       },
       {
@@ -27,7 +27,7 @@ expression: "&response"
         "state": "applied",
         "age_seconds": 15,
         "header_timestamp": 1781535000,
-        "stale_after_seconds": 300,
+        "stale_after_seconds": 600,
         "entities_dropped": 0
       },
       {

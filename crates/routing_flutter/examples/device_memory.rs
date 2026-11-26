@@ -344,6 +344,7 @@ fn capture(dir: &Path) -> Result<(i64, Vec<TransitFeed>), Box<dyn Error>> {
             feed: feed.to_owned(),
             kind: kind_of(url),
             bytes: Some(bytes),
+            expires_at: None,
         });
     }
     Ok((at, feeds))

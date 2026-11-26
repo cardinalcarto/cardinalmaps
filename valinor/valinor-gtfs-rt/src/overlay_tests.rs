@@ -13,7 +13,7 @@ use valinor_transit::{
     TripKey,
 };
 
-use crate::feed::{FeedInput, FeedKind, ScopedId};
+use crate::feed::{DEFAULT_REALTIME_STALE_AFTER, FeedInput, FeedKind, ScopedId};
 use crate::overlay::{OverlayOptions, RealtimeOverlay, build_overlay};
 use crate::proto;
 use crate::proto::trip_descriptor::ScheduleRelationship as Trip;
@@ -1333,19 +1333,25 @@ fn a_feed_that_fails_to_decode_degrades_to_schedule_and_says_why() {
 #[test]
 fn delayed_to_scheduled_when_the_feed_goes_stale() {
     let net = three_stop_net();
-    let feed = updates_at(NOW - 600, vec![update("t1", DATE_1, vec![delay_at(1, 30)])]);
+    let feed = updates_at(
+        NOW - DEFAULT_REALTIME_STALE_AFTER - 1,
+        vec![update("t1", DATE_1, vec![delay_at(1, 30)])],
+    );
     let overlay = run(&net, vec![feed]);
     assert_eq!(overlay.stats.blocks_replaced, 0);
     assert_eq!(overlay.rider.trip_state(key(0)), TripState::Scheduled);
     let status = &overlay.rider.feed_status()[0];
-    assert_eq!(status.age, Some(600));
+    assert_eq!(status.age, Some(DEFAULT_REALTIME_STALE_AFTER + 1));
     assert!(status.stale);
 }
 
 #[test]
 fn stop_skipped_to_scheduled_when_the_feed_goes_stale() {
     let net = three_stop_net();
-    let feed = updates_at(NOW - 600, vec![update("t1", DATE_1, vec![skip_at(2)])]);
+    let feed = updates_at(
+        NOW - DEFAULT_REALTIME_STALE_AFTER - 1,
+        vec![update("t1", DATE_1, vec![skip_at(2)])],
+    );
     let overlay = run(&net, vec![feed]);
     assert_eq!(overlay.rider.trip_state(key(0)), TripState::Scheduled);
     let lanes = lanes_of(&overlay.snapshot, 0, TODAY);
@@ -1356,7 +1362,7 @@ fn stop_skipped_to_scheduled_when_the_feed_goes_stale() {
 fn canceled_to_scheduled_when_the_feed_goes_stale() {
     let net = three_stop_net();
     let feed = updates_at(
-        NOW - 600,
+        NOW - DEFAULT_REALTIME_STALE_AFTER - 1,
         vec![with_relationship(
             update("t1", DATE_1, vec![]),
             Trip::Canceled,
@@ -1383,7 +1389,13 @@ fn replaced_and_added_to_scheduled_when_the_feed_goes_stale() {
         ),
         Trip::New,
     );
-    let overlay = run(&net, vec![updates_at(NOW - 600, vec![replaced, added])]);
+    let overlay = run(
+        &net,
+        vec![updates_at(
+            NOW - DEFAULT_REALTIME_STALE_AFTER - 1,
+            vec![replaced, added],
+        )],
+    );
     assert_eq!(overlay.snapshot.route_count(), 1);
     assert!(arrivals_of(&overlay.snapshot, 0, TODAY, 0).is_some());
 }
@@ -2237,6 +2249,7 @@ proptest! {
                 decoded: Ok(decoded),
                 received_at: Some(NOW),
                 stale_after: i64::MAX,
+                expires_at: None,
             };
             build_overlay(
                 &net.lookup,

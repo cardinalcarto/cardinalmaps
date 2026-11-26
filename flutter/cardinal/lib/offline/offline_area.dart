@@ -201,7 +201,7 @@ class OfflineArea implements OfflineListener {
       for (final feed in json['feeds'] as List<Object?>? ?? const [])
         if (feed case {'id': final String id, 'url': final String url}
             when feeds.contains(id))
-          RealtimeSource(feed: id, url: Uri.parse(url)),
+          RealtimeSource(feed: id, url: Uri.parse(url), upstreamUrl: url),
     ];
   }();
   Future<List<RealtimeSource>>? _realtime;
@@ -261,11 +261,18 @@ class _Opened<T extends Object> {
 /// One GTFS-RT message an area's feed publishes.
 @immutable
 class RealtimeSource {
-  const RealtimeSource({required this.feed, required this.url});
+  const RealtimeSource({
+    required this.feed,
+    required this.url,
+    this.upstreamUrl,
+  });
 
   /// The feed's ID in the transit build.
   final String feed;
   final Uri url;
+
+  /// The exact URL spelling in the release manifest, for the cache key.
+  final String? upstreamUrl;
 
   /// What the message carries. `realtime.json` doesn't say, so it's read from the URL's
   /// file name or its `feed_type`, never the rest of the URL: King County's trip updates

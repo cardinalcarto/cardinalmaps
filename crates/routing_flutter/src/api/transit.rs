@@ -122,6 +122,8 @@ pub struct TransitFeed {
     pub kind: TransitFeedKind,
     /// The message; `None` clears anything held for this feed.
     pub bytes: Option<Vec<u8>>,
+    /// Absolute cache expiry in POSIX seconds, independent of the feed header.
+    pub expires_at: Option<i64>,
 }
 
 /// Why the offline transit data couldn't be opened.
@@ -409,13 +411,16 @@ impl OfflineTransit {
                 continue;
             }
             // Undecodable bytes are reported by the response itself.
-            let _ = state.ingest(FeedUpdate {
-                feed: &feed.feed,
-                kind: feed_kind(&feed.kind),
-                bytes: feed.bytes.as_deref(),
-                received_at: now,
-                stale_after: None,
-            });
+            let _ = state.ingest_with_expiry(
+                FeedUpdate {
+                    feed: &feed.feed,
+                    kind: feed_kind(&feed.kind),
+                    bytes: feed.bytes.as_deref(),
+                    received_at: now,
+                    stale_after: None,
+                },
+                feed.expires_at,
+            );
         }
         let answer = match query {
             Query::Plan => self.planner.plan_json(request, now, interrupt),
@@ -562,23 +567,40 @@ mod tests {
             feed: "bus".to_owned(),
             kind: TransitFeedKind::Alerts,
             bytes: Some(vec![0xff, 0xff, 0xff]),
+            expires_at: None,
         }];
         let answer = transit.plan_at(request, feeds, now, &|| false);
         assert_eq!(answer.status, 200);
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
         assert_eq!(body["realtime"]["feeds"][0]["state"], "undecodable");
 
-        // A feed that isn't loaded is ignored and reported; the plan and other feeds go on.
+        // Cache expiry is enforced by the native planner even when no new bytes arrive.
+        let feeds = vec![TransitFeed {
+            feed: "bus".to_owned(),
+            kind: TransitFeedKind::Alerts,
+            // An empty GTFS-RT 2.0 feed (the header has no timestamp).
+            bytes: Some(vec![0x0a, 0x05, 0x0a, 0x03, b'2', b'.', b'0']),
+            expires_at: Some(now + 180),
+        }];
+        let answer = transit.plan_at(request, feeds, now, &|| false);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["realtime"]["feeds"][0]["state"], "applied");
+        let answer = transit.plan_at(request, Vec::new(), now + 180, &|| false);
+        let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();
+        assert_eq!(body["realtime"]["feeds"][0]["state"], "stale");
+
         let feeds = vec![
             TransitFeed {
                 feed: "bus".to_owned(),
                 kind: TransitFeedKind::Alerts,
                 bytes: None,
+                expires_at: None,
             },
             TransitFeed {
                 feed: "nope\u{1}".to_owned(),
                 kind: TransitFeedKind::Alerts,
                 bytes: None,
+                expires_at: None,
             },
         ];
         let answer = transit.plan_at(request, feeds, now, &|| false);
@@ -704,6 +726,7 @@ mod tests {
             feed: "bus".to_owned(),
             kind: TransitFeedKind::Alerts,
             bytes: Some(vec![0xff, 0xff, 0xff]),
+            expires_at: None,
         }];
         let answer = transit.nearby_at(nearby, feeds, now, &|| false);
         let body: serde_json::Value = serde_json::from_slice(&answer.body).unwrap();

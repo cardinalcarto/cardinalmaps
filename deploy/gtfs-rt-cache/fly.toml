@@ -1,0 +1,17 @@
+app = "cardinal-gtfs-rt-cache"
+primary_region = "sjc"
+
+[build]
+image = "ghcr.io/OWNER/cardinal-gtfs-rt-cache:sha-COMMIT"
+
+[env]
+BUCKET_NAME = "cardinal-carto-public"
+AWS_ENDPOINT_URL_S3 = "https://t3.storage.dev"
+AWS_REGION = "auto"
+
+[deploy]
+strategy = "immediate"
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "1gb"
