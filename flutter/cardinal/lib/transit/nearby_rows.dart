@@ -229,8 +229,8 @@ class NearbyRows {
 /// listeners, and remembers in [headsigns] the page a row's swipe settles on. The screen
 /// decides when to [refresh] and from where.
 ///
-/// An answer comes on the schedule first when real-time data is still being fetched for
-/// the first time ([NearbyTransitSource.realtimeArrived]); once it arrives, the
+/// An answer uses the data at hand while real-time data is still being fetched
+/// ([NearbyTransitSource.realtimeArrived]); once new data arrives, the
 /// controller asks again from the same place, and that answer is applied as any other
 /// from there: in place, with the order frozen.
 class NearbyTransitController extends ChangeNotifier {
@@ -260,7 +260,7 @@ class NearbyTransitController extends ChangeNotifier {
 
   /// Asks again from [origin], getting to stops by [access], and applies the answer:
   /// one by another access than the rows were sorted by sorts them again. When the
-  /// answer was on the schedule while real-time data was on its way, it asks again once
+  /// answer used older or scheduled times while real-time data was on its way, it asks again once
   /// that has arrived, unless another question comes first.
   ///
   /// A refresh started before this one is answered abandons it, and its answer isn't
@@ -310,10 +310,12 @@ class NearbyTransitController extends ChangeNotifier {
   /// Asks again from [origin] by [access] once real-time data the answer to question
   /// [asked] went without arrives, if nothing has been asked since.
   Future<void> _whenLive(int asked, LngLat origin, TransitAccess access) async {
+    if (_disposed || asked != _asks) return;
     if (!await source.realtimeArrived()) return;
     if (_disposed || asked != _asks) return;
     try {
-      await _ask(origin, access);
+      final next = await _ask(origin, access);
+      if (next != null) unawaited(_whenLive(next, origin, access));
     } on Object catch (e) {
       // The rows stay on the schedule until the next refresh.
       debugPrint('nearby transit: live times: $e');

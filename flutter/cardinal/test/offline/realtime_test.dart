@@ -321,39 +321,76 @@ void main() {
   });
 
   test(
-    'arrived never waits, and gives the first fetch while it is under way',
+    'arrived never waits, and reports every fetch while it is under way',
     () async {
-      final reply = Completer<http.Response>();
+      var now = DateTime.utc(2026, 11, 13, 8);
+      var reply = Completer<http.Response>();
+      var requests = 0;
       final realtime = RealtimeFeeds(
         () => Future.value([source('https://a.test/alerts.pb')]),
         cacheUrl: cacheUrl,
-        client: MockClient((request) => reply.future),
+        clock: () => now,
+        client: MockClient((request) {
+          requests++;
+          return reply.future;
+        }),
       );
-      final (:feeds, :first) = realtime.arrived();
+      final (:feeds, :pending) = realtime.arrived();
       expect(feeds, isEmpty);
-      expect(first, isNotNull);
       reply.complete(
-        http.Response.bytes(
-          [1],
-          200,
-          headers: timestampHeaders(DateTime.now()),
-        ),
+        http.Response.bytes([1], 200, headers: timestampHeaders(now)),
       );
-      expect(await first, isTrue);
+      expect(await pending, isTrue);
       final after = realtime.arrived();
       expect(after.feeds, hasLength(1));
-      expect(after.first, isNull);
+      expect(await after.pending, isFalse);
+
+      now = now.add(const Duration(seconds: 60));
+      reply = Completer<http.Response>();
+      final refresh = realtime.arrived();
+      final concurrent = realtime.arrived();
+      expect(refresh.feeds, isEmpty);
+      expect(concurrent.feeds, isEmpty);
+      reply.complete(
+        http.Response.bytes([2], 200, headers: timestampHeaders(now)),
+      );
+      expect(await refresh.pending, isTrue);
+      expect(await concurrent.pending, isTrue);
+      expect(requests, 2);
+      final refreshed = realtime.arrived();
+      expect(refreshed.feeds.single.bytes, [2]);
+      expect(await refreshed.pending, isFalse);
+
+      // A duplicate (unchanged timestamp) brings no new data and must not trigger a requery.
+      now = now.add(const Duration(seconds: 60));
+      final duplicate = realtime.arrived();
+      expect(await duplicate.pending, isFalse);
+      expect(duplicate.feeds, isEmpty);
+      expect(requests, 3);
     },
   );
 
-  test('a first fetch that brings nothing says so', () async {
+  test('a failed first fetch can notify its subsequent recovery', () async {
+    var now = DateTime.utc(2026, 11, 13, 8);
+    var up = false;
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
       cacheUrl: cacheUrl,
-      client: MockClient((request) async => throw http.ClientException('no')),
+      clock: () => now,
+      client: MockClient((request) async {
+        if (!up) throw http.ClientException('no');
+        return reply([1], now);
+      }),
     );
-    expect(await feeds.arrived().first, isFalse);
+    expect(await feeds.arrived().pending, isFalse);
     expect(feeds.arrived().feeds, isEmpty);
+    await feeds.prefetch();
+    up = true;
+    now = now.add(const Duration(seconds: 15));
+    expect(await feeds.arrived().pending, isTrue);
+    final recovered = feeds.arrived();
+    expect(recovered.feeds.single.bytes, [1]);
+    expect(await recovered.pending, isFalse);
   });
 
   test('an area has one set of feeds, and a new area new ones', () {

@@ -98,9 +98,6 @@ class RealtimeFeeds {
   /// The fetch under way, completing to how many messages it fetched.
   Future<int>? _inFlight;
 
-  /// The first fetch, until it has finished.
-  Future<int>? _first;
-
   /// Whether a fetch has finished, so plans no longer wait for one.
   var _firstDone = false;
 
@@ -119,17 +116,15 @@ class RealtimeFeeds {
   /// The messages that arrived since the last call, as [fresh] gives them, but never
   /// waiting, not even for the first fetch: for an answer on the schedule first.
   ///
-  /// With them comes the first fetch while it's under way, which completes to whether it
-  /// fetched any messages, so the plan can be asked again with them; null once it has
-  /// finished. After the first fetch, what's fetched goes to the next plan, as for
-  /// [fresh].
-  ({List<TransitFeed> feeds, Future<bool>? first}) arrived() {
-    // Its failure is the plan's: messages that can't be fetched are left out.
-    prefetch().ignore();
-    final first = _firstDone
-        ? null
-        : _first?.then((fetched) => fetched > 0, onError: (Object _) => false);
-    return (feeds: _take(), first: first);
+  /// With them comes the current fetch (or check for feeds due), which completes to
+  /// whether it fetched new messages, so the plan can be asked again with them.
+  /// This works for every refresh, including recovery after a failed fetch.
+  ({List<TransitFeed> feeds, Future<bool> pending}) arrived() {
+    final pending = prefetch().then(
+      (fetched) => fetched > 0,
+      onError: (Object _) => false,
+    );
+    return (feeds: _take(), pending: pending);
   }
 
   List<TransitFeed> _take() {
@@ -147,14 +142,12 @@ class RealtimeFeeds {
   }
 
   /// Starts fetching the messages older than [maxAge], if that isn't under way, for the
-  /// next plan to take with [fresh]. Completes when the fetch does.
-  Future<void> prefetch() {
-    final fetch = _inFlight ??= _fetch().whenComplete(() {
+  /// next plan to take with [fresh]. Completes to the number of new messages fetched.
+  Future<int> prefetch() {
+    return _inFlight ??= _fetch().whenComplete(() {
       _inFlight = null;
       _firstDone = true;
     });
-    if (!_firstDone) _first ??= fetch;
-    return fetch;
   }
 
   Future<int> _fetch() async {

@@ -643,6 +643,27 @@ void main() {
     expect(tester.getTopLeft(_row('62')).dy, y62);
     expect(_next(tester, '40').data, '10');
     expect(_in('40', find.byKey(const ValueKey('live'))), findsOneWidget);
+
+    // A later poll also updates immediately when its fetch lands, without waiting
+    // for another 30-second tick or changing the order of the rows.
+    final refreshed = source.realtimeLanding = Completer<bool>();
+    now = now.add(nearbyRefresh);
+    await tester.pump(nearbyRefresh);
+    expect(source.asked, hasLength(3));
+    await answer(tester, [
+      _route('62', departures: [nearbyDepartureJson('b', 8)]),
+      _route('40', departures: [nearbyDepartureJson('a', 10, status: 'live')]),
+    ]);
+    refreshed.complete(true);
+    await tester.pump();
+    expect(source.asked, hasLength(4));
+    await answer(tester, [
+      _route('62', departures: [nearbyDepartureJson('b', 8)]),
+      _route('40', departures: [nearbyDepartureJson('a', 15, status: 'live')]),
+    ]);
+    expect(tester.element(_row('40')), same(row40));
+    expect(_next(tester, '40').data, '14');
+    expect(source.asked, hasLength(4));
   });
 
   testWidgets('coming back keeps the rows and refreshes them in place', (
