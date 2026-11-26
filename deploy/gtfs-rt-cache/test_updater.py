@@ -8,6 +8,15 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_connection_pool_matches_worker_count(self):
+        with patch.object(updater, 'WORKERS', 23), \
+                patch.object(updater.boto3, 'client') as client, \
+                patch.object(updater, 'sources', return_value=set()), \
+                patch.object(updater.time, 'sleep', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                updater.main()
+        self.assertEqual(client.call_args.kwargs['config'].max_pool_connections, 23)
+
     def test_default_release_url_uses_public_hostname(self):
         with patch.dict('os.environ', {}, clear=True):
             importlib.reload(updater)

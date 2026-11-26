@@ -8,7 +8,7 @@ library;
 
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show immutable;
+import 'package:flutter/foundation.dart' show debugPrint, immutable;
 import 'package:routing/routing.dart' show DirectionsPoint;
 
 /// What is known about whether a stop or leg can be used in a wheelchair.
@@ -55,7 +55,28 @@ class RealtimeStatus {
   RealtimeStatus.fromJson(Map<String, Object?> json)
     : level = RealtimeLevel.parse(json['level']),
       feedsApplied = _feeds(json, applied: true),
-      feedsReported = _feeds(json, applied: false);
+      feedsReported = _feeds(json, applied: false) {
+    for (final feed in _list(json['feeds']).map(_map)) {
+      final state = feed['state'];
+      if (state != 'stale' && state != 'undecodable') continue;
+      final age = feed['age_seconds'];
+      final limit = feed['stale_after_seconds'];
+      final reason = switch (state) {
+        'undecodable' => 'undecodable message',
+        _ when age == null => 'unknown message age',
+        _ when age is num && limit is num && age.abs() > limit =>
+          'message timestamp outside freshness limit',
+        _ when age is num && limit is num => 'cache expired',
+        _ => 'stale message',
+      };
+      final ageText = age == null ? 'unknown' : '${age}s';
+      final limitText = limit == null ? 'unknown' : '${limit}s';
+      debugPrint(
+        'realtime: ${feed['feed']} ${feed['kind']}: planner $reason '
+        '(age $ageText, limit $limitText)',
+      );
+    }
+  }
 
   // One entry per message (a feed may send trip updates, alerts, and vehicles), so
   // feeds are counted by name.

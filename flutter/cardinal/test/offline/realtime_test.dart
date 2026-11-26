@@ -119,7 +119,7 @@ void main() {
   });
 
   test(
-    'uses the cache, polls at 60 seconds, and expires at 3 minutes',
+    'uses the cache, polls at 60 seconds, and expires at 5 minutes',
     () async {
       final sourceFeed = source('https://a.test/alerts.pb');
       var now = DateTime.utc(2026, 11, 13, 8);
@@ -137,7 +137,7 @@ void main() {
       );
       final initial = (await feeds.fresh()).single;
       expect(initial.bytes, [1]);
-      expect(initial.expiresAt, published.millisecondsSinceEpoch ~/ 1000 + 180);
+      expect(initial.expiresAt, published.millisecondsSinceEpoch ~/ 1000 + 300);
       now = now.add(const Duration(seconds: 59));
       await feeds.prefetch();
       expect(fetches, 1);
@@ -145,7 +145,7 @@ void main() {
       await feeds.prefetch();
       expect(fetches, 2);
       expect(feeds.arrived().feeds, isEmpty);
-      now = published.add(const Duration(seconds: 180));
+      now = published.add(const Duration(seconds: 300));
       await feeds.prefetch();
       expect(feeds.arrived().feeds, isEmpty);
       expect(feeds.arrived().feeds, isEmpty);
@@ -155,11 +155,13 @@ void main() {
   test('failed refresh does not extend the expiry', () async {
     var now = DateTime.utc(2026, 11, 13, 8);
     var up = true;
+    var requests = 0;
     final feeds = RealtimeFeeds(
       () => Future.value([source('https://a.test/alerts.pb')]),
       cacheUrl: cacheUrl,
       clock: () => now,
       client: MockClient((request) async {
+        requests++;
         if (!up) throw http.ClientException('no network');
         return reply([1], now);
       }),
@@ -169,11 +171,18 @@ void main() {
     now = now.add(const Duration(seconds: 60));
     await feeds.prefetch();
     expect(feeds.arrived().feeds, isEmpty);
-    now = now.add(const Duration(seconds: 120));
+    expect(requests, 2);
+    now = now.add(const Duration(seconds: 14));
+    await feeds.prefetch();
+    expect(requests, 2);
+    now = now.add(const Duration(seconds: 1));
+    await feeds.prefetch();
+    expect(requests, 3);
+    now = now.add(const Duration(seconds: 225));
     await feeds.prefetch();
     expect(feeds.arrived().feeds, isEmpty);
     up = true;
-    now = now.add(const Duration(seconds: 60));
+    now = now.add(const Duration(seconds: 15));
     await feeds.prefetch();
     expect(feeds.arrived().feeds.single.bytes, [1]);
   });
@@ -188,7 +197,7 @@ void main() {
         headers: {'x-amz-meta-fetched-at': '8640000000000'},
       ),
       reply([1], now.subtract(realtimeExpiry)),
-      reply([1], now.add(const Duration(seconds: 1))),
+      reply([1], now.add(const Duration(seconds: 31))),
     ]) {
       final feeds = RealtimeFeeds(
         () => Future.value([source('https://a.test/alerts.pb')]),
@@ -197,6 +206,96 @@ void main() {
         client: MockClient((request) async => response),
       );
       expect(await feeds.fresh(), isEmpty);
+    }
+  });
+
+  test(
+    'accepts small future clock skew without changing absolute expiry',
+    () async {
+      final now = DateTime.utc(2026, 11, 13, 8);
+      final published = now.add(const Duration(seconds: 30));
+      final feeds = RealtimeFeeds(
+        () => Future.value([source('https://a.test/tripupdates.pb')]),
+        cacheUrl: cacheUrl,
+        clock: () => now,
+        client: MockClient((request) async => reply([1], published)),
+      );
+      expect(
+        (await feeds.fresh()).single.expiresAt,
+        published.millisecondsSinceEpoch ~/ 1000 + 300,
+      );
+    },
+  );
+
+  test('failed feeds retry independently of successful feeds', () async {
+    var now = DateTime.utc(2026, 11, 13, 8);
+    final good = source('https://a.test/tripupdates.pb');
+    final bad = source('https://a.test/alerts.pb');
+    final requests = <Uri>[];
+    var recovered = false;
+    final feeds = RealtimeFeeds(
+      () => Future.value([good, bad]),
+      cacheUrl: cacheUrl,
+      clock: () => now,
+      client: MockClient((request) async {
+        requests.add(request.url);
+        if (request.url == cachedRealtimeUrl(bad, cacheUrl) && !recovered) {
+          return http.Response('', 503);
+        }
+        return reply([1], now);
+      }),
+    );
+    expect(await feeds.fresh(), hasLength(1));
+    requests.clear();
+    now = now.add(const Duration(seconds: 15));
+    recovered = true;
+    await feeds.prefetch();
+    expect(requests, [cachedRealtimeUrl(bad, cacheUrl)]);
+    expect(feeds.arrived().feeds.single.kind, TransitFeedKind.alerts);
+    requests.clear();
+    now = now.add(const Duration(seconds: 15));
+    await feeds.prefetch();
+    expect(requests, isEmpty);
+  });
+
+  test('older cached objects cannot replace a newer pending message', () async {
+    var now = DateTime.utc(2026, 11, 13, 8);
+    final published = now;
+    var timestamp = published;
+    var bytes = [1];
+    final feeds = RealtimeFeeds(
+      () => Future.value([source('https://a.test/tripupdates.pb')]),
+      cacheUrl: cacheUrl,
+      clock: () => now,
+      client: MockClient((request) async => reply(bytes, timestamp)),
+    );
+    await feeds.prefetch();
+    now = now.add(const Duration(seconds: 60));
+    timestamp = published.subtract(const Duration(seconds: 1));
+    bytes = [2];
+    await feeds.prefetch();
+    expect(feeds.arrived().feeds.single.bytes, [1]);
+    now = now.add(const Duration(seconds: 15));
+    timestamp = now;
+    bytes = [3];
+    await feeds.prefetch();
+    expect(feeds.arrived().feeds.single.bytes, [3]);
+  });
+
+  test('pending messages expire at exactly five minutes', () async {
+    final published = DateTime.utc(2026, 11, 13, 8);
+    for (final age in [299, 300]) {
+      var now = published;
+      final feeds = RealtimeFeeds(
+        () => Future.value([source('https://a.test/tripupdates.pb')]),
+        cacheUrl: cacheUrl,
+        clock: () => now,
+        client: MockClient((request) async => reply([1], published)),
+      );
+      await feeds.prefetch();
+      now = published.add(Duration(seconds: age));
+      expect(feeds.arrived().feeds, hasLength(age == 299 ? 1 : 0));
+      await feeds.prefetch();
     }
   });
 

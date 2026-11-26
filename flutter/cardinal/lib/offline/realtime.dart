@@ -14,7 +14,8 @@ import 'package:routing/routing.dart';
 import '../config.dart';
 import 'offline_area.dart';
 
-const realtimeExpiry = Duration(minutes: 3);
+const realtimeExpiry = Duration(minutes: 5);
+const realtimeClockSkew = Duration(seconds: 30);
 
 Uri cachedRealtimeUrl(RealtimeSource source, String cacheUrl) {
   final root = cacheUrl.endsWith('/') ? cacheUrl : '$cacheUrl/';
@@ -53,13 +54,14 @@ class AreaRealtimeFeeds {
 /// messages fetched since the last one. A message that can't be fetched is left out:
 /// whatever the planner already holds for it stays until it's stale.
 ///
-/// Each feed is retried on the same cadence, even after a failure.
+/// Failed fetches are retried sooner, on demand, without extending the old message's expiry.
 class RealtimeFeeds {
   RealtimeFeeds(
     this._sources, {
     http.Client? client,
     this.cacheUrl = realtimeCacheUrl,
     this.maxAge = const Duration(seconds: 60),
+    this.retryAfter = const Duration(seconds: 15),
     this.timeout = const Duration(seconds: 6),
     this._clock = DateTime.now,
   }) : _client = client ?? http.Client();
@@ -75,13 +77,19 @@ class RealtimeFeeds {
   /// How old a message may be before it's fetched again.
   final Duration maxAge;
 
+  /// How soon a failed fetch may be retried.
+  final Duration retryAfter;
+
   /// How long a fetch may take, so a plan doesn't wait long on a slow network.
   final Duration timeout;
 
   /// What time it is: the device's clock, or a test's.
   final DateTime Function() _clock;
 
-  final _fetchedAt = <String, DateTime>{};
+  final _nextFetchAt = <(String, String), DateTime>{};
+
+  (String, String) _sourceKey(RealtimeSource source) =>
+      (source.feed, source.upstreamUrl ?? source.url.toString());
 
   /// Expiry is the updater's successful fetch time, not the client's receipt time.
   final _expires = <(String, TransitFeedKind), int>{};
@@ -128,6 +136,7 @@ class RealtimeFeeds {
     final now = _clock().millisecondsSinceEpoch ~/ 1000;
     for (final key in _expires.keys.toList()) {
       if (now >= _expires[key]!) {
+        debugPrint('realtime: ${key.$1} ${key.$2.name}: cache expired');
         _expires.remove(key);
         _arrived.remove(key);
       }
@@ -154,11 +163,7 @@ class RealtimeFeeds {
     final now = _clock();
     final due = [
       for (final source in sources)
-        if (now.difference(
-              _fetchedAt[source.upstreamUrl ?? source.url.toString()] ??
-                  DateTime(0),
-            ) >=
-            maxAge)
+        if (!now.isBefore(_nextFetchAt[_sourceKey(source)] ?? DateTime(0)))
           source,
     ];
     if (due.isEmpty) return 0;
@@ -173,31 +178,50 @@ class RealtimeFeeds {
   }
 
   Future<TransitFeed?> _fetchOne(RealtimeSource source) async {
-    _fetchedAt[source.upstreamUrl ?? source.url.toString()] = _clock();
-    final http.Response response;
-    try {
-      response = await _client
-          .get(cachedRealtimeUrl(source, cacheUrl))
-          .timeout(timeout);
-    } on Object {
+    final sourceKey = _sourceKey(source);
+    _nextFetchAt[sourceKey] = _clock().add(maxAge);
+    final url = cachedRealtimeUrl(source, cacheUrl);
+    TransitFeed? failed(String reason) {
+      _nextFetchAt[sourceKey] = _clock().add(retryAfter);
+      // Upstream URLs may contain credentials; identify the public cache object instead.
+      debugPrint(
+        'realtime: ${source.feed} ${source.kind.name} '
+        '${url.pathSegments.last}: $reason',
+      );
       return null;
     }
-    if (response.statusCode != 200 || response.bodyBytes.isEmpty) return null;
+
+    final http.Response response;
+    try {
+      response = await _client.get(url).timeout(timeout);
+    } on Object catch (error) {
+      return failed('download failed (${error.runtimeType})');
+    }
+    if (response.statusCode != 200) {
+      return failed('HTTP ${response.statusCode}');
+    }
+    if (response.bodyBytes.isEmpty) return failed('empty response');
     final seconds = int.tryParse(
       response.headers['x-amz-meta-fetched-at'] ?? '',
     );
     final now = _clock().millisecondsSinceEpoch ~/ 1000;
-    if (seconds == null ||
-        seconds < 0 ||
-        seconds > now ||
-        now - seconds >= realtimeExpiry.inSeconds) {
-      return null;
+    if (seconds == null || seconds < 0) {
+      return failed('missing or invalid cache timestamp');
+    }
+    if (seconds > now + realtimeClockSkew.inSeconds) {
+      return failed('cache timestamp ${seconds - now}s ahead of device clock');
+    }
+    if (now - seconds >= realtimeExpiry.inSeconds) {
+      return failed('cache timestamp expired (age ${now - seconds}s)');
     }
     final expires = seconds + realtimeExpiry.inSeconds;
     final key = (source.feed, source.kind);
     // A delayed or repeatedly served object must not replace a newer update.
     final previous = _expires[key];
-    if (previous != null && expires <= previous) return null;
+    if (previous != null && expires < previous) {
+      return failed('cache timestamp older than previous update');
+    }
+    if (previous == expires) return null;
     final feed = TransitFeed(
       feed: source.feed,
       kind: source.kind,
