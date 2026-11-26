@@ -446,6 +446,30 @@ void main() {
       expect(features(navigationSource), hasLength(1));
     });
 
+    testWidgets('map place taps leave navigation on screen until End', (
+      tester,
+    ) async {
+      await start(tester);
+      final router = GoRouter.of(tester.element(find.byType(TripProgressPill)));
+      // Both POIs and saved markers use this entry point from the map.
+      openPlaceFromMap(router, 'poi:2');
+      await tester.pumpAndSettle();
+      expect(
+        router.state.uri.toString(),
+        '${directionsLocation(destination.id)}/navigate',
+      );
+      expect(navigation.state, NavigationState.acquiring);
+      expect(find.byTooltip('End'), findsOneWidget);
+      expect(features(navigationSource), hasLength(1));
+
+      await tester.tap(find.byTooltip('End'));
+      await tester.pumpAndSettle();
+      expect(navigation.state, NavigationState.idle);
+      openPlaceFromMap(router, destination.id);
+      await tester.pumpAndSettle();
+      expect(router.state.uri.toString(), placeLocation(destination.id));
+    });
+
     testWidgets('a trip walked by wheelchair is navigated by wheelchair', (
       tester,
     ) async {

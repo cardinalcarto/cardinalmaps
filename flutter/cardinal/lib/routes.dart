@@ -77,11 +77,14 @@ String routeDetailLocation({
 ).toString();
 
 /// Shows the place with [id], tapped on the map. It takes the place of a place card
-/// already open, so that going back leaves the map's places all at once.
+/// already open, so that going back leaves the map's places all at once. During
+/// turn-by-turn navigation, place taps are ignored rather than replacing navigation.
 void openPlaceFromMap(GoRouter router, String id) {
   final location = placeLocation(id);
   // Of the page on top: a pushed page isn't in the router's configuration's URI.
-  final current = router.state.uri.toString();
+  final uri = router.state.uri;
+  if (uri.pathSegments case ['place', _, 'directions', 'navigate']) return;
+  final current = uri.toString();
   if (current == location) return;
   if (current.startsWith('/place/')) {
     router.pushReplacement(location);

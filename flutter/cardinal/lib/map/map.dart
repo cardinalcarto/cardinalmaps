@@ -10,6 +10,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:sparkle/sparkle.dart';
 
 import '../config.dart';
+import '../navigation/navigation_controller.dart';
+import '../navigation/navigation_scope.dart';
 import '../routes.dart';
 import '../sheet/sheet.dart';
 import '../store/store.dart';
@@ -67,6 +69,7 @@ class MapScope extends InheritedWidget {
 }
 
 /// The map: the tile server's tiles in the style the layer picker chose (see `layers.dart`),
+/// or the simplified style during driving and cycling navigation,
 /// with the selected place on top (see `selection.dart`). The body of a [SheetScaffold]:
 /// the camera keeps what it shows clear of the sheet.
 class CardinalMap extends StatefulWidget {
@@ -85,6 +88,7 @@ class _CardinalMapState extends State<CardinalMap> {
   late final Future<Map<int, WofArea>> _wofAreas = _loadWofAreas();
   Object? _error;
   SheetController? _sheet;
+  NavigationController? _navigation;
 
   /// What the style file was last written for.
   MapLayers? _layers;
@@ -136,13 +140,17 @@ class _CardinalMapState extends State<CardinalMap> {
       ),
     )..start();
     final tiles = MapScope.tilesOf(context);
-    final layers = await MapLayers.read(settings, dark: _dark);
+    final stored = await MapLayers.read(settings);
+    final layers = _currentAppearance(stored);
     final args = await _mapArgs(
       layers,
       openingView(await settings.get(savedViewport)),
       await tiles?.call() ?? (tileJson: tilesUrl, basemap: null),
     );
+    if (!mounted) return args;
     _layers = layers;
+    // The theme or navigation may have changed while the map files were prepared.
+    _change(_currentAppearance);
     _watching.addAll([
       settings
           .watch(mapStyleChoice)
@@ -170,14 +178,23 @@ class _CardinalMapState extends State<CardinalMap> {
   /// Whether the app is dark: the map has a dark style to match.
   bool _dark = false;
 
+  MapLayers _currentAppearance(MapLayers layers) =>
+      layers.copyWith(dark: _dark).forNavigation(_navigation?.mode);
+
+  void _navigationChanged() => _change(_currentAppearance);
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    if (dark != _dark) {
-      _dark = dark;
-      _change((l) => l.copyWith(dark: dark));
+    _dark = Theme.of(context).brightness == Brightness.dark;
+    final navigation = context
+        .dependOnInheritedWidgetOfExactType<NavigationScope>()
+        ?.controller;
+    if (navigation != _navigation) {
+      _navigation?.removeListener(_navigationChanged);
+      _navigation = navigation?..addListener(_navigationChanged);
     }
+    _change(_currentAppearance);
     final sheet = SheetScaffold.controllerOf(context);
     if (sheet != _sheet) {
       _sheet?.removeListener(_updatePadding);
@@ -193,6 +210,7 @@ class _CardinalMapState extends State<CardinalMap> {
     _savedLayer?.dispose();
     _viewSaver?.cancel();
     _lifecycle.dispose();
+    _navigation?.removeListener(_navigationChanged);
     _sheet?.removeListener(_updatePadding);
     for (final watching in _watching) {
       watching.cancel();
