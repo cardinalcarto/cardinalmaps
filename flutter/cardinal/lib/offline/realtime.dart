@@ -11,16 +11,18 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:routing/routing.dart';
 
+import '../config.dart';
 import 'offline_area.dart';
 
-/// Public cache root, shared with the updater in deploy/gtfs-rt-cache.
-const realtimeCacheUrl =
-    'https://cardinal-carto-public.t3.storage.dev/gtfs-rt/';
 const realtimeExpiry = Duration(minutes: 3);
 
-Uri cachedRealtimeUrl(RealtimeSource source) => Uri.parse(
-  '$realtimeCacheUrl${sha256.convert(utf8.encode(source.upstreamUrl ?? source.url.toString()))}.pb',
-);
+Uri cachedRealtimeUrl(RealtimeSource source, String cacheUrl) {
+  final root = cacheUrl.endsWith('/') ? cacheUrl : '$cacheUrl/';
+  final hash = sha256.convert(
+    utf8.encode(source.upstreamUrl ?? source.url.toString()),
+  );
+  return Uri.parse('$root$hash.pb');
+}
 
 /// One [RealtimeFeeds] for the current offline area, shared by everything that asks its
 /// transit planner (directions and nearby transit), so they fetch each message once.
@@ -56,6 +58,7 @@ class RealtimeFeeds {
   RealtimeFeeds(
     this._sources, {
     http.Client? client,
+    this.cacheUrl = realtimeCacheUrl,
     this.maxAge = const Duration(seconds: 60),
     this.timeout = const Duration(seconds: 6),
     this._clock = DateTime.now,
@@ -65,6 +68,9 @@ class RealtimeFeeds {
   /// downloaded to.
   final Future<List<RealtimeSource>> Function() _sources;
   final http.Client _client;
+
+  /// The configured public cache root; empty disables real-time downloads.
+  final String cacheUrl;
 
   /// How old a message may be before it's fetched again.
   final Duration maxAge;
@@ -143,6 +149,7 @@ class RealtimeFeeds {
   }
 
   Future<int> _fetch() async {
+    if (cacheUrl.isEmpty) return 0;
     final sources = await _sources();
     final now = _clock();
     final due = [
@@ -169,7 +176,9 @@ class RealtimeFeeds {
     _fetchedAt[source.upstreamUrl ?? source.url.toString()] = _clock();
     final http.Response response;
     try {
-      response = await _client.get(cachedRealtimeUrl(source)).timeout(timeout);
+      response = await _client
+          .get(cachedRealtimeUrl(source, cacheUrl))
+          .timeout(timeout);
     } on Object {
       return null;
     }
