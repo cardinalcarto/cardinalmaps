@@ -276,6 +276,26 @@ void main() {
     expect(_selected(tester), ['Offline maps']);
   });
 
+  for (final source in ['Search', 'Nearby transit', 'Offline maps']) {
+    testWidgets('collapsed $source opens Saved places on the first tap', (
+      tester,
+    ) async {
+      final router = await pumpFakeApp(tester, store: _store());
+      if (source != 'Search') {
+        await tester.tap(_tab(source));
+        await tester.pumpAndSettle();
+      }
+      await _collapse(tester);
+      await tester.tap(_tab('Saved places'));
+      await tester.pumpAndSettle();
+      expect(router.state.uri.path, '/saved');
+      expect(find.byType(SavedPage), findsOneWidget);
+      expect(_sheet(tester).isCollapsed, isFalse);
+      expect(_sheet(tester).extent, appScreen.height * 0.4);
+      expect(_selected(tester), ['Saved places']);
+    });
+  }
+
   testWidgets(
     'a page opened over a collapsed one closes back to it collapsed',
     (tester) async {
