@@ -288,9 +288,13 @@ class _SheetScaffoldState extends State<SheetScaffold>
         }
       }
       // A page that keeps the sheet's height rests where it does now, if it can.
+      // A replacement (such as switching tabs) opens even from a collapsed sheet.
       for (final entry in [top, ?under]) {
         if (leaving != null &&
             entry.keepsHeight &&
+            !(under == null &&
+                leaving is _AtAnchor &&
+                leaving.anchor is _CollapsedAnchor) &&
             leaving.isAmong(entry.anchors, entry.freeRanges)) {
           entry.memory = leaving;
         }
