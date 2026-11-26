@@ -139,8 +139,8 @@ abstract class NearbyTransitSource {
 
   /// The routes a rider at [location] can catch in the next [nearbyHorizon], walking at
   /// most [nearbyWalkLimit] to a stop by [access], with the real-time data at hand. It
-  /// never waits for real-time data being fetched: the first answer is on the schedule,
-  /// and [realtimeArrived] says when to ask again for live times. Call it again to
+  /// never waits for real-time data being fetched: the answer uses what's available,
+  /// and [realtimeArrived] says when to ask again for updated live times. Call it again to
   /// refresh.
   ///
   /// Throws [TransitPlanError] if it fails, [OutsideOfflineArea] or [NoOfflineArea] if
@@ -152,11 +152,9 @@ abstract class NearbyTransitSource {
   });
 
   /// Whether real-time data has arrived that the last answer ([nearby] or [route]) was
-  /// asked without, because it was still being fetched for the first time: completes to
-  /// true once it has, when asking again gives live times, and to false when it brought
-  /// nothing. It completes to false at once when the last answer didn't wait on such a
-  /// fetch; after the first fetch, each answer takes what has arrived since the one
-  /// before.
+  /// asked without, because it was still being fetched: completes to true once new
+  /// messages have arrived, and to false when nothing new was fetched (including when
+  /// no feeds were due). Every answer takes what has arrived since the one before.
   Future<bool> realtimeArrived() async => false;
 
   /// One page of a route from a stop, as [query] names it, getting to the stop by
@@ -182,8 +180,8 @@ class OfflineNearbySource implements NearbyTransitSource {
 
   RealtimeFeeds _realtime(OfflineArea area) => _feeds.of(area);
 
-  /// The first real-time fetch the last answer was asked during, if any.
-  Future<bool>? _firstRealtime;
+  /// The real-time fetch the last answer was asked during, if any.
+  Future<bool>? _pendingRealtime;
 
   /// Opens the area's timetables (on the routing library's threads), so the first
   /// answer doesn't wait for them.
@@ -201,7 +199,7 @@ class OfflineNearbySource implements NearbyTransitSource {
   }
 
   @override
-  Future<bool> realtimeArrived() => _firstRealtime ?? Future.value(false);
+  Future<bool> realtimeArrived() => _pendingRealtime ?? Future.value(false);
 
   @override
   Future<NearbyTransit> nearby({
@@ -217,8 +215,8 @@ class OfflineNearbySource implements NearbyTransitSource {
         nearbyRequest(location, access),
         covering: location,
         realtime: (realtime) {
-          final (:feeds, :first) = realtime.arrived();
-          _firstRealtime = first;
+          final (:feeds, :pending) = realtime.arrived();
+          _pendingRealtime = pending;
           return Future.value(feeds);
         },
         query: (transit, request, feeds) =>
@@ -241,8 +239,8 @@ class OfflineNearbySource implements NearbyTransitSource {
         'route',
         routeRequest(query, access),
         realtime: (realtime) {
-          final (:feeds, :first) = realtime.arrived();
-          _firstRealtime = first;
+          final (:feeds, :pending) = realtime.arrived();
+          _pendingRealtime = pending;
           return Future.value(feeds);
         },
         query: (transit, request, feeds) =>

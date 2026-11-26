@@ -69,7 +69,8 @@ def main():
     s3 = boto3.client('s3', endpoint_url=os.environ.get('AWS_ENDPOINT_URL_S3',
                       os.environ.get('AWS_ENDPOINT_URL', 'https://t3.storage.dev')),
                       region_name=os.environ.get('AWS_REGION', 'auto'),
-                      config=Config(connect_timeout=5, read_timeout=15,
+                      config=Config(max_pool_connections=WORKERS,
+                                    connect_timeout=5, read_timeout=15,
                                     retries={'total_max_attempts': 2}))
     urls = set()
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:

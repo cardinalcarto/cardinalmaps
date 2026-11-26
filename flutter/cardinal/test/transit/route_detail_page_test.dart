@@ -852,10 +852,29 @@ void main() {
       );
       expect(_countdown(tester, '44-Ballard-30').data, '32');
 
+      final refreshed = source.realtimeLanding = Completer<bool>();
       now = now.add(routeDetailRefresh);
       await tester.pump(routeDetailRefresh);
       expect(source.routesAsked, hasLength(3));
       expect(source.routesAsked.last.query.tripId, '44-Ballard-30');
+      await answerRoute(
+        tester,
+        _detail([
+          nearbyDepartureJson('44-Ballard-30', 32, status: 'live'),
+        ], ride: _ride('44-Ballard-30', 32, [_ballard, 'Leary Ave'])),
+      );
+      refreshed.complete(true);
+      await tester.pump();
+      expect(source.routesAsked, hasLength(4));
+      expect(source.routesAsked.last.query.tripId, '44-Ballard-30');
+      await answerRoute(
+        tester,
+        _detail([
+          nearbyDepartureJson('44-Ballard-30', 35, status: 'live'),
+        ], ride: _ride('44-Ballard-30', 35, [_ballard, 'Leary Ave'])),
+      );
+      expect(_countdown(tester, '44-Ballard-30').data, '34');
+      expect(source.routesAsked, hasLength(4));
     });
 
     testWidgets('asks nothing once it has closed', (tester) async {

@@ -102,8 +102,8 @@ class NearbyTimes {
 /// While it shows (the app is in front and no page covers it), it asks from your
 /// location when it has one, again every [nearbyRefresh], and at once when wheelchair
 /// access is turned on or off; countdowns tick each second in between. The first answer
-/// is on the schedule while real-time data is fetched, and is updated in place once it
-/// arrives ([NearbyTransitController]). While it doesn't show, it asks nothing, but
+/// is on the schedule while real-time data is fetched, and every answer is updated in
+/// place when new data arrives ([NearbyTransitController]). While it doesn't show, it asks nothing, but
 /// keeps its rows: when it shows again they're still there, and the next answer updates
 /// them, re-sorting them only as any answer would.
 ///

@@ -78,8 +78,8 @@ StopDeparture? firstCatchable(
 ///    first catchable is selected at once instead, and asked for as in 2, unless it's the
 ///    trip that failed.
 ///
-/// The first answer is on the schedule when real-time data is still being fetched for
-/// the first time ([NearbyTransitSource.realtimeArrived]); once it arrives, the page is
+/// An answer uses the data at hand while real-time data is still being fetched
+/// ([NearbyTransitSource.realtimeArrived]); once new data arrives, the page is
 /// asked for again, as nearby rows are.
 class RouteDetailController extends ChangeNotifier {
   RouteDetailController(
@@ -303,10 +303,12 @@ class RouteDetailController extends ChangeNotifier {
   /// Asks again once real-time data the answer to question [asked] went without arrives,
   /// if nothing has been asked since.
   Future<void> _whenLive(int asked) async {
+    if (_disposed || asked != _asks) return;
     if (!await source.realtimeArrived()) return;
     if (_disposed || asked != _asks) return;
     try {
-      await _ask();
+      final next = await _ask();
+      if (next != null) unawaited(_whenLive(next));
     } on Object catch (e) {
       // What's shown stays on the schedule until the next refresh.
       debugPrint('route detail: live times: $e');
