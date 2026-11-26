@@ -7,8 +7,8 @@ use thiserror::Error;
 
 use crate::decode::{DecodeError, DecodedFeed};
 
-/// The default age, in seconds, past which a trip-update or vehicle feed is stale.
-pub const DEFAULT_REALTIME_STALE_AFTER: i64 = 5 * 60;
+/// The default age, in seconds, past which a trip-update, vehicle, or combined feed is stale.
+pub const DEFAULT_REALTIME_STALE_AFTER: i64 = 10 * 60;
 
 /// The default age, in seconds, past which an alerts feed is stale.
 ///
@@ -318,14 +318,33 @@ mod tests {
     }
 
     #[test]
+    fn agency_freshness_limits_by_kind() {
+        for kind in [
+            FeedKind::TripUpdates,
+            FeedKind::VehiclePositions,
+            FeedKind::Combined,
+        ] {
+            let mut feed = input(Some(1_000), Some(1_500));
+            feed.kind = kind;
+            feed.stale_after = kind.default_stale_after();
+            assert_eq!(feed.stale_after, 600);
+            assert!(!feed.status(1_480).stale);
+            assert!(!feed.status(1_600).stale);
+            assert!(feed.status(1_601).stale);
+        }
+        assert_eq!(FeedKind::Alerts.default_stale_after(), 1_800);
+    }
+
+    #[test]
     fn cache_expiry_is_independent_of_header_age() {
-        let mut feed = input(Some(1_000), Some(900));
-        feed.stale_after = 300;
-        feed.expires_at = Some(1_010);
-        let status = feed.status(1_009);
+        let mut feed = input(Some(1_000), Some(1_320));
+        feed.kind = FeedKind::TripUpdates;
+        feed.stale_after = feed.kind.default_stale_after();
+        feed.expires_at = Some(1_500);
+        let status = feed.status(1_499);
         assert!(!status.stale);
-        assert!(status.aged_to(1_009, 1_010).stale);
-        assert!(feed.status(1_010).stale);
+        assert!(status.aged_to(1_499, 1_500).stale);
+        assert!(feed.status(1_500).stale);
     }
 
     #[test]

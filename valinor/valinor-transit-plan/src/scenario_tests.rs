@@ -329,11 +329,15 @@ fn transition_updated_to_stale_falls_back_to_the_schedule() {
     let fresh = run(
         &state,
         &TransitRequest {
-            now: FEED_TIME + 60,
+            now: FEED_TIME + 8 * 60,
             ..morning_request()
         },
     );
     assert_eq!(fresh.realtime.level, RealtimeLevel::Realtime);
+    assert_eq!(
+        transit_legs(two_trip_journey(&fresh))[0].delay_seconds,
+        Some(120)
+    );
 
     let later = FEED_TIME + valinor_gtfs_rt::DEFAULT_REALTIME_STALE_AFTER + 1;
     let response = run(

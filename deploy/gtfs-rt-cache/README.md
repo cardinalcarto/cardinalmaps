@@ -24,8 +24,10 @@ the successful upstream download. `Cache-Control: no-cache` allows revalidation
 without serving an outdated object as a fresh one. Clients reject objects with
 missing or expired timestamps, and the planner independently expires their
 contents 180 seconds after the successful fetch, even without a new download.
-The existing GTFS-RT header freshness rules still apply. Clients check for new
-objects on demand at most once per minute, never querying agencies directly.
+Agency GTFS-RT header timestamps have separate freshness limits: 10 minutes
+for trip updates, vehicle positions, and combined feeds, and 30 minutes for
+alerts. Clients check for new objects on demand at most once per minute,
+never querying agencies directly.
 Old pinned releases continue to work for URLs still listed in the latest
 release; removed or changed URLs age out rather than fetching upstream.
 
