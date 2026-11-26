@@ -121,6 +121,8 @@ pub struct FeedInput {
     pub received_at: Option<i64>,
     /// How old, in seconds, the message may be before it is ignored.
     pub stale_after: i64,
+    /// An independent absolute expiry for a cached message, in POSIX seconds.
+    pub expires_at: Option<i64>,
 }
 
 impl FeedInput {
@@ -132,6 +134,7 @@ impl FeedInput {
             decoded: Ok(decoded),
             received_at: None,
             stale_after: kind.default_stale_after(),
+            expires_at: None,
         }
     }
 
@@ -143,6 +146,7 @@ impl FeedInput {
             decoded: DecodedFeed::decode(bytes),
             received_at: None,
             stale_after: kind.default_stale_after(),
+            expires_at: None,
         }
     }
 
@@ -168,7 +172,10 @@ impl FeedInput {
             header_timestamp,
             age,
             stale_after: self.stale_after,
-            stale: error.is_some() || is_stale(age, self.stale_after),
+            expires_at: self.expires_at,
+            stale: error.is_some()
+                || is_stale(age, self.stale_after)
+                || self.expires_at.is_some_and(|expiry| now >= expiry),
             entities_dropped: self
                 .decoded
                 .as_ref()
@@ -202,6 +209,8 @@ pub struct FeedStatus {
     pub age: Option<i64>,
     /// The limit this message was held to.
     pub stale_after: i64,
+    /// An independent absolute expiry for a cached message, in POSIX seconds.
+    pub expires_at: Option<i64>,
     /// Whether the message was stale or undecodable, and so had no effect on the overlay.
     pub stale: bool,
     /// Why the message couldn't be decoded, if it couldn't.
@@ -223,7 +232,9 @@ impl FeedStatus {
             .map(|age| age.saturating_add(now.saturating_sub(built_at)));
         Self {
             age,
-            stale: self.error.is_some() || is_stale(age, self.stale_after),
+            stale: self.error.is_some()
+                || is_stale(age, self.stale_after)
+                || self.expires_at.is_some_and(|expiry| now >= expiry),
             ..self.clone()
         }
     }
@@ -304,6 +315,17 @@ mod tests {
         let undated = input(None, None).status(1_000).aged_to(1_000, 1_001);
         assert_eq!(undated.age, None);
         assert!(undated.stale);
+    }
+
+    #[test]
+    fn cache_expiry_is_independent_of_header_age() {
+        let mut feed = input(Some(1_000), Some(900));
+        feed.stale_after = 300;
+        feed.expires_at = Some(1_010);
+        let status = feed.status(1_009);
+        assert!(!status.stale);
+        assert!(status.aged_to(1_009, 1_010).stale);
+        assert!(feed.status(1_010).stale);
     }
 
     #[test]

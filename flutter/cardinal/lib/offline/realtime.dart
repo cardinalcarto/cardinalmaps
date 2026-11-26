@@ -1,9 +1,11 @@
-/// GTFS-RT for the offline area's feeds, fetched straight from each agency when there's a
+/// GTFS-RT for the offline area's feeds, fetched from the public GTFS-RT cache when there's a
 /// network. Plans work on the schedule without it.
 library;
 
 import 'dart:async';
-import 'dart:math' as math;
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -11,17 +13,14 @@ import 'package:routing/routing.dart';
 
 import 'offline_area.dart';
 
-/// How long a feed is left alone after its first failure: an answer other than 2xx, no
-/// network, or a fetch past [RealtimeFeeds.timeout]. Each failure after that doubles it,
-/// up to [realtimeBackoffMax].
-const realtimeBackoffInitial = Duration(seconds: 30);
+/// Public cache root, shared with the updater in deploy/gtfs-rt-cache.
+const realtimeCacheUrl =
+    'https://cardinal-carto-public.t3.storage.dev/gtfs-rt/';
+const realtimeExpiry = Duration(minutes: 3);
 
-/// The longest a failing feed is left alone between tries.
-const realtimeBackoffMax = Duration(minutes: 10);
-
-/// How far a backoff may be moved either way at random, as a fraction of it, so feeds
-/// that failed together aren't all tried again together.
-const realtimeBackoffJitter = 0.1;
+Uri cachedRealtimeUrl(RealtimeSource source) => Uri.parse(
+  '$realtimeCacheUrl${sha256.convert(utf8.encode(source.upstreamUrl ?? source.url.toString()))}.pb',
+);
 
 /// One [RealtimeFeeds] for the current offline area, shared by everything that asks its
 /// transit planner (directions and nearby transit), so they fetch each message once.
@@ -52,18 +51,15 @@ class AreaRealtimeFeeds {
 /// messages fetched since the last one. A message that can't be fetched is left out:
 /// whatever the planner already holds for it stays until it's stale.
 ///
-/// A feed that fails is left alone for a while (see [realtimeBackoffInitial]), longer
-/// each time it fails again, until it answers.
+/// Each feed is retried on the same cadence, even after a failure.
 class RealtimeFeeds {
   RealtimeFeeds(
     this._sources, {
     http.Client? client,
-    this.maxAge = const Duration(seconds: 30),
+    this.maxAge = const Duration(seconds: 60),
     this.timeout = const Duration(seconds: 6),
     this._clock = DateTime.now,
-    math.Random? random,
-  }) : _client = client ?? http.Client(),
-       _random = random ?? math.Random();
+  }) : _client = client ?? http.Client();
 
   /// The messages to fetch, asked for on each fetch: an area's feeds change as it's
   /// downloaded to.
@@ -79,16 +75,11 @@ class RealtimeFeeds {
   /// What time it is: the device's clock, or a test's.
   final DateTime Function() _clock;
 
-  /// What a backoff's jitter is drawn from.
-  final math.Random _random;
+  final _fetchedAt = <String, DateTime>{};
 
-  final _fetchedAt = <Uri, DateTime>{};
-
-  /// The feeds that failed, and how they're being left alone.
-  final _backoffs = <Uri, _Backoff>{};
-
-  /// Messages fetched and not yet handed to a plan.
-  var _arrived = <TransitFeed>[];
+  /// Expiry is the updater's successful fetch time, not the client's receipt time.
+  final _expires = <(String, TransitFeedKind), int>{};
+  final _arrived = <(String, TransitFeedKind), TransitFeed>{};
 
   /// The fetch under way, completing to how many messages it fetched.
   Future<int>? _inFlight;
@@ -128,8 +119,15 @@ class RealtimeFeeds {
   }
 
   List<TransitFeed> _take() {
-    final arrived = _arrived;
-    _arrived = [];
+    final now = _clock().millisecondsSinceEpoch ~/ 1000;
+    for (final key in _expires.keys.toList()) {
+      if (now >= _expires[key]!) {
+        _expires.remove(key);
+        _arrived.remove(key);
+      }
+    }
+    final arrived = _arrived.values.toList();
+    _arrived.clear();
     return arrived;
   }
 
@@ -149,8 +147,11 @@ class RealtimeFeeds {
     final now = _clock();
     final due = [
       for (final source in sources)
-        if (now.difference(_fetchedAt[source.url] ?? DateTime(0)) >= maxAge &&
-            !(_backoffs[source.url]?.until.isAfter(now) ?? false))
+        if (now.difference(
+              _fetchedAt[source.upstreamUrl ?? source.url.toString()] ??
+                  DateTime(0),
+            ) >=
+            maxAge)
           source,
     ];
     if (due.isEmpty) return 0;
@@ -161,55 +162,41 @@ class RealtimeFeeds {
       'cardinal-timing: realtime fetch ${feeds.length}/${due.length} '
       'in ${watch.elapsedMilliseconds} ms',
     );
-    _arrived.addAll(feeds);
     return feeds.length;
   }
 
   Future<TransitFeed?> _fetchOne(RealtimeSource source) async {
+    _fetchedAt[source.upstreamUrl ?? source.url.toString()] = _clock();
     final http.Response response;
     try {
-      response = await _client.get(source.url).timeout(timeout);
-    } on Object catch (e) {
-      // No network, or the agency is down: the plan uses what it has.
-      _failed(source.url, '$e');
+      response = await _client.get(cachedRealtimeUrl(source)).timeout(timeout);
+    } on Object {
       return null;
-    }
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      _failed(source.url, 'answered ${response.statusCode}');
-      return null;
-    }
-    if (_backoffs.remove(source.url) != null) {
-      debugPrint('realtime: ${source.url} answered again');
     }
     if (response.statusCode != 200 || response.bodyBytes.isEmpty) return null;
-    _fetchedAt[source.url] = _clock();
-    return TransitFeed(
+    final seconds = int.tryParse(
+      response.headers['x-amz-meta-fetched-at'] ?? '',
+    );
+    final now = _clock().millisecondsSinceEpoch ~/ 1000;
+    if (seconds == null ||
+        seconds < 0 ||
+        seconds > now ||
+        now - seconds >= realtimeExpiry.inSeconds) {
+      return null;
+    }
+    final expires = seconds + realtimeExpiry.inSeconds;
+    final key = (source.feed, source.kind);
+    // A delayed or repeatedly served object must not replace a newer update.
+    final previous = _expires[key];
+    if (previous != null && expires <= previous) return null;
+    final feed = TransitFeed(
       feed: source.feed,
       kind: source.kind,
       bytes: response.bodyBytes,
+      expiresAt: expires,
     );
+    _expires[key] = expires;
+    _arrived[key] = feed;
+    return feed;
   }
-
-  /// Leaves [url] alone for longer than last time, after it failed with [why].
-  void _failed(Uri url, String why) {
-    final failures = (_backoffs[url]?.failures ?? 0) + 1;
-    final base = math.min(
-      realtimeBackoffInitial.inMilliseconds * math.pow(2, failures - 1),
-      realtimeBackoffMax.inMilliseconds.toDouble(),
-    );
-    final jitter = 1 + realtimeBackoffJitter * (2 * _random.nextDouble() - 1);
-    final wait = Duration(milliseconds: (base * jitter).round());
-    _backoffs[url] = _Backoff(failures, _clock().add(wait));
-    if (failures == 1) {
-      debugPrint('realtime: $url $why; backing off');
-    }
-  }
-}
-
-/// A failing feed: how many times in a row it has failed, and when to try it again.
-class _Backoff {
-  const _Backoff(this.failures, this.until);
-
-  final int failures;
-  final DateTime until;
 }

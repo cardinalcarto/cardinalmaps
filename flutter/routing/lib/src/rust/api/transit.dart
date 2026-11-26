@@ -131,10 +131,19 @@ class TransitFeed {
   /// The message; `None` clears anything held for this feed.
   final Uint8List? bytes;
 
-  const TransitFeed({required this.feed, required this.kind, this.bytes});
+  /// Absolute cache expiry in POSIX seconds, independent of the feed header.
+  final PlatformInt64? expiresAt;
+
+  const TransitFeed({
+    required this.feed,
+    required this.kind,
+    this.bytes,
+    this.expiresAt,
+  });
 
   @override
-  int get hashCode => feed.hashCode ^ kind.hashCode ^ bytes.hashCode;
+  int get hashCode =>
+      feed.hashCode ^ kind.hashCode ^ bytes.hashCode ^ expiresAt.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -143,7 +152,8 @@ class TransitFeed {
           runtimeType == other.runtimeType &&
           feed == other.feed &&
           kind == other.kind &&
-          bytes == other.bytes;
+          bytes == other.bytes &&
+          expiresAt == other.expiresAt;
 }
 
 /// What a GTFS-RT message carries.

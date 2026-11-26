@@ -33,7 +33,7 @@ use crate::api::offline::*;
 use crate::api::router::*;
 use crate::api::transit::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
-use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
 use flutter_rust_bridge::{Handler, IntoIntoDart};
 
 // Section: boilerplate
@@ -3551,6 +3551,17 @@ impl SseDecode for Option<f64> {
     }
 }
 
+impl SseDecode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<i64>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::navigation::ManeuverModifier> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3895,10 +3906,12 @@ impl SseDecode for crate::api::transit::TransitFeed {
         let mut var_feed = <String>::sse_decode(deserializer);
         let mut var_kind = <crate::api::transit::TransitFeedKind>::sse_decode(deserializer);
         let mut var_bytes = <Option<Vec<u8>>>::sse_decode(deserializer);
+        let mut var_expiresAt = <Option<i64>>::sse_decode(deserializer);
         return crate::api::transit::TransitFeed {
             feed: var_feed,
             kind: var_kind,
             bytes: var_bytes,
+            expires_at: var_expiresAt,
         };
     }
 }
@@ -5350,6 +5363,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::transit::TransitFeed {
             self.feed.into_into_dart().into_dart(),
             self.kind.into_into_dart().into_dart(),
             self.bytes.into_into_dart().into_dart(),
+            self.expires_at.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -6379,6 +6393,16 @@ impl SseEncode for Option<f64> {
     }
 }
 
+impl SseEncode for Option<i64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <i64>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::navigation::ManeuverModifier> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6672,6 +6696,7 @@ impl SseEncode for crate::api::transit::TransitFeed {
         <String>::sse_encode(self.feed, serializer);
         <crate::api::transit::TransitFeedKind>::sse_encode(self.kind, serializer);
         <Option<Vec<u8>>>::sse_encode(self.bytes, serializer);
+        <Option<i64>>::sse_encode(self.expires_at, serializer);
     }
 }
 
@@ -6778,7 +6803,7 @@ mod io {
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
     };
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate
@@ -6919,7 +6944,7 @@ mod web {
     };
     use flutter_rust_bridge::for_generated::wasm_bindgen;
     use flutter_rust_bridge::for_generated::wasm_bindgen::prelude::*;
-    use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
+    use flutter_rust_bridge::for_generated::{Lifetimeable, Lockable, transform_result_dco};
     use flutter_rust_bridge::{Handler, IntoIntoDart};
 
     // Section: boilerplate

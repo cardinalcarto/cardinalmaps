@@ -542,8 +542,17 @@ impl TransitState {
     ///
     /// If the feed isn't in the compiled timetable.
     pub fn ingest(&self, update: FeedUpdate<'_>) -> Result<IngestOutcome, StateError> {
+        self.ingest_with_expiry(update, None)
+    }
+
+    /// Ingests a message with an independent absolute cache expiry (POSIX seconds).
+    pub fn ingest_with_expiry(
+        &self,
+        update: FeedUpdate<'_>,
+        expires_at: Option<i64>,
+    ) -> Result<IngestOutcome, StateError> {
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        self.store_update(&mut writer, update)
+        self.store_update(&mut writer, update, expires_at)
     }
 
     /// [`Self::ingest`] and [`Self::refresh`] as one step.
@@ -561,7 +570,7 @@ impl TransitState {
         now: i64,
     ) -> Result<IngestAndRefresh, StateError> {
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        let outcome = self.store_update(&mut writer, update)?;
+        let outcome = self.store_update(&mut writer, update, None)?;
         let snapshot = self.rebuild(&mut writer, now);
         Ok(IngestAndRefresh { outcome, snapshot })
     }
@@ -570,6 +579,7 @@ impl TransitState {
         &self,
         writer: &mut Writer,
         update: FeedUpdate<'_>,
+        expires_at: Option<i64>,
     ) -> Result<IngestOutcome, StateError> {
         let feed = self
             .data
@@ -587,6 +597,7 @@ impl TransitState {
             Some(bytes) => {
                 let mut input = FeedInput::from_bytes(feed, update.kind, bytes);
                 input.received_at = Some(update.received_at);
+                input.expires_at = expires_at;
                 if let Some(stale_after) = update.stale_after {
                     input.stale_after = stale_after;
                 }

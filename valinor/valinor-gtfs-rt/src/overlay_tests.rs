@@ -2237,6 +2237,7 @@ proptest! {
                 decoded: Ok(decoded),
                 received_at: Some(NOW),
                 stale_after: i64::MAX,
+                expires_at: None,
             };
             build_overlay(
                 &net.lookup,
