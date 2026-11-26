@@ -121,6 +121,7 @@ GoRouter appRouter(SparkleMapController map) => GoRouter(
               ),
             ),
             bottomBar: const AppNavigationBar(),
+            bottomBarHeight: AppNavigationBar.heightOf(context),
             backdrop: sheetGlassOf(context),
             sheet: child,
           ),

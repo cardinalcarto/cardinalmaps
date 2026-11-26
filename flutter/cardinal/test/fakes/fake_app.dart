@@ -44,7 +44,7 @@ import 'fake_transit.dart';
 
 const appScreen = Size(400, 800);
 const appNavigationBar = 24.0;
-const appBarHeight = 56.0;
+const appBarHeight = AppNavigationBar.materialHeight;
 
 /// Vehicle markers without drawing them, which a widget test can't wait for: a pixel
 /// each, by the names the device's would have.
@@ -117,7 +117,7 @@ Future<GoRouter> pumpFakeApp(
                 ),
               ),
               bottomBar: const AppNavigationBar(),
-              bottomBarHeight: appBarHeight,
+              bottomBarHeight: AppNavigationBar.heightOf(context),
               backdrop: sheetGlassOf(context),
               sheet: child,
             ),

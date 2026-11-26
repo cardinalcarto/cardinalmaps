@@ -11,12 +11,18 @@ import 'app_icons.dart';
 /// The bar along the bottom of the app's top-level pages: Saved Places,
 /// Search, Nearby Transit and Offline Maps.
 ///
-/// On iOS it floats on glass, labeled, with the current page tinted on a lens. Elsewhere
-/// it's a row of icons with the current page's filled. While the
+/// On iOS it floats on glass, with the current page tinted on a lens. Elsewhere
+/// it uses Material 3's labeled destinations and pill-shaped active indicator. While the
 /// sheet is collapsed no page is current, and tapping the page under it brings the
 /// sheet back.
 class AppNavigationBar extends StatelessWidget {
   const AppNavigationBar({super.key});
+
+  /// Height above the system navigation area.
+  static double heightOf(BuildContext context) =>
+      isCupertinoOf(context) ? 56 : materialHeight;
+
+  static const double materialHeight = 80;
 
   /// Goes to [tab]'s top-level page. Tapped on its own page, it brings back the sheet
   /// if it's collapsed, and otherwise, for Search, starts searching.
@@ -38,7 +44,7 @@ class AppNavigationBar extends StatelessWidget {
       isCupertinoOf(context) ? const _GlassTabBar() : const _MaterialBar();
 }
 
-/// A top-level page of the bar: its [label] on iOS, its [tooltip] elsewhere.
+/// A top-level page of the bar: its visible [label] and Material [tooltip].
 typedef _Tab = ({IconData icon, String label, String tooltip, String location});
 
 const List<_Tab> _tabs = [
@@ -99,55 +105,74 @@ class _MaterialBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    // NavigationBar requires a selected index, but a collapsed sheet has none.
     return Material(
       color: colors.surfaceContainer,
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _SelectedTab(
-            builder: (context, selected) => Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                for (final (i, tab) in _tabs.indexed)
-                  _Slot(
-                    child: Semantics(
-                      selected: i == selected,
-                      child: i == selected
-                          ? IconButton.filled(
-                              tooltip: tab.tooltip,
-                              icon: Icon(tab.icon),
-                              onPressed: () =>
-                                  AppNavigationBar._go(context, tab),
-                            )
-                          : IconButton(
-                              tooltip: tab.tooltip,
-                              color: colors.onSurface,
-                              icon: Icon(tab.icon),
-                              onPressed: () =>
-                                  AppNavigationBar._go(context, tab),
-                            ),
+        child: _SelectedTab(
+          builder: (context, selected) => Row(
+            children: [
+              for (final (i, tab) in _tabs.indexed)
+                Expanded(
+                  child: Semantics(
+                    selected: i == selected,
+                    button: true,
+                    child: Tooltip(
+                      message: tab.tooltip,
+                      child: InkWell(
+                        onTap: () => AppNavigationBar._go(context, tab),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                width: 64,
+                                height: 32,
+                                decoration: ShapeDecoration(
+                                  shape: const StadiumBorder(),
+                                  color: i == selected
+                                      ? colors.secondaryContainer
+                                      : Colors.transparent,
+                                ),
+                                child: Icon(
+                                  tab.icon,
+                                  size: 24,
+                                  color: i == selected
+                                      ? colors.onSecondaryContainer
+                                      : colors.onSurfaceVariant,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              MediaQuery.withClampedTextScaling(
+                                maxScaleFactor: 1.3,
+                                child: Text(
+                                  tab.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: i == selected
+                                        ? colors.onSurface
+                                        : colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
-              ],
-            ),
+                ),
+            ],
           ),
         ),
       ),
     );
   }
-}
-
-/// A button's place in the bar, as wide as its touch target.
-class _Slot extends StatelessWidget {
-  const _Slot({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) =>
-      SizedBox(width: 48, child: Center(child: child));
 }
 
 /// The iOS bar: a glass capsule of the pages, floating over the bottom of the sheet,

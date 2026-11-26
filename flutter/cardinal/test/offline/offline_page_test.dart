@@ -275,7 +275,12 @@ void main() {
         {true},
       );
 
-      await tester.tap(find.text('Offline'));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SegmentedButton<bool>),
+          matching: find.text('Offline'),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(await store.settings.get(searchOnline), isFalse);
     });
