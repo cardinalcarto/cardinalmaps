@@ -33,7 +33,7 @@ void main() {
       tester,
     ) async {
       await pumpFakeApp(tester, platform: _ios);
-      for (final label in ['Saved', 'Nearby', 'Search', 'Transit', 'Offline']) {
+      for (final label in ['Saved', 'Search', 'Transit', 'Offline']) {
         expect(
           find.descendant(
             of: find.byType(AppNavigationBar),
@@ -42,6 +42,13 @@ void main() {
           findsOneWidget,
         );
       }
+      expect(
+        find.descendant(
+          of: find.byType(AppNavigationBar),
+          matching: find.text('Nearby'),
+        ),
+        findsNothing,
+      );
       expect(find.byType(IconButton), findsNothing);
     });
 
