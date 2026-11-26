@@ -49,22 +49,12 @@ List<String> _selected(WidgetTester tester) => [
       tip,
 ];
 
-/// Whether [tip]'s button is filled.
+/// Whether [tip]'s active indicator is filled.
 bool _filled(WidgetTester tester, String tip) {
-  final button = tester.widget<IconButton>(
-    find.ancestor(of: _tab(tip), matching: find.byType(IconButton)),
+  final indicator = tester.widget<AnimatedContainer>(
+    find.descendant(of: _tab(tip), matching: find.byType(AnimatedContainer)),
   );
-  return tester
-          .widget<Material>(
-            find
-                .descendant(
-                  of: find.byWidget(button),
-                  matching: find.byType(Material),
-                )
-                .first,
-          )
-          .color !=
-      Colors.transparent;
+  return (indicator.decoration as ShapeDecoration).color != Colors.transparent;
 }
 
 SheetController _sheet(WidgetTester tester) =>
@@ -100,10 +90,19 @@ void main() {
     final xs = [for (final tip in _tooltips) tester.getCenter(_tab(tip)).dx];
     expect(xs, orderedEquals([...xs]..sort()));
     expect(_tab('Nearby places'), findsNothing);
+    for (final label in ['Saved', 'Search', 'Transit', 'Offline']) {
+      expect(
+        find.descendant(
+          of: find.byType(AppNavigationBar),
+          matching: find.text(label),
+        ),
+        findsOneWidget,
+      );
+    }
     expect(
       find.descendant(
         of: find.byType(AppNavigationBar),
-        matching: find.byType(IconButton),
+        matching: find.byType(InkWell),
       ),
       findsNWidgets(4),
     );
@@ -113,7 +112,12 @@ void main() {
     tester,
   ) async {
     await pumpFakeApp(tester, store: _store());
-    await tester.tap(_tab('Nearby transit'));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AppNavigationBar),
+        matching: find.text('Transit'),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.byType(NearbyTransitPage), findsOneWidget);
     expect(find.byType(SearchBar), findsNothing);

@@ -777,10 +777,10 @@ void main() {
       await answer(tester, routes(3));
       expect(anchors(tester), [0, lower]);
       final [low, high] = range(tester);
-      // Three rows end a little above 40%.
+      // Three rows and the navigation bar end a little above 40%.
       expect(low, lower);
       expect(high, greaterThan(lower));
-      expect(high, lessThan(lower + 80));
+      expect(high, lessThan(lower + appBarHeight + 24));
       expect(sheet(tester).extent, lower);
 
       await drag(tester, -600);
