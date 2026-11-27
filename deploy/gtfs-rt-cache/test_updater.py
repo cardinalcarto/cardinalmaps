@@ -1,9 +1,12 @@
+import gzip
 import hashlib
 import heapq
 import importlib
+import ssl
 import time
 import unittest
-from threading import BoundedSemaphore, Event
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import BoundedSemaphore, Event, Thread
 from unittest.mock import Mock, patch
 
 from botocore.awsrequest import AWSResponse
@@ -14,6 +17,81 @@ import updater
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_http_connection_reuse_gzip_and_cross_origin_redirect(self):
+        body = gzip.compress(b'valid protobuf bytes')
+        observed = []
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def do_GET(self):
+                observed.append((self.client_address[1], self.path,
+                                 self.headers.get('Authorization')))
+                if self.path == '/redirect':
+                    self.send_response(302)
+                    self.send_header('Location', f'http://localhost:{self.server.server_port}/feed')
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        with ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            origin = f'http://127.0.0.1:{server.server_port}'
+            try:
+                with updater.upstream_pool() as http:
+                    for _ in range(2):
+                        with updater.get(http, f'{origin}/feed', 5) as response:
+                            self.assertEqual(b''.join(response.stream(4)), b'valid protobuf bytes')
+                    self.assertEqual(observed[0][0], observed[1][0])
+                    with updater.get(http, origin.replace('http://', 'http://user:pw@') + '/redirect', 5) as response:
+                        self.assertEqual(response.data, b'valid protobuf bytes')
+                self.assertEqual(observed[2][2], 'Basic dXNlcjpwdw==')
+                self.assertIsNone(observed[3][2])
+            finally:
+                server.shutdown()
+                thread.join()
+
+    def test_upstream_pool_reuses_tls_context_and_pools_across_origins(self):
+        with updater.upstream_pool() as http:
+            first = http.connection_from_url('https://example.org/a')
+            for i in range(201):
+                http.connection_from_url(f'https://origin-{i}.example.org/feed')
+            self.assertIs(first, http.connection_from_url('https://example.org/b'))
+            context = http.connection_pool_kw['ssl_context']
+            self.assertIs(first.conn_kw['ssl_context'], context)
+            self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+            self.assertTrue(context.check_hostname)
+
+    def test_basic_auth_is_request_local_and_not_in_the_pool_url(self):
+        http = self.http(b'')
+        with updater.get(http, 'https://user:p%40ss@example.org/a?key=secret', 5):
+            pass
+        args, kwargs = http.request.call_args
+        self.assertEqual(args, ('GET', 'https://example.org/a?key=secret'))
+        self.assertEqual(kwargs['headers']['authorization'], 'Basic dXNlcjpwQHNz')
+        self.assertNotIn('authorization', http.headers)
+        with updater.get(http, 'https://example.org/b', 5):
+            pass
+        self.assertIsNone(http.request.call_args.kwargs['headers'])
+
+    def test_non_200_and_partial_responses_are_closed_and_released(self):
+        for status in (206, 404, 503):
+            http = self.http(b'', status=status)
+            with self.assertRaises(updater.HTTPStatusError) as caught:
+                with updater.get(http, 'https://example.org/a', 5):
+                    self.fail('unexpected successful response')
+            self.assertEqual(caught.exception.status, status)
+            http.request.return_value.close.assert_called_once()
+            http.request.return_value.release_conn.assert_called_once()
     def test_connection_pool_matches_worker_count(self):
         with patch.object(updater, 'WORKERS', 23), \
                 patch.object(updater.boto3, 'client') as client, \
@@ -33,20 +111,23 @@ class UpdaterTests(unittest.TestCase):
                          'gtfs-rt/a5dffcef4b30cc6eb129bdceefea1a4930bfd8371943d4143eb54779f3d9a6ad.pb')
 
     def test_sources_follow_latest_release_and_deduplicate(self):
-        latest = Mock()
+        latest = Mock(status=200)
         latest.json.return_value = {'transit': '2026-11-26'}
-        manifest = Mock()
+        manifest = Mock(status=200)
         manifest.json.return_value = {'feeds': [
             {'id': 'one', 'url': 'https://example.org/trip.pb'},
             {'id': 'two', 'url': 'https://example.org/trip.pb'},
             {'id': 'two', 'url': 'https://example.org/vehicle.pb'},
         ]}
-        with patch.object(updater.requests, 'get', side_effect=[latest, manifest]) as get:
-            self.assertEqual(updater.sources(), {
-                'https://example.org/trip.pb', 'https://example.org/vehicle.pb',
-            })
-            self.assertEqual(get.call_args_list[1].args[0],
-                             f'{updater.RELEASES}/transit/2026-11-26/realtime.json')
+        http = Mock()
+        http.request.side_effect = [latest, manifest]
+        self.assertEqual(updater.sources(http), {
+            'https://example.org/trip.pb', 'https://example.org/vehicle.pb',
+        })
+        self.assertEqual(http.request.call_args_list[1].args,
+                         ('GET', f'{updater.RELEASES}/transit/2026-11-26/realtime.json'))
+        latest.release_conn.assert_called_once()
+        manifest.release_conn.assert_called_once()
 
     def test_valid_feed_published_unmodified_with_freshness_metadata(self):
         message = gtfs_realtime_pb2.FeedMessage()
@@ -60,27 +141,27 @@ class UpdaterTests(unittest.TestCase):
             self.assertEqual(stream.tell(), 0)
             uploads.append((kwargs, stream.read()))
         s3.put_object.side_effect = put_object
-        response = self.response(body)
-        with patch.object(updater.requests, 'get', return_value=response), \
-                patch.object(updater.time, 'time', return_value=1000):
-            result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+        http = self.http(body)
+        with patch.object(updater.time, 'time', return_value=1000):
+            result = updater.refresh(s3, http, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
         self.assertTrue(result.succeeded)
         self.assertEqual(uploads, [(dict(
             Bucket=updater.BUCKET, Key=updater.object_key('https://example.org/trip.pb'),
             ContentLength=len(body), ContentType='application/x-protobuf', CacheControl='no-cache',
             Metadata={'fetched-at': '1000'},
         ), body)])
+        http.request.return_value.release_conn.assert_called_once()
 
     def test_failures_do_not_replace_previous_object(self):
         for body in (b'', b'<html>error</html>', b'\xff'):
             s3 = Mock()
-            with patch.object(updater.requests, 'get', return_value=self.response(body)):
-                result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+            result = updater.refresh(s3, self.http(body), 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
             s3.put_object.assert_not_called()
             self.assertEqual(result.failed_stage, 'validation')
         s3 = Mock()
-        with patch.object(updater.requests, 'get', side_effect=TimeoutError):
-            result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+        http = Mock()
+        http.request.side_effect = TimeoutError
+        result = updater.refresh(s3, http, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
         s3.put_object.assert_not_called()
         self.assertEqual(result.failed_stage, 'download')
 
@@ -89,26 +170,28 @@ class UpdaterTests(unittest.TestCase):
         message.header.gtfs_realtime_version = '2.0'
         s3 = Mock()
         s3.put_object.side_effect = TimeoutError
-        with patch.object(updater.requests, 'get', return_value=self.response(message.SerializeToString())):
-            result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+        result = updater.refresh(s3, self.http(message.SerializeToString()),
+                                 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
         self.assertEqual(result.failed_stage, 'upload')
         self.assertFalse(result.succeeded)
 
     def test_oversized_feed_is_not_uploaded(self):
         s3 = Mock()
-        with patch.object(updater, 'MAX_BYTES', 2), \
-                patch.object(updater.requests, 'get', return_value=self.response(b'123')):
-            result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+        http = self.http(b'123')
+        with patch.object(updater, 'MAX_BYTES', 2):
+            result = updater.refresh(s3, http, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
         self.assertEqual(result.failed_stage, 'download')
         s3.put_object.assert_not_called()
+        http.request.return_value.close.assert_called_once()
+        http.request.return_value.release_conn.assert_called_once()
 
     def test_boto_streams_file_and_can_rewind_on_retry(self):
         message = gtfs_realtime_pb2.FeedMessage()
         message.header.gtfs_realtime_version = '2.0'
         message.entity.add(id='x' * (256 * 1024))
         body = message.SerializeToString()
-        response = self.response(body)
-        response.__enter__.return_value.iter_content.return_value = [
+        http = self.http(body)
+        http.request.return_value.stream.return_value = [
             body[i:i + 65536] for i in range(0, len(body), 65536)
         ]
         s3 = updater.boto3.client('s3', endpoint_url='https://example.invalid', region_name='auto',
@@ -126,13 +209,21 @@ class UpdaterTests(unittest.TestCase):
             raw.stream.return_value = iter([b''])
             return AWSResponse(request.url, 500 if len(attempts) == 1 else 200, {}, raw)
 
-        with patch.object(updater.requests, 'get', return_value=response), \
-                patch.object(s3._endpoint.http_session, 'send', side_effect=send), \
+        with patch.object(s3._endpoint.http_session, 'send', side_effect=send), \
                 patch('botocore.endpoint.time.sleep'):
-            result = updater.refresh(s3, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
+            result = updater.refresh(s3, http, 'https://example.org/trip.pb', BoundedSemaphore(1), 0)
         self.assertTrue(result.succeeded)
         self.assertEqual(len(attempts), 2)
         self.assertEqual(attempts[0], attempts[1])
+
+    @staticmethod
+    def http(body, status=200):
+        response = Mock(status=status)
+        response.stream.return_value = [body]
+        http = Mock()
+        http.request.return_value = response
+        http.headers = {'Accept-Encoding': 'gzip, deflate'}
+        return http
 
     @staticmethod
     def response(body):
@@ -160,7 +251,7 @@ class SchedulerTests(unittest.TestCase):
                 if url == 'slow':
                     raise Finished
 
-        def refresh(s3, url, validators, due_at):
+        def refresh(s3, http, url, validators, due_at):
             nonlocal fast_calls
             if url == 'slow':
                 slow_started.set()

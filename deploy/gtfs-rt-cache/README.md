@@ -12,6 +12,13 @@ available worker in oldest-deadline order; failures retry independently with
 exponential backoff from 15 seconds to 5 minutes. No URL has overlapping
 refreshes, and manifest requests run separately from feed workers.
 
+All upstream workers share one thread-safe urllib3 connection pool and one TLS
+trust context. The pool retains connections across refreshes and across feeds
+from the same origin, without sharing cookies or request credentials. This
+avoids repeatedly loading certificates and performing TLS handshakes. The
+deadline queue is a heap, so dispatching another feed does not repeatedly sort
+the entire manifest.
+
 The updater downloads chunks to a disk-backed temporary file, validates the
 protobuf, then streams the original bytes to Tigris with a seekable request body
 and a known content length. Failed downloads, invalid messages, and failed
@@ -61,7 +68,10 @@ compare the public response against an authenticated S3 `head_object` for the sa
 key to separate storage writes from public serving.
 
 Each refresh logs its queue, download, validation wait, validation, and upload
-durations, along with the fetch and agency header timestamps. Errors identify the
+durations, along with the fetch and agency header timestamps. Successful
+refreshes also log download, validation, and upload thread CPU milliseconds,
+separate from elapsed time, so throttling or I/O waits are not mistaken for
+computation. Errors identify the
 failed stage without printing URLs. Once per minute the scheduler logs the
 number of active, running, overdue, and never-refreshed feeds; age and refresh
 interval percentiles; counts at or beyond 120 and 300 seconds of age; outcomes by
