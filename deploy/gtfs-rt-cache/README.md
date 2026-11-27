@@ -6,12 +6,22 @@ release. It reads `releases/latest.json`, then that release's `realtime.json`
 listed URL, regardless of feed kind, deduplicating identical upstream URLs.
 If a manifest request fails, the previous list stays in use.
 
-Every 60 seconds the updater attempts a refresh of each feed in parallel, with
-bounded concurrency and timeouts. Slow rounds do not overlap; large deployments
-can tune `GTFS_RT_WORKERS` and the Machine's memory. The updater validates the
-protobuf and publishes the original bytes, without re-encoding them. Failed
-requests, invalid messages, and failed uploads leave the preceding object in
-place. Objects are not deleted during outages.
+Each URL has its own refresh schedule. Healthy feeds are due again 60 seconds
+after dispatch, without waiting for other feeds. Overdue feeds get the next
+available worker in oldest-deadline order; failures retry independently with
+exponential backoff from 15 seconds to 5 minutes. No URL has overlapping
+refreshes, and manifest requests run separately from feed workers.
+
+The updater downloads chunks to a disk-backed temporary file, validates the
+protobuf, then streams the original bytes to Tigris with a seekable request body
+and a known content length. Failed downloads, invalid messages, and failed
+uploads leave the preceding object in place. Objects are not deleted during
+outages. `GTFS_RT_WORKERS` defaults to 64; `GTFS_RT_VALIDATORS` defaults to 1
+because protobuf parsing still temporarily materializes the entire message.
+Increase network concurrency independently of validation concurrency. Allow
+disk space for up to 32 MiB per worker (2 GiB at 64 workers); use a disk-backed
+`TMPDIR`, not a memory-backed filesystem. Validate CPU, memory, disk, and network
+headroom before scaling the worker count further.
 
 Each object is public-read at:
 
@@ -31,6 +41,39 @@ alerts. Clients check for new objects on demand once per minute after a successf
 download, and retry failed downloads after 15 seconds, never querying agencies directly.
 Old pinned releases continue to work for URLs still listed in the latest
 release; removed or changed URLs age out rather than fetching upstream.
+
+## Diagnose freshness
+
+From this directory, after installing `requirements.txt`, compare an agency's
+direct feeds with their public cache objects:
+
+```sh
+python diagnose.py us-wa-Metro-Transit --samples 20 --interval 30
+```
+
+Add `--release YYYY-MM-DD` to check the release pinned by a phone. The output is
+JSON lines with the hashed object key, HTTP status, cache fetch timestamp, agency
+header timestamp, ages, entity counts, and payload digest. It never prints the
+upstream URL. A healthy agency with an expired public object points to the cache
+path; a fresh public object that the phone rejects points to the client/planner.
+If the updater reports successful uploads but public timestamps do not advance,
+compare the public response against an authenticated S3 `head_object` for the same
+key to separate storage writes from public serving.
+
+Each refresh logs its queue, download, validation wait, validation, and upload
+durations, along with the fetch and agency header timestamps. Errors identify the
+failed stage without printing URLs. Once per minute the scheduler logs the
+number of active, running, overdue, and never-refreshed feeds; age and refresh
+interval percentiles; counts at or beyond 120 and 300 seconds of age; outcomes by
+stage, process CPU time, and peak RSS. These ages describe successful uploads
+since this process started, not independent reads of public objects. Use the
+probe above to confirm what clients actually receive.
+
+Initial targets for healthy feeds: p95 cache age under 120 seconds, p99 under
+180 seconds, and no sustained expiry at 300 seconds. If queue delay is high,
+increase worker capacity only after identifying the limiting stage: validation
+wait and CPU, download/upload duration, memory, or disk/network throughput. The
+scheduler cannot guarantee freshness when offered work exceeds available capacity.
 
 ## Deploy
 
@@ -57,4 +100,4 @@ Configure clients with `CARDINAL_REALTIME_CACHE_URL` in their Dart defines,
 set to `https://cardinal-carto-public.t3.tigrisfiles.io/gtfs-rt` for production.
 An unset value disables real-time downloads.
 To run mocked tests locally, install `requirements.txt` and run
-`python -m unittest test_updater` from this directory.
+`python -m unittest discover` from this directory.
