@@ -35,11 +35,32 @@ String formatManeuverDistance(
   required UnitSystem units,
   required AppLocalizations words,
 }) {
+  final rounded = roundManeuverDistance(meters, units: units);
+  final number = _number(rounded.value, tenths: rounded.tenths);
+  return switch (rounded.unit) {
+    DistanceUnit.meters => words.navigationDistanceMeters(number),
+    DistanceUnit.kilometers => words.navigationDistanceKilometers(number),
+    DistanceUnit.feet => words.navigationDistanceFeet(number),
+    DistanceUnit.miles => words.navigationDistanceMiles(number),
+  };
+}
+
+/// The units [roundManeuverDistance] rounds into.
+enum DistanceUnit { meters, kilometers, feet, miles }
+
+/// [meters] in the unit and round steps [formatManeuverDistance] shows it in, for what
+/// shows the number its own way, as CarPlay does: [value] of [unit], already at its
+/// step in feet and meters, and to be shown to a tenth if [tenths] and whole otherwise
+/// in miles and kilometers.
+({double value, DistanceUnit unit, bool tenths}) roundManeuverDistance(
+  double meters, {
+  required UnitSystem units,
+}) {
   assert(units != UnitSystem.locale, 'resolve the units for a locale first');
   if (units == UnitSystem.imperial) {
     if (meters > _imperialCutoff) {
       final miles = meters / _metersPerMile;
-      return words.navigationDistanceMiles(_number(miles, tenths: miles <= 10));
+      return (value: miles, unit: DistanceUnit.miles, tenths: miles <= 10);
     }
     final feet = meters * _feetPerMeter;
     final step = feet < 50
@@ -49,13 +70,17 @@ String formatManeuverDistance(
         : feet < 500
         ? 50
         : 100;
-    return words.navigationDistanceFeet(
-      _number(_nearest(feet, step), tenths: false),
+    return (
+      value: _nearest(feet, step),
+      unit: DistanceUnit.feet,
+      tenths: false,
     );
   }
   if (meters > 1000) {
-    return words.navigationDistanceKilometers(
-      _number(meters / 1000, tenths: meters <= 10000),
+    return (
+      value: meters / 1000,
+      unit: DistanceUnit.kilometers,
+      tenths: meters <= 10000,
     );
   }
   final step = meters > 100
@@ -63,8 +88,10 @@ String formatManeuverDistance(
       : meters > 10
       ? 10
       : 5;
-  return words.navigationDistanceMeters(
-    _number(_nearest(meters, step), tenths: false),
+  return (
+    value: _nearest(meters, step),
+    unit: DistanceUnit.meters,
+    tenths: false,
   );
 }
 

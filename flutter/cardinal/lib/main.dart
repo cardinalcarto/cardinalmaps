@@ -9,6 +9,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:routing/routing.dart' show freeBytes, initRouting;
 import 'package:sparkle/sparkle.dart';
 
+import 'carplay/car_link.dart';
+import 'carplay/car_screen.dart';
 import 'config.dart';
 import 'directions/route_source.dart';
 import 'geocoder/geocoder.dart';
@@ -18,6 +20,7 @@ import 'map/location.dart';
 import 'map/map.dart';
 import 'map/map_drawing.dart';
 import 'map/overlays.dart';
+import 'map/viewport.dart';
 import 'navigation/road_matcher.dart';
 import 'navigation/navigation_controller.dart';
 import 'navigation/navigation_location.dart';
@@ -37,6 +40,11 @@ import 'ui/theme.dart';
 /// The simulated trip navigation follows, with `CARDINAL_SIMULATE_NAVIGATION`, for
 /// development tools to steer (see [SimulatedTripLocation]); null otherwise.
 SimulatedTripLocation? simulatedTrip;
+
+/// What the engine that draws a car's screen runs in [main]'s place (see
+/// `car_screen.dart`); `CarPlaySceneDelegate.swift` starts it by this name.
+@pragma('vm:entry-point')
+void carPlayMain() => runCarScreen();
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -77,6 +85,17 @@ void main() {
       controller: navigation,
       notifier: AndroidNavigationNotifier(),
       settings: store.settings,
+    ).start();
+  }
+  // On iOS, a car's screen shows the trip too, when one's connected.
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    CarPlayLink(
+      controller: navigation,
+      settings: store.settings,
+      tiles: offline.tiles,
+      view: () async =>
+          MapViewport.of(map) ??
+          openingView(await store.settings.get(savedViewport)),
     ).start();
   }
   // Directions and nearby transit share each area's real-time messages.

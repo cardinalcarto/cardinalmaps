@@ -21,6 +21,8 @@ import UIKit
         name: "cardinal/navigation/fixes", binaryMessenger: registrar.messenger())
       channel.setStreamHandler(navigationFixHandler)
       navigationFixes = channel
+      // A car's screen is told of the trip from this engine (see `CarPlayBridge`).
+      CarPlayBridge.shared.attachPhone(messenger: registrar.messenger())
     }
   }
 }
